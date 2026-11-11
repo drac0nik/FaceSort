@@ -1,0 +1,41 @@
+Publishing FaceSort with an installer and in-app updates
+=========================================================
+
+One-time setup
+1. On github.com, create a new PUBLIC repository, e.g. "FaceSort" (no README/licence needed).
+2. Put this folder in it (everything here, including the hidden .github folder - the
+   .gitignore keeps .venv, build, dist and FaceSort.exe out). Either:
+   - GitHub Desktop: File > Add local repository > this folder > Publish, or
+   - command line, in this folder:
+       git init -b main
+       git add .
+       git commit -m "FaceSort"
+       git remote add origin https://github.com/YOUR-NAME/FaceSort.git
+       git push -u origin main
+3. Tell FaceSort where its updates come from: Settings > General > Updates > GitHub
+   project: YOUR-NAME/FaceSort (or set UPDATE_REPO in updater.py, so every copy built
+   from now on has it).
+
+Each new version
+1. Set APP_VERSION in ui_common.py (e.g. "1.38.1") and add its section to README.txt,
+   ending in the version in brackets, e.g. "Faster grouping (1.38.1)" - that section
+   becomes the release notes people see in the "Update available" window.
+2. Commit and push, then tag it with the same number and push the tag:
+       git tag v1.38.1
+       git push origin v1.38.1
+   (or GitHub Desktop: Repository > Create tag, then Push.)
+3. GitHub builds it on Windows (Actions tab: about 15 minutes): runs the tests, builds
+   FaceSort, makes FaceSort-Setup-1.38.1.exe and publishes it as a release with its
+   checksum. Every installed FaceSort sees "Update to 1.38.1" within a day (or at once with
+   Settings > Check now).
+
+Notes
+- The installer needs no administrator rights: it installs for the current user in
+  %LOCALAPPDATA%\Programs\FaceSort. The library, settings and face data stay in
+  %LOCALAPPDATA%\FaceSort and are never touched by installing, updating or uninstalling.
+- The installer isn't code-signed (a certificate costs money every year), so Windows
+  SmartScreen shows "Windows protected your PC" the first time: More info > Run anyway.
+  Updates from inside FaceSort are checked against the checksum published with the release
+  before they're run.
+- To build an installer on your own PC instead: install Inno Setup 6
+  (https://jrsoftware.org/isinfo.php), run Setup.bat once, then installer\build_installer.bat.

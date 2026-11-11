@@ -1,0 +1,10 @@
+PySide6-Essentials>=6.6
+PySide6-Addons>=6.6
+opencv-python-headless>=4.9
+numpy>=1.26
+Pillow>=11.3
+pillow-heif>=0.16
+onnxruntime-directml>=1.17; sys_platform == "win32"
+rawpy>=0.21
+send2trash>=1.8
+imageio-ffmpeg>=0.5

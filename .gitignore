@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+build/
+dist/
+FaceSort.exe
+FaceSort.spec
+.pytest_cache/
