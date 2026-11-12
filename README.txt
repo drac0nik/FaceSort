@@ -153,6 +153,14 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+Speed report (1.39.2)
+- FaceSort notes every moment the window is slow to respond (a quarter second or more) and
+  what it was busy with, in speed.log in the data folder (Settings > General > Speed report >
+  Show speed.log). Nothing is sent anywhere; send the file along if FaceSort feels sluggish.
+- The people list's face icons are made together (one read for all their pictures) and are
+  kept after a scan or a move unless the picture changed, so the first redraw after a scan or
+  a move is much quicker on big libraries.
+
 Updates switched on (1.39.1)
 - FaceSort now checks github.com/drac0nik/FaceSort for new versions (once a day; turn off in
   Settings > General > Updates). Installed copies show an "Update to x.y.z" button when one

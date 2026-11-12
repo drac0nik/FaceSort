@@ -242,7 +242,7 @@ class GalleryMixin:
                                GROUP BY p.id ORDER BY p.name COLLATE NOCASE""").fetchall()
         for pid, name, n, sugg, rep in people:
             it = QTreeWidgetItem([f"{name}   {n}" + (f"  (+{sugg}?)" if sugg else "")])
-            it.setIcon(0, rep_icon(rep))
+            rep_icon(it, rep)
             it.setData(0, Qt.UserRole, ("later_person", pid))
             it.setData(0, Qt.UserRole + 1, name.lower())
             parent.addChild(it)
@@ -251,7 +251,7 @@ class GalleryMixin:
                                GROUP BY f.later_cluster ORDER BY COUNT(*) DESC""").fetchall()
         for i, (cl, n, fid) in enumerate(groups[:500]):
             it = QTreeWidgetItem([f"Group {i + 1}   {n} faces"])
-            it.setIcon(0, rep_icon(fid))
+            rep_icon(it, fid)
             it.setData(0, Qt.UserRole, ("later_group", cl))
             it.setData(0, Qt.UserRole + 2, i + 1)
             parent.addChild(it)

@@ -74,15 +74,19 @@ class ListsMixin:
             (tree or self.tree).addTopLevelItem(it)
             return it
 
-        def rep_icon(face_id):
-            # a face's round list icon: made once and kept with the face pictures (so it's dropped
-            # whenever they are - after turning a photo, say), reused on every refresh
+        icon_wait = []
+
+        def rep_icon(it, face_id):
+            # a face's round list icon: made once and reused on every refresh. Missing ones are made
+            # together at the end (one query for all their pictures, not one each)
             if face_id is None:
-                return QIcon()
-            ic = self.pix_cache.get(("rep", face_id))
-            if ic is None:
-                ic = self.pix_cache[("rep", face_id)] = QIcon(round_pixmap(self.face_pixmap(face_id, face_only=True), 72))
-            return ic
+                return
+            got = self.rep_cache.get(face_id)
+            if got is not None:
+                it.setIcon(0, got[1])
+                if self.rep_cache_checked == self.pix_cache.gen:
+                    return
+            icon_wait.append((it, face_id))
 
         # people, with counts (done as a few grouped queries: quick on big libraries)
         nface, nsugg, best = {}, {}, {}
@@ -142,7 +146,7 @@ class ListsMixin:
         def person_item(pid, name, n, sugg, rep, cat):
             text = f"{name}   {n - sugg}" + (f"  (+{sugg}?)" if sugg else "")
             it = QTreeWidgetItem([text])
-            it.setIcon(0, rep_icon(rep))
+            rep_icon(it, rep)
             it.setForeground(0, QBrush(yellow if sugg else green))
             tip = (f"{sugg} suggestion{'s' if sugg != 1 else ''} waiting for you to confirm"
                    if sugg else "All faces confirmed")
@@ -315,7 +319,7 @@ class ListsMixin:
             it = QTreeWidgetItem([f"Group {i + 1}   {n} faces{hint}"])
             if hint:
                 it.setToolTip(0, f"Most of these faces are in the folder “{hint[4:-1]}”")
-            it.setIcon(0, rep_icon(fid))
+            rep_icon(it, fid)
             it.setData(0, Qt.UserRole, ("group", cl))
             it.setData(0, Qt.UserRole + 2, i + 1)
             sec2.addChild(it)
@@ -452,6 +456,7 @@ class ListsMixin:
             if target is not None:
                 self.select_item(target, switch=False)
                 self.view = key_of(target)
+        self.make_rep_icons(icon_wait)
         self.filter_tree(self.search.text())
         for t, sc in zip(self.trees, scrolls):
             t.verticalScrollBar().setValue(sc)   # don't jump the lists after every change

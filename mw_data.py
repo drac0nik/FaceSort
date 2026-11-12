@@ -2,14 +2,16 @@
 import os
 import re
 import time
+import zlib
 import engine
 import jobs
 import known
 import store
 from PySide6.QtCore import QEvent, QSize, Qt
-from PySide6.QtGui import QColor, QPixmap
+from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import QDialog
 from viewer_parts import PersonPicker
+from ui_common import round_pixmap
 
 
 class DataMixin:
@@ -90,6 +92,33 @@ class DataMixin:
                     del self.pix_cache[k]
             self.pix_cache[fid] = pm
         return pm
+
+    def make_rep_icons(self, wanted):
+        """The round face icons of the side lists, for [(item, face id)]: the pictures are read in a
+        few queries and each icon is made once; a cached one is kept while its picture is unchanged
+        (it's checked after anything that may have changed pictures - a scan, turning a photo...)."""
+        if not wanted:
+            self.rep_cache_checked = self.pix_cache.gen
+            return
+        ids = list(dict.fromkeys(f for _, f in wanted))
+        blobs = {}
+        for i in range(0, len(ids), 900):
+            part = ids[i:i + 900]
+            blobs.update(self.conn.execute(f"SELECT id, thumb FROM faces WHERE id IN ({','.join('?' * len(part))})",
+                                           part).fetchall())
+        for it, fid in wanted:
+            data = blobs.get(fid) or b""
+            crc = zlib.crc32(data)
+            got = self.rep_cache.get(fid)
+            if got is None or got[0] != crc:
+                pm = QPixmap()
+                if data:
+                    pm.loadFromData(data, "JPG")
+                got = self.rep_cache[fid] = (crc, QIcon(round_pixmap(pm, 72)))
+            it.setIcon(0, got[1])
+        if len(self.rep_cache) > 20000:
+            self.rep_cache.clear()
+        self.rep_cache_checked = self.pix_cache.gen
 
     def file_icon_pixmap(self, path, want):
         """An other file in the gallery: the file type's icon from Windows on a tile, with its

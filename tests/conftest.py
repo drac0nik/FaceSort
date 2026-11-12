@@ -21,6 +21,7 @@ if ROOT not in sys.path:
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ["FACESORT_NO_PROMPT"] = "1"
 os.environ["FACESORT_NO_UPDATE_CHECK"] = "1"
+os.environ["FACESORT_NO_STALLWATCH"] = "1"
 
 from PIL import Image  # noqa: E402
 

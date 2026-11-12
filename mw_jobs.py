@@ -572,6 +572,7 @@ class JobsMixin:
                      include_dropped=dlg.include_dropped(), convert_webp=dlg.convert())
 
     def closeEvent(self, e):
+        getattr(self, "stallwatch", None) and self.stallwatch.stop()
         try:
             store.save_settings(self.settings)  # remembers the thumbnail size
         except Exception:

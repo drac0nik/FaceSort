@@ -451,3 +451,36 @@ def test_background_work_waits_while_you_tag(window, qapp):
     assert w.regroup_wait() == 0
     assert cpulimit.threads_for("gentle", 8) == 4 and cpulimit.threads_for("full", 8) == 8
     assert cpulimit.threads_for("gentle", 1) == 1
+
+
+def test_speed_report_notes_a_stall(tmp_path, qapp, monkeypatch):
+    import stallwatch
+    monkeypatch.setattr(stallwatch, "OURS", os.path.dirname(os.path.abspath(__file__)))   # (count this file as ours)
+    from PySide6.QtWidgets import QWidget
+    host = QWidget()
+    sw = stallwatch.StallWatch(str(tmp_path / "speed.log"), lambda: "view=test")
+    sw.start(host)
+    pump(qapp, 0.3)
+
+    def busy_for_a_while():
+        end = time.time() + 0.6
+        while time.time() < end:
+            sum(range(1000))
+    busy_for_a_while()
+    pump(qapp, 0.4)
+    sw.stop()
+    text = (tmp_path / "speed.log").read_text()
+    assert "stall" in text and "view=test" in text and "busy_for_a_while" in text
+
+
+def test_side_list_icons_made_together(window, qapp):
+    w = window
+    w.rep_cache.clear()
+    w.rep_cache_checked = -1
+    w.rebuild_tree()
+    assert w.rep_cache, "face icons made"
+    n = len(w.rep_cache)
+    w.pix_cache.clear()                       # (e.g. after a scan): icons are checked, not remade
+    before = {k: v[1] for k, v in w.rep_cache.items()}
+    w.rebuild_tree()
+    assert len(w.rep_cache) == n and all(w.rep_cache[k][1] is before[k] for k in before)

@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 from icons import app_icon
 from ui_common import (
     APP_VERSION, DETECTOR_VERSION, ElidedLabel, FOLDER_BAR_MIN, HEAD_COL, LEGEND_GRAY, log, log_path,
-    open_file, path_label, show_in_folder, SideTree, std_icon, tool_button)
+    open_file, path_label, PixCache, show_in_folder, SideTree, std_icon, tool_button)
 from gallery import FaceDelegate, FaceModel, GalleryView, HiResLoader, ToolRow
 from mw_data import DataMixin
 from mw_lists import ListsMixin
@@ -48,8 +48,15 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
             store.apply_vault_hiding(self.conn)    # locked vaults stay hidden, from the very start
         except Exception as e:
             log(f"vaults: {e}")
-        self.pix_cache = {}
+        self.pix_cache = PixCache()
+        self.rep_cache = {}                        # side-list face icons: face id -> (picture checksum, icon)
+        self.rep_cache_checked = -1
         self.hi_cache = {}
+        import stallwatch                          # speed report: notes moments the window is slow
+        self.stallwatch = stallwatch.StallWatch(os.path.join(store.data_dir(), "speed.log"),
+                                                lambda: f"view={getattr(self, 'view', ('',))[0]}")
+        if not os.environ.get("FACESORT_NO_STALLWATCH"):
+            self.stallwatch.start(self)
         self.cell = int(self.settings.get("thumb_size", 120))
         self.viewer_mode = self.settings.get("view_mode") == "viewer"
         self._data_gen = 0

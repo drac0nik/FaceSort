@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QRadioButton, QScrollArea,
     QSlider, QSpinBox, QTabWidget, QVBoxLayout, QWidget)
 from icons import app_icon
-from ui_common import APP_VERSION, clean_generic, ElidedLabel, generic_names, HEAD_COL, PLACEHOLDER_NAMES
+from ui_common import APP_VERSION, clean_generic, ElidedLabel, generic_names, HEAD_COL, PLACEHOLDER_NAMES, show_in_folder
 from gallery import thumb_cache_dir, thumb_cache_size
 
 
@@ -126,6 +126,19 @@ class SettingsDialog(QDialog):
             nb.setWordWrap(True)
             nb.setStyleSheet("color: gray;")
             lay.addWidget(nb)
+        heading("Speed report", lay)
+        sr = QHBoxLayout()
+        sn = QLabel("FaceSort notes each moment the window is slow to respond, and what it was busy with, in "
+                    "speed.log (on this PC only). If FaceSort feels sluggish, send that file along.")
+        sn.setWordWrap(True)
+        sn.setStyleSheet("color: gray;")
+        sr.addWidget(sn, 1)
+        show_sr = QPushButton("Show speed.log")
+        show_sr.clicked.connect(lambda: show_in_folder(os.path.join(store.data_dir(), "speed.log"))
+                                if os.path.exists(os.path.join(store.data_dir(), "speed.log"))
+                                else QMessageBox.information(self, "Speed report", "No slow moments noted yet."))
+        sr.addWidget(show_sr)
+        lay.addLayout(sr)
 
         lay = pages["scan"][0]
         heading("Face recognition", lay)
