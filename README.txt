@@ -153,6 +153,33 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+Smart Groups, reorganised; men / unsure; head angle (1.42)
+- Unknown faces: faces nobody is named for (and not like any group) on photos that aren't
+  sorted at all - nobody tagged on them, no folder, not in your sorted library. A photo with
+  only a folder (a parade, a concert) counts as sorted and leaves the list.
+- Partially tagged (new, its own group): group photos - more than one face box - where
+  someone is tagged and other faces aren't named yet. (Replaces "Tagged / sorted".)
+- Men and Unsure (with Settings > Scanning > Face details): under both groups, the faces
+  that look male, and the ones where it's hard to tell (too small, turned away, or the
+  estimate wasn't sure). Each has an "Ignore all" button (asked first; undo from Ignored).
+  The rest of each group is the faces that look female. It's an estimate, read on this PC.
+- Same shoot and Tattoo matches: only photos nobody is tagged on (and with no folder).
+- No faces found: photos with no face box at all (a face box you drew counts), nobody
+  tagged and no folder.
+- Not where they belong: only files that turned up somewhere FaceSort didn't put them -
+  added to or moved within your sorted library by hand. Photos FaceSort placed and that
+  are simply due to move (tagged differently, folder changed) are counted on the button
+  instead: "Sort into folders (12)…" = what the next sort would move or copy, including
+  newly tagged photos still in your photo folders.
+- Smart Groups > "Other:" orders that list: the usual order, most / fewest first, or A-Z
+  (the "Groups:" box still groups the unnamed groups by face, date or location).
+- Head angle (Face details): faces turned well to the side need a closer match before
+  they're suggested as someone (that's where many wrong suggestions came from), and each
+  person's icon is a front-on face where there is one.
+- Face details uses two InsightFace models (about 108 MB, downloaded once from InsightFace's
+  GitHub page - only those two files from their model pack - and checked; free for
+  non-commercial use). They read each face's stored thumbnail; no photo is opened.
+
 Check for updates button (1.41.2)
 - The toolbar (top right, beside Settings) has a "Check for updates" button. When a newer
   version is out it turns into the green "Update to x.y.z" button in the same place.

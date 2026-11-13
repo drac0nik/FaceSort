@@ -962,10 +962,47 @@ def plan_destinations(conn, include_suggestions=False, ai_folder=False, include_
     return plan, discarded, later
 
 
+def pending_moves(conn, dest, include_suggestions=False, ai_folder=False):
+    """How many photos the next Sort into folders would move or copy: those not yet in (each of)
+    the folders they belong in - newly tagged photos still in your photo folders, and photos in
+    the library whose tags or folder changed since. (A same-named file of the same size already
+    in the target folder counts as done.)"""
+    if not dest:
+        return 0
+    plan, _, _ = plan_destinations(conn, include_suggestions, ai_folder)
+    listing = {}
+
+    def files_in(folder):
+        if folder not in listing:
+            try:
+                listing[folder] = {e.name.casefold(): e.stat().st_size for e in os.scandir(folder) if e.is_file()}
+            except OSError:
+                listing[folder] = {}
+        return listing[folder]
+    n = 0
+    for pid, (path, folders) in plan.items():
+        name = os.path.basename(path).casefold()
+        here = os.path.normcase(os.path.dirname(os.path.abspath(path)))
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            continue
+        for f in folders:
+            target = os.path.normcase(os.path.abspath(os.path.join(dest, f)))
+            if target == here:
+                continue
+            if files_in(target).get(name) != size:
+                n += 1
+                break
+    return n
+
+
 def misplaced(conn, dest, include_suggestions=False, ai_folder=False):
-    """Photos already in the sorted library (the Sort into folders destination, or a vault's own
-    place) that aren't in a folder Sort into folders would put them in - left over from an
-    older FaceSort, moved by hand, or tagged differently since: [(photo id, path, where it goes)].
+    """Photos in the sorted library (the Sort into folders destination, or a vault's own place)
+    that the scan found somewhere FaceSort didn't put them - added or moved by hand outside
+    FaceSort - and that aren't where they belong: [(photo id, path, where it goes)]. Photos
+    FaceSort placed itself and that are now due to move (tagged differently since) aren't listed:
+    they're counted on the Sort into folders button instead.
     Photos outside the library (not sorted yet) aren't counted; nor is anything inside
     '~To Be Discarded' or the ~links / ~archives / ~files folders."""
     if not dest:
@@ -985,7 +1022,10 @@ def misplaced(conn, dest, include_suggestions=False, ai_folder=False):
         if any(part.lower() in skip for part in rel.replace("\\", "/").split("/")):
             return None
         return here
+    outside = {r[0] for r in conn.execute("SELECT id FROM photos WHERE outside=1")}
     for pid, (path, folders) in plan.items():
+        if pid not in outside:
+            continue                 # FaceSort put it there: ready to move, counted on Sort into folders
         here = in_library(path)
         if here is None:
             continue
@@ -995,7 +1035,7 @@ def misplaced(conn, dest, include_suggestions=False, ai_folder=False):
     # in the sorted library but nothing says where it goes (an older FaceSort sorted it, but its
     # tags are gone): it needs sorting again, so it's listed (it isn't moved until it's tagged)
     for pid, path in conn.execute("""SELECT id, path FROM photos ph WHERE error IS NULL AND dropped IS NULL
-                                     AND COALESCE(sort_later, 0)=0 AND copy_of IS NULL
+                                     AND COALESCE(sort_later, 0)=0 AND copy_of IS NULL AND outside=1
                                      AND NOT EXISTS (SELECT 1 FROM faces f WHERE f.photo_id=ph.id
                                                      AND f.person_id IS NOT NULL AND f.ignored=0)"""):
         # (a photo with names suggested is waiting to be confirmed - not listed)
@@ -1098,7 +1138,7 @@ def export_folders(conn, dest, include_suggestions=False, move=False,
                         conn.execute("DELETE FROM photos WHERE id=?", (pid,))
                     else:
                         st = os.stat(new)
-                        conn.execute("UPDATE photos SET path=?, mtime=?, size=? WHERE id=?",
+                        conn.execute("UPDATE photos SET path=?, mtime=?, size=?, outside=0 WHERE id=?",
                                      (new, round(st.st_mtime, 3), st.st_size, pid))
                     conn.commit()
                     known.move_marks(src, new)
@@ -1110,6 +1150,7 @@ def export_folders(conn, dest, include_suggestions=False, move=False,
                         stats["skipped"] += 1
                         continue
                     shutil.copy2(current, target)
+                    store.mark_placed(conn, target)
                     if sc:
                         shutil.copy2(sc, xmp.sidecar_path(target))
                     _carry_companions(comps, target, current, move=False)
@@ -1203,6 +1244,7 @@ def _file_drop_files(conn, dest, move, include_dropped, dir_dests, stats, log_ro
                     log_rows.append((path, store.norm_path(target)))
                 else:
                     shutil.copy2(src if first else path, target)
+                store.mark_placed(conn, target)
             stats["extra_files"] = stats.get("extra_files", 0) + 1
             done_ids.append(fid)
         except Exception as e:
@@ -1261,6 +1303,7 @@ def _export_converted(conn, pid, src, folders, dest, move, stats, log_rows, done
         folder = os.path.join(dest, folder_name)
         os.makedirs(folder, exist_ok=True)
         out, there = _free_name(folder, name, data)
+        store.mark_placed(conn, out)
         if not there:
             with open(out, "wb") as f:
                 f.write(data)
@@ -1290,7 +1333,7 @@ def _export_converted(conn, pid, src, folders, dest, move, stats, log_rows, done
             conn.execute("DELETE FROM photos WHERE id=?", (pid,))
         else:
             st = os.stat(new)
-            conn.execute("UPDATE photos SET path=?, mtime=?, size=?, tagsig=NULL WHERE id=?",
+            conn.execute("UPDATE photos SET path=?, mtime=?, size=?, tagsig=NULL, outside=0 WHERE id=?",
                          (new, round(st.st_mtime, 3), st.st_size, pid))
         conn.commit()
         known.move_marks(src, new)

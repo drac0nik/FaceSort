@@ -213,6 +213,11 @@ class GalleryMixin:
         self.rebuild_tree()
         self.refresh_grid(keep_selection=False)
 
+    def set_other_sort(self, i):
+        self.settings["other_sort"] = self.other_modes[i][0]
+        store.save_settings(self.settings)
+        self.rebuild_tree()
+
     def add_buckets(self, section, mode):
         """Lower list sorted by date taken / date created / original location instead of by face."""
         buckets = store.photo_buckets(self.conn, mode)
@@ -358,7 +363,7 @@ class GalleryMixin:
         return None
 
     def first_selectable(self):
-        prefer = ("group", "person", "unknown")
+        prefer = ("group", "person", "unknown", "partial")
         items = list(self.iter_items())
         for kind in prefer:
             for it in items:
@@ -433,15 +438,31 @@ class GalleryMixin:
             self.view = view
             self.refresh_grid(keep_selection=False)
 
+    def ignore_all_shown(self):
+        """Men / Unsure: ignore every face shown here (asked first). Undo: Smart Groups > Ignored."""
+        ids = [r[0] for r in self.model.rows if r[0] > 0]
+        if not ids:
+            return
+        part = {"men": "Men", "unsure": "Unsure"}.get(self.view[1], "")
+        if QMessageBox.question(self, "Ignore all", f"Ignore all {len(ids):,} face{'s' if len(ids) != 1 else ''} in "
+                                f"{self.title.text()}?\n\nThey're set aside as strangers (not suggested or grouped). "
+                                "You can bring any of them back from Ignored.",
+                                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        store.set_ignored(self.conn, ids, True)
+        self.statusBar().showMessage(f"✓ {len(ids):,} face{'s' if len(ids) != 1 else ''} ignored ({part})", 8000)
+        self.quick_change(regroup=False, drop=ids)
+
     def shoot_rows(self):
         """Same shoot: one section per suggested person. A row is the person's face (or, with no face
         to see, the photo - several people without a face on one photo share its row); self._shoot
         maps each row's id to [(body, reason, similarity, name)]."""
         self._shoot = {}
-        out = self.conn.execute("""SELECT s.body_id, s.person_id, p.name, s.reason, s.score, b.face_id, b.photo_id,
+        out = self.conn.execute(f"""SELECT s.body_id, s.person_id, p.name, s.reason, s.score, b.face_id, b.photo_id,
                                           ph.path FROM body_suggestions s JOIN bodies b ON b.id=s.body_id
                                    JOIN photos ph ON ph.id=b.photo_id JOIN persons p ON p.id=s.person_id
-                                   WHERE ph.sort_later=0 ORDER BY p.name COLLATE NOCASE, s.score DESC""").fetchall()
+                                   WHERE ph.sort_later=0 AND NOT {self.sorted_photo_sql()}
+                                   ORDER BY p.name COLLATE NOCASE, s.score DESC""").fetchall()
         sections = {}                        # person -> (name, [(row id, path)])
         for bid, person, name, reason, score, fid, photo, path in out:
             rid = fid if fid else -photo
@@ -534,23 +555,22 @@ class GalleryMixin:
                                   + (f" · matches your folder “{folder}” (suggested as the name)" if folder else ""))
             self.set_buttons([("Name this group…", self.name_group, True),
                               ("Ignore group", self.ignore_group)])
-        elif kind == "unknown":
-            extra = ""
-            if ident == "sorted":
-                extra = " AND " + self.sorted_photo_sql()
-            elif ident == "unsorted":
-                extra = " AND NOT " + self.sorted_photo_sql()
-            rows = c.execute(base + "WHERE f.person_id IS NULL AND f.cluster IS NULL AND f.ignored=0" + extra +
+        elif kind in ("unknown", "partial"):
+            if ident not in (None, "men", "unsure"):
+                ident = None                          # (older versions' "sorted" / "unsorted" parts)
+                self.view = (kind, None)
+            rows = c.execute(base + "WHERE " + self.smart_faces_sql(kind, ident) +
                              " ORDER BY " + store.clear_order() + " DESC LIMIT 5000").fetchall()
-            self.title.setText({None: "Unknown faces", "sorted": "Unknown faces · Tagged / sorted",
-                                "unsorted": "Unknown faces · Untagged / unsorted"}[ident])
-            self.subtitle.setText({None: "Faces that didn't match anyone else (yet)",
-                                   "sorted": "Faces nobody is named for yet, on photos that are already sorted "
-                                             "(someone else on it is tagged, it has a folder, or the file is in "
-                                             "your sorted library)",
-                                   "unsorted": "Faces nobody is named for yet, on photos that aren't sorted at all "
-                                               "(nobody tagged, no folder)"}[ident])
-            self.set_buttons([])
+            top = "Unknown faces" if kind == "unknown" else "Partially tagged"
+            self.title.setText(top + {None: "", "men": " · Men", "unsure": " · Unsure"}[ident])
+            if kind == "unknown":
+                what = "Faces that didn't match anyone, on photos that aren't sorted yet (nobody tagged, no folder)"
+            else:
+                what = "Faces nobody is named for yet, on group photos where someone else is already tagged"
+            self.subtitle.setText(what + {None: "", "men": " - the ones that look male (an estimate)",
+                                          "unsure": " - the ones where it's hard to tell"}[ident])
+            n = sum(1 for r in rows if r[0] > 0)
+            self.set_buttons([(f"Ignore all {n:,}…", self.ignore_all_shown)] if ident and n else [])
         elif kind in ("notfaces", "maybe_notfaces"):
             rows = c.execute(base + "WHERE f.ignored=? ORDER BY f.id DESC LIMIT 5000",
                              (3 if kind == "notfaces" else 4,)).fetchall()
@@ -591,9 +611,9 @@ class GalleryMixin:
                                   "C = yes, it's them · R = not them · point at one to see why.")
             self.set_buttons([("Confirm all…", self.confirm_all_shoot) if n else None])
         elif kind == "tattoos":
-            rows = c.execute("""SELECT -ph.id, ph.path, GROUP_CONCAT(p.name || '?', ', '), 0 FROM tattoo_suggestions ts
+            rows = c.execute(f"""SELECT -ph.id, ph.path, GROUP_CONCAT(p.name || '?', ', '), 0 FROM tattoo_suggestions ts
                                 JOIN photos ph ON ph.id=ts.photo_id JOIN persons p ON p.id=ts.person_id
-                                WHERE ph.sort_later=0
+                                WHERE ph.sort_later=0 AND NOT {self.sorted_photo_sql()}
                                 GROUP BY ph.id ORDER BY MAX(ts.inliers) DESC LIMIT 10000""").fetchall()
             nmarks = c.execute("SELECT COUNT(*) FROM tattoos WHERE src='mark'").fetchone()[0]
             self.title.setText("Tattoo matches")
@@ -821,7 +841,7 @@ class GalleryMixin:
                                   "moves them with the photos. Double-click opens one.")
             self.set_buttons([("Tag people…", self.act_tag, True), ("Set folder…", self.act_category, True)])
         elif kind == "nofaces":
-            rows = c.execute(f"""SELECT -ph.id, ph.path, NULL, 1 FROM photos ph WHERE {NOFACES_WHERE}
+            rows = c.execute(f"""SELECT -ph.id, ph.path, NULL, 1 FROM photos ph WHERE {self.nofaces_sql()}
                                  ORDER BY ph.path LIMIT 5000""").fetchall()
             self.title.setText("No faces found")
             self.subtitle.setText(f"{len(rows):,} photo{'s' if len(rows) != 1 else ''} where no face was detected "
@@ -1023,7 +1043,7 @@ class GalleryMixin:
             items = ["[Enter] Rename"] + face_keys + ["Set C[a]tegory"]
         elif kind == "group":
             items = ["[Enter] Name", "[R]emove Face", "[T]ag Person", "[D]iscard", "Sort [L]ater", "[N]ot a Face", "[I]gnore"]
-        elif kind == "unknown":
+        elif kind in ("unknown", "partial"):
             items = ["[Enter] Name", "[T]ag Person", "[D]iscard", "Sort [L]ater", "[N]ot a Face", "[I]gnore"]
         elif kind in ("notfaces", "maybe_notfaces"):
             items = ["[N]ot a Face", "Restore button = it is a face"]

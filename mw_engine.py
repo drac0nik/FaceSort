@@ -2,6 +2,7 @@
 import os
 import rotate
 import engine
+import face_attrs
 import engine_hq
 import jobs
 import bodies
@@ -68,7 +69,7 @@ class EngineMixin:
         # place, then search-by-description indexing
         self._bg_queue = [self.start_stats, self.start_clarity, self.start_copies_check, self.start_misplaced,
                           self.start_clip_index, self.start_bodies, self.offer_folder_cleanup, self.start_update_check,
-                          self.offer_dark_look]
+                          self.offer_dark_look, self.offer_face_details, self.start_face_details]
         self._bg_timer = QTimer(self)
         self._bg_timer.timeout.connect(self.bg_tick)
         QTimer.singleShot(2500, lambda: None if getattr(self, "_closing", False) else self._bg_timer.start(1200))
@@ -345,6 +346,36 @@ class EngineMixin:
                 f"Check the {n:,} photos already in your library for dark ones and look at those again now?\n"
                 "Names you gave are kept. (Later: Settings > Look again in dark photos.)") == QMessageBox.Yes:
             self.rescan_dark(quiet=True)
+
+    def offer_face_details(self):
+        """Once (1.42): offer the two small face-detail models (Men / Unsure groups, head angle)."""
+        if self.settings.get("face_details") is not None or face_attrs.ready():
+            if face_attrs.ready() and self.settings.get("face_details") is None:
+                self.settings["face_details"] = True
+                store.save_settings(self.settings)
+            return
+        if os.environ.get("FACESORT_NO_PROMPT"):
+            return
+        yes = QMessageBox.question(
+            self, "Men / Unsure and head angle",
+            "New: FaceSort can tell which unnamed faces look male (so you can set them aside in one go - "
+            "Smart Groups > Men) and which way each head is turned (side-on faces are matched more carefully, "
+            "and front-on faces are picked for the people list).\n\n"
+            f"This needs two face models from InsightFace (about {face_attrs.DOWNLOAD_MB} MB, once; free for "
+            "non-commercial use). They work on this PC only - your photos are never uploaded.\n\n"
+            "Download them now? (Later: Settings > Scanning > Face details.)") == QMessageBox.Yes
+        self.settings["face_details"] = yes
+        store.save_settings(self.settings)
+        if yes:
+            self.get_face_details()
+
+    def get_face_details(self):
+        def got(ok):
+            if ok and face_attrs.ready():
+                self.start_face_details()
+        if not self.run_job("facedl", lambda conn, progress, cancelled: face_attrs.download(progress, cancelled),
+                            on_done=got):
+            QTimer.singleShot(30000, self.get_face_details)      # busy: try again a little later
 
     def rescan_all(self):
         """Run face detection again on every photo. Names are kept (faces are matched by position)."""

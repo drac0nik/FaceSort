@@ -412,6 +412,29 @@ def _draw(p, name):
         for i in range(5):
             p.drawRect(QRectF(13 + i * 8.5, 21, 4, 3))
             p.drawRect(QRectF(13 + i * 8.5, 40, 4, 3))
+    elif name == "partial":                   # two people, one ticked (a group photo, partly tagged)
+        p.setPen(Qt.NoPen)
+        p.setBrush(white)
+        p.drawEllipse(QPointF(22, 22), 7, 7)
+        p.drawPie(QRectF(9, 31, 26, 26), 0, 180 * 16)
+        p.setBrush(QColor(255, 255, 255, 150))
+        p.drawEllipse(QPointF(42, 22), 7, 7)
+        p.drawPie(QRectF(29, 31, 26, 26), 0, 180 * 16)
+        p.setPen(QPen(QColor(34, 197, 94), 5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        p.drawPolyline(QPolygonF([QPointF(12, 49), QPointF(18, 55), QPointF(30, 41)]))
+    elif name == "men":                       # the male sign
+        p.setPen(QPen(white, 6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        p.setBrush(Qt.NoBrush)
+        p.drawEllipse(QPointF(27, 37), 13, 13)
+        p.drawLine(QPointF(36.5, 27.5), QPointF(50, 14))
+        p.drawPolyline(QPolygonF([QPointF(36, 14), QPointF(50, 14), QPointF(50, 28)]))
+    elif name == "unsure":                    # a head with a question mark
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(255, 255, 255, 120))
+        p.drawEllipse(QPointF(32, 30), 18, 18)
+        p.drawPie(QRectF(12, 46, 40, 30), 0, 180 * 16)
+        p.setPen(white)
+        _text(p, 64, "?", 30)
     else:
         _text(p, 64, name[:1].upper(), 30)
 

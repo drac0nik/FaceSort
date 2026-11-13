@@ -7,6 +7,7 @@ import engine
 import jobs
 import known
 import bodies
+import face_attrs
 import updater
 import store
 from PySide6.QtCore import QTimer
@@ -15,7 +16,7 @@ from ui_common import (APP_VERSION, bodies_job, clarity_job, log, log_path, open
                        scan_and_group, stats_job, Worker)
 from dialogs import ExportDialog, ScanDialog
 
-LOOK_ONLY_JOBS = {"discardlook", "colordl"}   # jobs that only read or download (no redraw after)
+LOOK_ONLY_JOBS = {"discardlook", "colordl", "facedl"}   # jobs that only read or download (no redraw after)
 REGROUP_IDLE = 3.0       # (gentle background mode) seconds without a key / click before suggestions update
 
 
@@ -37,7 +38,7 @@ class JobsMixin:
         if self.busy():
             return True
         for name in ("regroup_worker", "remember_worker", "dup_worker", "copies_worker", "mis_worker",
-                     "clip_worker", "stats_worker", "clarity_worker", "bodies_worker"):
+                     "clip_worker", "stats_worker", "clarity_worker", "bodies_worker", "attrs_worker"):
             wk = getattr(self, name, None)
             if wk is not None and wk.isRunning():
                 return True
@@ -158,6 +159,23 @@ class JobsMixin:
         self.clarity_worker.ok.connect(lambda n: n and self.schedule_regroup())
         self.clarity_worker.failed.connect(lambda tb: log(tb))
         self.clarity_worker.start_background(self.settings)
+
+    def start_face_details(self):
+        """Men / Unsure and head angle for faces that don't have them yet (from their thumbnails,
+        in the background); the lists catch up when it's done."""
+        if not self.settings.get("face_details") or not face_attrs.ready():
+            return
+        w = getattr(self, "attrs_worker", None)
+        if w and w.isRunning():
+            return
+        if not self.conn.execute("SELECT 1 FROM faces WHERE male IS NULL AND thumb IS NOT NULL LIMIT 1").fetchone():
+            return
+        self.attrs_worker = Worker(lambda conn, progress, cancelled: face_attrs.read_missing(
+            conn, lambda d, t: progress(d, t, f"Reading face details… {d:,} / {t:,}"), cancelled))
+        self.attrs_worker.progress.connect(lambda d, t, m: self.statusBar().showMessage(m, 4000))
+        self.attrs_worker.ok.connect(lambda n: n and (self.schedule_regroup(), self.refresh_timer.start()))
+        self.attrs_worker.failed.connect(lambda tb: log(tb))
+        self.attrs_worker.start_background(self.settings)
 
     def start_bodies(self):
         """Same-shoot suggestions: find the people in photos not looked at yet (in the background,
@@ -303,6 +321,7 @@ class JobsMixin:
             QTimer.singleShot(4000, self.start_clip_index)     # new photos: searchable by description
             if getattr(self, "_shoot_after", True):
                 QTimer.singleShot(6000, self.start_bodies)     # ... and the people in them (same shoot)
+            QTimer.singleShot(3000, self.start_face_details)   # men / unsure and head angle for new faces
         nxt = getattr(self, "_after_dupes", None)
         if name == "dupes" and nxt:
             self._after_dupes = None
@@ -632,7 +651,7 @@ class JobsMixin:
                                getattr(self, "copies_worker", None), getattr(self, "clip_worker", None),
                                getattr(self, "stats_worker", None), getattr(self, "lowlight_worker", None),
                                getattr(self, "clarity_worker", None), getattr(self, "bodies_worker", None),
-                               getattr(self, "dest_worker", None), getattr(self, "cache_size_worker", None))
+                               getattr(self, "dest_worker", None), getattr(self, "attrs_worker", None))
                    if w is not None]
         for w in workers:
             if w.isRunning():

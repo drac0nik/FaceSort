@@ -238,6 +238,15 @@ class SettingsDialog(QDialog):
                                  "suggested in\nSmart Groups > Same shoot. Uses two small models from OpenCV (downloaded "
                                  "once, about 140 MB);\neverything runs on this PC.")
         lay.addWidget(self.cb_shoot)
+        import face_attrs
+        self.cb_details = QCheckBox("Face details: which unnamed faces look male (Smart Groups > Men / Unsure) "
+                                    "and which way heads are turned"
+                                    + ("" if face_attrs.ready() else f"   (gets {face_attrs.DOWNLOAD_MB} MB of models once)"))
+        self.cb_details.setChecked(bool(self.s.get("face_details")))
+        self.cb_details.setToolTip("Two InsightFace models (free for non-commercial use) read each face's thumbnail on "
+                                   "this PC. Side-on faces are then matched more carefully, and front-on faces are "
+                                   "picked for the people list. Men / women is an estimate: unclear faces go to Unsure.")
+        lay.addWidget(self.cb_details)
         rr = QHBoxLayout()
         dark_again = QPushButton("Look again in dark photos")
         dark_again.setToolTip("Find the dark photos scanned before this existed and look at them again.\n"
@@ -523,6 +532,7 @@ class SettingsDialog(QDialog):
         s["look_sideways"] = self.cb_side.isChecked()
         s["dark_second_look"] = self.cb_dark.isChecked()
         s["same_shoot"] = self.cb_shoot.isChecked()
+        s["face_details"] = self.cb_details.isChecked()
         s["background_cpu"] = "gentle" if self.cb_gentle.isChecked() else "full"
         s["tattoo_min_inliers"] = self.tat.value()
         s["keywords_all_people"] = self.cb_kw.isChecked()

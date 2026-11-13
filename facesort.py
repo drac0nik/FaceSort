@@ -78,6 +78,8 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         self.regroup_timer.timeout.connect(self.start_regroup)
         self.refresh_timer = QTimer(self, singleShot=True, interval=450)
         self.refresh_timer.timeout.connect(self._deferred_refresh)
+        self.pending_timer = QTimer(self, singleShot=True, interval=6000)     # Sort into folders (N)
+        self.pending_timer.timeout.connect(lambda: None if self.busy() else self.start_misplaced())
         # remembering people (known-people file + reference file) is saved in the background a
         # little while after you stop, not after every confirm
         self.remember_timer = QTimer(self, singleShot=True, interval=15000)
@@ -335,6 +337,14 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
                                             if k == self.settings.get("bottom_sort", "face")), 0))
         self.sort_box.setToolTip("How the photos still to sort are grouped in this list")
         self.sort_box.currentIndexChanged.connect(self.set_bottom_sort)
+        self.other_box = QComboBox()
+        self.other_modes = [("default", "Usual"), ("most", "Most"), ("fewest", "Fewest"), ("az", "A–Z")]
+        for _, label in self.other_modes:
+            self.other_box.addItem(label)
+        self.other_box.setCurrentIndex(next((i for i, (k, _) in enumerate(self.other_modes)
+                                             if k == self.settings.get("other_sort", "default")), 0))
+        self.other_box.setToolTip("The order of the Smart Groups under “Other” (Unknown faces, Sort Later, Duplicates…)")
+        self.other_box.currentIndexChanged.connect(self.set_other_sort)
         self.side_tabs = QTabBar()
         self.side_tabs.setExpanding(True)
         self.side_tabs.setDrawBase(False)
@@ -358,7 +368,7 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         self.side_stack.addWidget(page(self.tree, [self.pending_only_cb]))
         self.side_stack.addWidget(page(self.treeF))
         self.side_stack.addWidget(page(self.treeA))
-        self.side_stack.addWidget(page(self.tree2, [QLabel("Sort by:"), self.sort_box]))
+        self.side_stack.addWidget(page(self.tree2, [QLabel("Groups:"), self.sort_box, QLabel("Other:"), self.other_box]))
         self.side_tabs.currentChanged.connect(self.side_tab_changed)
         start_tab = int(self.settings.get("side_tab", 0))
         self.side_tabs.setCurrentIndex(max(0, min(3, start_tab)))

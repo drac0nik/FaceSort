@@ -29,7 +29,7 @@ try:                                     # video playback (Qt's own player, FFmp
 except Exception:
     MEDIA_OK = False
 SPEEDS = (0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 4.0)
-APP_VERSION = "1.41.2"
+APP_VERSION = "1.42.0"
 IDLE_REDRAW = 1.2       # seconds without a key / click before the sidebar and lists are fully redrawn
 DETECTOR_VERSION = 3   # bump when detection improves, so photos with no faces get re-checked
 SUGGEST = QColor(232, 160, 32)
@@ -501,8 +501,9 @@ def dup_sets_job(conn, progress, cancelled):
     return sets, store.DUP_UNCHECKED[0]
 
 
-def misplaced_job(conn, dest, inc, ai, progress=None, cancelled=None):
-    return jobs.misplaced(conn, dest, inc, ai)
+def misplaced_job(conn, dest, out, inc, ai, progress=None, cancelled=None):
+    """(photos not where they belong, how many photos the next Sort into folders would move)"""
+    return jobs.misplaced(conn, dest, inc, ai) if dest else [], jobs.pending_moves(conn, out, inc, ai)
 
 
 def clip_index_job(conn, progress=lambda d, t, m: None, cancelled=lambda: False):

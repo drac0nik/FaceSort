@@ -74,6 +74,7 @@ NOTFACE_STRONG_SIM = 0.55  # high accuracy: very alike a strongly-read mark (pat
 
 # face clarity (see engine.clarity_from_norm)
 REF_MIN_CLARITY = 0.3      # someone's photos clearer than this are what other faces are compared with
+SIDE_ON_EXTRA = 0.05      # a face turned fully side-on needs a match this much closer (head angle, 1.42)
 LOW_CLARITY_EXTRA = 0.06   # a completely unclear face needs a match this much closer to be suggested
 DEFAULT_CLARITY = 0.7      # faces not read yet
 # gallery order "clearest first": clarity, then size x confidence
@@ -151,6 +152,9 @@ CREATE TABLE IF NOT EXISTS categories(          -- folders: your save layout ("M
     parent_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,  -- nesting (folders inside folders)
     inside_person INTEGER DEFAULT 0,  -- (old versions) shared folder inside each person's folder
     owner_id INTEGER REFERENCES persons(id) ON DELETE CASCADE   -- top folder of a person's own folders
+);
+CREATE TABLE IF NOT EXISTS placed_paths(      -- files Sort into folders wrote into the sorted library (1.42)
+    path TEXT PRIMARY KEY
 );
 CREATE TABLE IF NOT EXISTS photo_folders(      -- person folders a photo is in (one per person)
     photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE,
@@ -401,15 +405,24 @@ def connect(path=None):
     if "clarity" not in fc:            # 1.36: how clearly each face can be recognised (0-1)
         conn.execute("ALTER TABLE faces ADD COLUMN clarity REAL")
         conn.commit()
+    if "outside" not in {r[1] for r in conn.execute("PRAGMA table_info(photos)")}:
+        # 1.42: 1 = the scan found this file somewhere new - added or moved outside FaceSort, not
+        # put there by Sort into folders (photos already in the library count as known)
+        conn.execute("ALTER TABLE photos ADD COLUMN outside INTEGER DEFAULT 0")
+        conn.commit()
+    if "male" not in fc:               # 1.42: looks male (0-1) and head angle in degrees (face_attrs.py)
+        for col in ("male", "yaw", "pitch", "roll"):
+            conn.execute(f"ALTER TABLE faces ADD COLUMN {col} REAL")
+        conn.commit()
     conn.execute("CREATE INDEX IF NOT EXISTS photos_category ON photos(category_id)")
     # covering index: lists and counts read this instead of the face rows (which hold fingerprints
     # and thumbnails), so big libraries stay quick
     new_index = not conn.execute("SELECT 1 FROM sqlite_master WHERE name='faces_cover'").fetchone()
-    if not new_index and "clarity" not in {r[2] for r in conn.execute("PRAGMA index_info(faces_cover)")}:
-        conn.execute("DROP INDEX faces_cover")          # 1.36: the index also holds clarity (best face first)
+    if not new_index and "yaw" not in {r[2] for r in conn.execute("PRAGMA index_info(faces_cover)")}:
+        conn.execute("DROP INDEX faces_cover")          # 1.42: the index also holds the face details
         new_index = True
     conn.execute("CREATE INDEX IF NOT EXISTS faces_cover ON faces(ignored, person_id, confirmed, cluster, photo_id, "
-                 "w, h, px, score, manual, clarity)")
+                 "w, h, px, score, manual, clarity, male, yaw, pitch)")
     if new_index or not conn.execute("SELECT 1 FROM sqlite_master WHERE name='sqlite_stat1'").fetchone():
         conn.execute("ANALYZE")      # lets SQLite pick the right index for each query
         conn.commit()
@@ -456,6 +469,15 @@ def norm_path(p):
 
 
 # ----------------------------------------------------------------- library ops
+def mark_placed(conn, path):
+    """Sort into folders wrote this file: when a scan finds it, it isn't "added outside FaceSort"."""
+    conn.execute("INSERT OR IGNORE INTO placed_paths(path) VALUES(?)", (norm_path(path),))
+
+
+def was_placed(conn, path):
+    return conn.execute("SELECT 1 FROM placed_paths WHERE path=?", (norm_path(path),)).fetchone() is not None
+
+
 def store_photo(conn, path, mtime, size, img, faces, hints=(), marks=(), photo_names=(), category=None,
                 keywords=None, tattoo_marks=(), settings=None, model="sface", manual_faces=(), person_folders=()):
     """Insert/replace one scanned photo. Keeps names on faces that were already known
@@ -518,7 +540,8 @@ def store_photo(conn, path, mtime, size, img, faces, hints=(), marks=(), photo_n
                            (path, mtime, size, img.width, img.height, img.orientation, len(faces),
                             getattr(img, "taken", None), int(video), getattr(img, "cover_t", None)))
         pid = cur.lastrowid
-        conn.execute("UPDATE photos SET created=? WHERE id=?", (file_created(path), pid))
+        conn.execute("UPDATE photos SET created=?, outside=? WHERE id=?",
+                     (file_created(path), 0 if was_placed(conn, path) else 1, pid))
     if is_new:
         if any(m[0] == -1 for m in marks):
             conn.execute("UPDATE photos SET discarded=1 WHERE id=?", (pid,))
@@ -1565,7 +1588,7 @@ def regroup(conn, threshold=0.42, progress=None, cancelled=lambda: False, sync=T
     nf_rows = conn.execute("SELECT emb, quality FROM faces WHERE ignored=3 AND model=?", (model,)).fetchall()
     notface = [emb_from_blob(b) for b, _ in nf_rows]
     nf_strong = np.array([(q or 0) >= NOTFACE_WEAK for _, q in nf_rows], dtype=bool)
-    cand = conn.execute("""SELECT id, emb, px, score, face_ok, quality, clarity FROM faces WHERE confirmed=0
+    cand = conn.execute("""SELECT id, emb, px, score, face_ok, quality, clarity, yaw, pitch FROM faces WHERE confirmed=0
                            AND ignored IN (0, 4) AND model=?""", (model,)).fetchall()
     # what each face has now: only the faces whose suggestion or group changes are written
     before = {fid: (p, c) for fid, p, c in conn.execute(
@@ -1618,6 +1641,10 @@ def regroup(conn, threshold=0.42, progress=None, cancelled=lambda: False, sync=T
     # a blurry face needs a closer match before it's suggested as someone (that's where wrong
     # suggestions came from), and counts less in the look-alike group it joins
     extra_thr = (LOW_CLARITY_EXTRA * (1.0 - clar)).astype(np.float32)
+    # a face turned well to the side (head angle, when known) is matched more carefully too: the
+    # fingerprints of side-on faces are less alike for the same person and more alike for others
+    turn = np.array([max(abs(c[7] or 0) / 45.0, abs(c[8] or 0) / 35.0) for c in cand], dtype=np.float32)
+    extra_thr += (SIDE_ON_EXTRA * np.clip(turn - 0.5, 0, 1.5) / 1.5).astype(np.float32)
     weights = (0.25 + 0.75 * clar).astype(np.float32)
 
     suggestion = np.zeros(len(ids), dtype=np.int64)   # 0 = no suggestion (real ids start at 1)

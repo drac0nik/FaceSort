@@ -21,6 +21,31 @@ class ListsMixin:
         self.refresh_grid()
         self.refresh_stats()
 
+    def sort_other(self, sec):
+        """Order the Smart Groups' "Other" list: as FaceSort lays it out, most / fewest first, or A-Z."""
+        mode = self.settings.get("other_sort", "default")
+        if mode == "default" or sec is None:
+            return
+        import re
+
+        def count(it):
+            m = re.search(r"(\d[\d,]*)\D*$", it.text(0))
+            return int(m.group(1).replace(",", "")) if m else 0
+
+        def name(it):
+            return re.sub(r"[\s\d,]+(sets?)?$", "", it.text(0)).lstrip("~").casefold()
+        kids = [sec.takeChild(0) for _ in range(sec.childCount())]
+        expanded = {id(k): k.isExpanded() for k in kids}
+        if mode == "az":
+            kids.sort(key=name)
+        else:
+            kids.sort(key=lambda k: (count(k), name(k)), reverse=(mode == "most"))
+            if mode == "fewest":
+                kids.sort(key=lambda k: (count(k), name(k)))
+        for k in kids:
+            sec.addChild(k)
+            k.setExpanded(expanded[id(k)])
+
     def refresh_stats(self):
         c = self.conn
         photos = c.execute("SELECT COUNT(*) FROM photos WHERE error IS NULL AND COALESCE(is_other, 0)=0").fetchone()[0]
@@ -90,12 +115,14 @@ class ListsMixin:
 
         # people, with counts (done as a few grouped queries: quick on big libraries)
         nface, nsugg, best = {}, {}, {}
-        for person, fid, conf, q in c.execute(f"""SELECT person_id, id, confirmed, {store.clear_order("")} FROM faces
-                                                  WHERE ignored=0 AND person_id IS NOT NULL"""):
+        for person, fid, conf, q, turned in c.execute(
+                f"""SELECT person_id, id, confirmed, {store.clear_order("")},
+                           ABS(COALESCE(yaw, 0)) > 30 OR ABS(COALESCE(pitch, 0)) > 25 FROM faces
+                    WHERE ignored=0 AND person_id IS NOT NULL"""):
             nface[person] = nface.get(person, 0) + 1
             if not conf:
                 nsugg[person] = nsugg.get(person, 0) + 1
-            key = (conf, q or 0)
+            key = (conf, not turned, q or 0)      # the icon: a confirmed, front-on, clear face
             if person not in best or key > best[person][0]:
                 best[person] = (key, fid)
         ntag = dict(c.execute("""SELECT pp.person_id, COUNT(*) FROM photo_people pp JOIN photos x ON x.id=pp.photo_id
@@ -328,43 +355,51 @@ class ListsMixin:
         unk = c.execute("SELECT COUNT(*) FROM faces WHERE person_id IS NULL AND cluster IS NULL AND ignored=0").fetchone()[0]
         disc = c.execute("""SELECT COUNT(*) FROM photos WHERE sort_later=0 AND (discarded=1
                             OR id IN (SELECT photo_id FROM faces WHERE ignored=2))""").fetchone()[0]
-        nof = c.execute(f"""SELECT COUNT(*) FROM photos ph WHERE {NOFACES_WHERE}""").fetchone()[0]
+        nof = c.execute(f"""SELECT COUNT(*) FROM photos ph WHERE {self.nofaces_sql()}""").fetchone()[0]
         nlater = c.execute("SELECT COUNT(*) FROM photos WHERE sort_later=1").fetchone()[0]
         nunassoc = c.execute(f"SELECT COUNT(*) FROM photos ph WHERE {UNASSOC_WHERE}").fetchone()[0]
         errs = c.execute("SELECT COUNT(*) FROM photos WHERE error IS NOT NULL").fetchone()[0]
-        ntat = c.execute("""SELECT COUNT(DISTINCT ts.photo_id) FROM tattoo_suggestions ts JOIN photos ph
-                            ON ph.id=ts.photo_id WHERE ph.sort_later=0""").fetchone()[0]
+        ntat = c.execute(f"""SELECT COUNT(DISTINCT ts.photo_id) FROM tattoo_suggestions ts JOIN photos ph
+                             ON ph.id=ts.photo_id WHERE ph.sort_later=0 AND NOT {self.sorted_photo_sql()}""").fetchone()[0]
         nmarks = c.execute("SELECT COUNT(*) FROM tattoos").fetchone()[0]
         nmaybe = c.execute("SELECT COUNT(*) FROM faces WHERE ignored=4").fetchone()[0]
         st = self.style()
-        nunk_sorted = c.execute(f"""SELECT COUNT(*) FROM faces f JOIN photos ph ON ph.id=f.photo_id
-                                    WHERE f.person_id IS NULL AND f.cluster IS NULL AND f.ignored=0
-                                    AND {self.sorted_photo_sql()}""").fetchone()[0] if unk else 0
+        unk, unk_men, unk_unsure = self.smart_face_counts("unknown")
+        part, part_men, part_unsure = self.smart_face_counts("partial")
+        details = bool(self.settings.get("face_details"))
         for text, key, icon in ((f"Unknown faces   {unk}", ("unknown", None), QStyle.SP_MessageBoxQuestion),
+                                (f"Partially tagged   {part}", ("partial", None), "partial"),
                                 (f"Sort Later   {nlater}", ("sortlater", None), QStyle.SP_FileDialogListView),
                                 (f"No faces found   {nof}", ("nofaces", None), QStyle.SP_FileIcon),
                                 (f"Unassociated files   {nunassoc}", ("unassoc", None), QStyle.SP_FileLinkIcon),
                                 (f"~To Be Discarded   {disc}", ("discarded", None), QStyle.SP_TrashIcon)):
-            if key[0] == "unassoc" and not nunassoc:
+            if (key[0] == "unassoc" and not nunassoc) or (key[0] == "partial" and not part):
                 continue
             it = QTreeWidgetItem([text])
             if key[0] == "unassoc":
                 it.setToolTip(0, "Other files (documents, music, archives…) nobody is tagged on and that aren't in a "
                                  "folder yet. Tag people or set a folder and they move with Sort into folders.")
-            it.setIcon(0, std_icon(icon))
+            elif key[0] == "unknown":
+                it.setToolTip(0, "Faces nobody is named for, not like any group, on photos that aren't sorted at all "
+                                 "(nobody tagged, no folder)")
+            elif key[0] == "partial":
+                it.setToolTip(0, "Group photos where someone is already tagged and other faces aren't named yet")
+            it.setIcon(0, app_icon(icon) if isinstance(icon, str) else std_icon(icon))
             it.setData(0, Qt.UserRole, key)
             sec3.addChild(it)
             if key[0] == "sortlater" and nlater:
                 self.add_later_children(it, rep_icon)
-            if key[0] == "unknown" and unk:
-                for n, label, sub, tip in (
-                        (nunk_sorted, "Tagged / sorted", "sorted",
-                         "The photo is already sorted: someone on it is tagged, it has a folder, or the file is "
-                         "already in your sorted library"),
-                        (unk - nunk_sorted, "Untagged / unsorted", "unsorted",
-                         "Nobody on the photo is tagged and it has no folder - it hasn't been sorted yet")):
+            if key[0] in ("unknown", "partial") and details:
+                men, unsure = (unk_men, unk_unsure) if key[0] == "unknown" else (part_men, part_unsure)
+                for n, label, sub, ic, tip in (
+                        (men, "Men", "men", "men", "Faces that look male (an estimate - unclear ones are under Unsure)"),
+                        (unsure, "Unsure", "unsure", "unsure",
+                         "Faces where it's hard to tell (too small, turned away, or the estimate wasn't sure)")):
+                    if not n:
+                        continue
                     ch = QTreeWidgetItem([f"{label}   {n}"])
-                    ch.setData(0, Qt.UserRole, ("unknown", sub))
+                    ch.setData(0, Qt.UserRole, (key[0], sub))
+                    ch.setIcon(0, app_icon(ic))
                     ch.setToolTip(0, tip)
                     it.addChild(ch)
                 it.setExpanded(True)
@@ -375,8 +410,9 @@ class ListsMixin:
             it.setToolTip(0, f"{nmarks} tattoo mark{'s' if nmarks != 1 else ''} · "
                              f"{ntat} photo{'s' if ntat != 1 else ''} with a possible match to check")
             sec3.insertChild(2, it)
-        nshoot = c.execute("""SELECT COUNT(*) FROM body_suggestions s JOIN bodies b ON b.id=s.body_id
-                              JOIN photos ph ON ph.id=b.photo_id WHERE ph.sort_later=0""").fetchone()[0] \
+        nshoot = c.execute(f"""SELECT COUNT(*) FROM body_suggestions s JOIN bodies b ON b.id=s.body_id
+                               JOIN photos ph ON ph.id=b.photo_id WHERE ph.sort_later=0
+                               AND NOT {self.sorted_photo_sql()}""").fetchone()[0] \
             if self.settings.get("same_shoot") else 0
         if nshoot:
             it = QTreeWidgetItem([f"Same shoot   {nshoot}"])
@@ -428,6 +464,7 @@ class ListsMixin:
             it.setIcon(0, std_icon(QStyle.SP_MessageBoxWarning))
             it.setData(0, Qt.UserRole, ("errors", None))
             sec3.addChild(it)
+        self.sort_other(sec3)
         for top in self.top_items():
             top.setExpanded(top.text(0).split(" (")[0] not in collapsed)
         self.apply_scope_to_tree(c)

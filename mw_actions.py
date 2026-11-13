@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QAbstractItemView, QInputDialog, QMenu, QMessageBo
 from icons import app_icon
 from ui_common import (
     copies_job, dup_check_job, dup_sets_job, FOLDER_BAR_MIN, generic_names, IDLE_REDRAW, key_of, log, misplaced_job,
-    open_file, PEOPLE_LABEL, show_in_folder, std_icon, Worker)
+    NOFACES_WHERE, open_file, PEOPLE_LABEL, show_in_folder, std_icon, Worker)
 from gallery import FolderButton
 
 
@@ -51,6 +51,8 @@ class ActionsMixin:
         self.remember_timer.start()
         if self.view[0] == "misplaced":
             QTimer.singleShot(600, self.start_misplaced)   # tagged one: it can be put back now
+        else:
+            self.pending_timer.start()                      # the Sort into folders count, once you pause
         if defer:
             self.refresh_timer.start()
             if regroup:
@@ -412,7 +414,7 @@ class ActionsMixin:
             if k:
                 kinds.add(k[0])
             stack.extend(it.child(i) for i in range(it.childCount()))
-        return kinds | {"unknown", "group"}
+        return kinds | {"unknown", "group", "partial"}
 
     def split_by_folder(self, rows):
         """One section per folder the pictures are in, headed by the folder's full path (A to Z) with
@@ -579,6 +581,46 @@ class ActionsMixin:
         if self._dup_key != self.dup_key():
             self.dup_timer.start()
 
+    def person_tagged_sql(self, alias="ph"):
+        """SQL condition: someone on the photo is tagged - a confirmed face or a whole-photo tag."""
+        a = alias
+        return (f"({a}.id IN (SELECT photo_id FROM faces WHERE confirmed=1 AND person_id IS NOT NULL AND ignored=0)"
+                f" OR {a}.id IN (SELECT photo_id FROM photo_people))")
+
+    def smart_faces_sql(self, kind, sub=None):
+        """SQL condition (faces f joined to photos ph) for Unknown faces / Partially tagged and their
+        Men / Unsure parts:
+          unknown - unnamed faces not in a look-alike group, on photos that aren't sorted at all
+                    (nobody tagged, no folder, not in your sorted library)
+          partial - unnamed faces not in a look-alike group, on group photos (more than one face box)
+                    where someone is already tagged"""
+        import face_attrs
+        base = "f.person_id IS NULL AND f.cluster IS NULL AND f.ignored=0"
+        if kind == "partial":
+            cond = (f"{base} AND {self.person_tagged_sql()} AND ph.id IN (SELECT photo_id FROM faces "
+                    "WHERE ignored IN (0, 1, 5) GROUP BY photo_id HAVING COUNT(*) > 1)")
+        else:
+            cond = f"{base} AND NOT {self.sorted_photo_sql()}"
+        if sub == "men":
+            cond += " AND " + face_attrs.men_sql()
+        elif sub == "unsure":
+            cond += " AND " + face_attrs.unsure_sql()
+        return cond
+
+    def nofaces_sql(self):
+        """No faces found: no face box at all (found, or drawn by hand), nobody tagged, and not sorted
+        (no folder, not in your sorted library)."""
+        return (f"{NOFACES_WHERE} AND NOT EXISTS (SELECT 1 FROM faces f WHERE f.photo_id=ph.id "
+                f"AND f.ignored NOT IN (3, 4)) AND NOT {self.sorted_photo_sql()}")
+
+    def smart_face_counts(self, kind):
+        """(all, men, unsure) for Unknown faces / Partially tagged, in one read."""
+        import face_attrs
+        row = self.conn.execute(f"""SELECT COUNT(*), TOTAL({face_attrs.men_sql()}), TOTAL({face_attrs.unsure_sql()})
+                                    FROM faces f JOIN photos ph ON ph.id=f.photo_id
+                                    WHERE {self.smart_faces_sql(kind)}""").fetchone()
+        return int(row[0]), int(row[1] or 0), int(row[2] or 0)
+
     def sorted_photo_sql(self, alias="ph"):
         """SQL condition: the photo is already sorted - someone confirmed on it (face or whole-photo
         tag), it has a folder, or the file is already inside the sorted library / a vault's place."""
@@ -624,25 +666,39 @@ class ActionsMixin:
         self.copies_worker.failed.connect(lambda tb: log(tb))
         self.copies_worker.start()
 
+    def set_pending_moves(self, n):
+        """The count on the Sort into folders button: photos the next sort would move or copy."""
+        self._pending_moves = n
+        self.a_export.setText(f"Sort into folders ({n:,})…" if n else "Sort into folders…")
+        self.a_export.setToolTip("Copy or move photos into one folder per person"
+                                 + (f" - {n:,} photo{'s' if n != 1 else ''} ready to go into "
+                                    "their folders" if n else ""))
+
     def start_misplaced(self):
+        """In the background: photos not where they belong, and the count on Sort into folders."""
         dest = self.library_dest()
-        if not dest:
-            if getattr(self, "_misplaced", None):
-                self._misplaced = []
-                self.rebuild_tree()
+        out = self.settings.get("export_dir")
+        out = store.norm_path(out) if out and os.path.isdir(out) else None
+        if not dest and getattr(self, "_misplaced", None):
+            self._misplaced = []
+            self.rebuild_tree()
+        if not dest and not out:
+            self.set_pending_moves(None)
             return
         w = getattr(self, "mis_worker", None)
         if w and w.isRunning():
             QTimer.singleShot(3000, self.start_misplaced)
             return
-        self.mis_worker = Worker(misplaced_job, dest, bool(self.settings.get("tag_suggestions")),
+        self.mis_worker = Worker(misplaced_job, dest, out, bool(self.settings.get("tag_suggestions")),
                                  bool(self.settings.get("export_ai_folder")))
         self.mis_worker.ok.connect(self.misplaced_done)
         self.mis_worker.failed.connect(lambda tb: log(tb))
-        self.mis_worker.start()
+        self.mis_worker.start_background(self.settings)
 
     def misplaced_done(self, res):
         before = len(getattr(self, "_misplaced", None) or ())
+        res, pending = res if isinstance(res, tuple) else (res, None)
+        self.set_pending_moves(pending)
         self._misplaced = res or []
         if res:
             log(f"consistency check: {len(res)} photos not where they belong")
