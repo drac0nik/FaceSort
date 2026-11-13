@@ -79,10 +79,15 @@ def path():
     return os.path.join(store.data_dir(), "known_people.db")
 
 
+_READY = set()          # files whose tables are already up to date (checked once per run)
+
+
 def connect(p=None):
     p = p or path()
     fresh = not os.path.exists(p)
     c = sqlite3.connect(p, timeout=30)
+    if p in _READY and not fresh:
+        return c
     c.executescript(SCHEMA)  # also adds tables introduced in newer versions
     if "model" not in {r[1] for r in c.execute("PRAGMA table_info(samples)")}:
         c.execute("ALTER TABLE samples ADD COLUMN model TEXT DEFAULT 'sface'")
@@ -93,6 +98,7 @@ def connect(p=None):
     if fresh:
         c.execute("INSERT OR IGNORE INTO info(k, v) VALUES('format', 'facesort-known-people-1')")
         c.commit()
+    _READY.add(p)
     return c
 
 
@@ -482,10 +488,29 @@ def photo_tags_for(path_):
         return [r[0] for r in k.execute("SELECT name FROM photo_tags WHERE path=?", (path_,))]
 
 
+_NAMES = {}
+
+
 def names():
-    """Everyone remembered, even people with no photos in the current library."""
+    """Everyone remembered, even people with no photos in the current library. Kept in memory
+    until the file changes (it's asked for on every right-click and name box)."""
+    p = path()
+    try:
+        st = os.stat(p)
+        sig = (p, st.st_mtime_ns, st.st_size)
+        wal = p + "-wal"
+        if os.path.exists(wal):
+            w = os.stat(wal)
+            sig += (w.st_mtime_ns, w.st_size)
+    except OSError:
+        sig = None
+    if sig is not None and _NAMES.get("sig") == sig:
+        return list(_NAMES["names"])
     with _db() as k:
-        return [r[0] for r in k.execute("SELECT name FROM people ORDER BY name COLLATE NOCASE")]
+        got = [r[0] for r in k.execute("SELECT name FROM people ORDER BY name COLLATE NOCASE")]
+    if sig is not None:
+        _NAMES.update(sig=sig, names=got)
+    return list(got)
 
 
 def category_for(path_):

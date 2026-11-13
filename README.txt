@@ -153,6 +153,20 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+Quicker clicks (1.41.1) - from your speed report
+- Ignoring, removing, discarding, tagging photos, confirming same-shoot matches and closing
+  the viewer update the gallery straight away; the side lists and counts catch up when you
+  pause (each of these used to wait for a full redraw: about half a second per click).
+- Where each photo goes (for the folder counts in the side list) is worked out in the
+  background - on a big library that took 2-5 seconds after some changes.
+- Settings opens at once (the thumbnail cache is counted in the background, and faster).
+- Recycle Bin: looking in the ~To Be Discarded folders happens in the background (a sleeping
+  or disconnected drive held the window up for 17 seconds).
+- Right-click menus and name boxes no longer re-read the known-people file each time.
+- Stepping through photos in the viewer no longer re-checks the duplicates for each photo.
+- Starting a job (rescan, move...) no longer waits for who's-who to be saved first: that's
+  done at the start of the job itself.
+
 Face clarity brush (1.41)
 - In the viewer: Tools > Face clarity brush... (or the "Face clarity" switch in the touch-up
   brush). Paint over a face that's soft, blurry or small and let go: it's redrawn clearer by a

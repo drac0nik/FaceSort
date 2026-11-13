@@ -138,7 +138,7 @@ class FoldersMixin:
         sb = self.sel_shoot_bodies()
         if sb:
             bodies.confirm(self.conn, sb)
-            self.after_change()
+            self.quick_change()
             return
         tp = self.sel_tattoo_photos()
         if tp and self.view[0] in ("person", "tattoos"):

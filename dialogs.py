@@ -320,9 +320,8 @@ class SettingsDialog(QDialog):
         lay = general
         heading("Thumbnails", lay)
         cr = QHBoxLayout()
-        n, size = thumb_cache_size()
-        self.cache_label = QLabel(f"Thumbnail cache: {n:,} pictures, {size / 1e6:,.0f} MB "
-                                  "(saved so big libraries open instantly)")
+        self.cache_label = QLabel("Thumbnail cache: counting… (saved so big libraries open instantly)")
+        self._count_cache()
         self.cache_label.setStyleSheet("color: gray;")
         clear_cache = QPushButton("Clear")
         clear_cache.clicked.connect(self.clear_thumb_cache)
@@ -503,6 +502,9 @@ class SettingsDialog(QDialog):
             self.folders.addItems(self.win.settings["folders"])
             self.files = list(self.win.settings.get("files", []))
 
+    def _count_cache(self):
+        _count_in_background(self)
+
     def clear_thumb_cache(self):
         import shutil
         shutil.rmtree(thumb_cache_dir(), ignore_errors=True)
@@ -562,6 +564,26 @@ def gpu_names():
             except Exception:
                 pass
     return _gpu_names
+
+
+def _count_in_background(dlg):
+    """Count the thumbnail cache without holding up the Settings window (big caches take a while)."""
+    import threading
+    from PySide6.QtCore import QTimer
+    box = {}
+    threading.Thread(target=lambda: box.__setitem__("r", thumb_cache_size()), daemon=True).start()
+
+    def check():
+        if "r" not in box:
+            QTimer.singleShot(200, check)
+            return
+        n, size = box["r"]
+        try:
+            dlg.cache_label.setText(f"Thumbnail cache: {n:,} pictures, {size / 1e6:,.0f} MB "
+                                    "(saved so big libraries open instantly)")
+        except RuntimeError:
+            pass                                       # (the window was closed meanwhile)
+    QTimer.singleShot(200, check)
 
 
 class GenericNamesEditor(QWidget):

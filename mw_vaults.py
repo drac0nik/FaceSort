@@ -129,8 +129,17 @@ class VaultsMixin:
                          OR id IN (SELECT photo_id FROM faces WHERE ignored=2))""").fetchone()[0]
         roots = [r for r in dict.fromkeys([self.settings.get("library_root"), self.settings.get("export_dir")]
                                           + list(self.settings["folders"])) if r]
-        dirs = jobs.discard_dirs(c, roots)
-        extra = len(jobs.discard_contents(dirs))
+        # finding the "~To Be Discarded" folders looks at every photo folder and drive - a sleeping
+        # or disconnected drive can take many seconds to answer, so it's done in the background
+        def look(conn, roots, progress=None, cancelled=None):
+            d = jobs.discard_dirs(conn, roots)
+            return d, len(jobs.discard_contents(d))
+        if not self.run_job("discardlook", look, roots, on_done=lambda res: res and self._recycle_ask(n, roots, *res)):
+            QMessageBox.information(self, "Busy", "Wait for the current task to finish, then try again.")
+            return
+        self.statusBar().showMessage("Looking in the ~To Be Discarded folders…")
+
+    def _recycle_ask(self, n, roots, dirs, extra):
         if not n and not extra:
             QMessageBox.information(self, "Recycle Bin", "~To Be Discarded is empty.")
             return

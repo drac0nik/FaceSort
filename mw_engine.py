@@ -211,25 +211,25 @@ class EngineMixin:
                 store.untag_photos(self.conn, tagged, self.view[1])
             if ids:
                 store.reject(self.conn, ids)
-            self.after_change(regroup=bool(ids))
+            self.quick_change(regroup=bool(ids), drop=ids + [-p for p in photos])
         elif self.view[0] == "group":
             store.ungroup(self.conn, ids)
-            self.after_change(regroup=False)
+            self.quick_change(regroup=False, drop=ids)
         elif self.view[0] == "multi" and ids:
             kinds = {k[0] for k in self.view[1]}
             if kinds <= {"person", "later_person"}:
                 store.reject(self.conn, ids)
-                self.after_change()
+                self.quick_change(drop=ids)
             elif kinds <= {"group"}:
                 store.ungroup(self.conn, ids)
-                self.after_change(regroup=False)
+                self.quick_change(regroup=False, drop=ids)
         elif self.view[0] == "later_person" and ids:
             store.reject(self.conn, ids)
-            self.after_change()
+            self.quick_change(drop=ids)
         elif self.view[0] == "later_group" and ids:
             self.conn.execute(f"UPDATE faces SET later_cluster=NULL WHERE id IN ({','.join('?' * len(ids))})", ids)
             self.conn.commit()
-            self.after_change(regroup=False)
+            self.quick_change(regroup=False, drop=ids)
         elif self.view[0] == "nofaces" and photos:
             q = ",".join("?" * len(photos))
             n = self.conn.execute(f"SELECT COUNT(*) FROM photo_people WHERE photo_id IN ({q})", photos).fetchone()[0]
@@ -244,7 +244,7 @@ class EngineMixin:
         ids = self.sel_faces()
         if ids and self.view[0] != "ignored":
             store.set_ignored(self.conn, ids, True)
-            self.after_change(regroup=self.view[0] == "person")
+            self.quick_change(regroup=self.view[0] == "person", drop=ids)
 
     def retry_unreadable(self):
         """Forget the failures so the next scan tries those files again."""
@@ -267,7 +267,7 @@ class EngineMixin:
                 self.prune_dups(photos, ok)
                 self.quick_refresh()
                 return
-            self.after_change(regroup=self.view[0] == "person")
+            self.quick_change(regroup=self.view[0] == "person", drop=ids + [-p for p in photos])
 
     def act_undiscard(self):
         keys = self.selected_ids() if self.view[0] == "discarded" else []
@@ -491,7 +491,7 @@ class EngineMixin:
         if self.isFullScreen() or getattr(self, "_fs_on", False):
             self.toggle_fullscreen()
         if refresh:
-            self.after_change(regroup=False)
+            self.quick_change(regroup=False)
             # land on the photo you were looking at
             for i, r in enumerate(self.model.rows):
                 if r[0] == at:

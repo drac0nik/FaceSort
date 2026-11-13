@@ -175,7 +175,7 @@ class ListsMixin:
                 if r[0] not in lockedF or r[0] in vault_info]
         cats.sort(key=lambda r: (r[0] not in vault_info, r[1].casefold()))     # vaults first
         ftree = store.folder_tree(c)
-        by_cat, uncategorized = self.places()
+        by_cat, uncategorized = self.places(stale_ok=True)
         nocat = len(uncategorized)
         kids = {}
         ids = {cid for cid, _, _ in cats}

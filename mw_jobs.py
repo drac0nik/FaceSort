@@ -15,6 +15,7 @@ from ui_common import (APP_VERSION, bodies_job, clarity_job, log, log_path, open
                        scan_and_group, stats_job, Worker)
 from dialogs import ExportDialog, ScanDialog
 
+LOOK_ONLY_JOBS = {"discardlook", "colordl"}   # jobs that only read or download (no redraw after)
 REGROUP_IDLE = 3.0       # (gentle background mode) seconds without a key / click before suggestions update
 
 
@@ -182,8 +183,19 @@ class JobsMixin:
             return True
         if self.busy():
             return False
-        if name != "dupes":
-            self.remember_now()               # jobs read who's who from the known-people file
+        if name != "dupes" and self._remember_dirty:
+            # jobs read who's who from the known-people file: it's brought up to date first - in the
+            # job's own thread (on a big library that takes seconds the window shouldn't wait for)
+            self.remember_timer.stop()
+            self._remember_dirty = False
+            job = fn
+
+            def fn(conn, *a, _job=job, **k):
+                try:
+                    known.sync_from_library(conn)
+                except Exception as ex:
+                    log(f"saving known people: {ex}")
+                return _job(conn, *a, **k)
         self._job = name
         self.worker = Worker(fn, *args, **kw)
         self.worker.progress.connect(self.on_progress)
@@ -228,6 +240,16 @@ class JobsMixin:
         self.update_engine_label()
         self.set_busy(False)
         self.worker = None
+        look_only = name in LOOK_ONLY_JOBS      # changed nothing in the library: no redraw needed
+        if not look_only:
+            self._job_refresh(name)
+        if on_done:
+            on_done(res)
+        if self.regroup_pending:
+            self.schedule_regroup(now=True)
+        self._after_job(name)
+
+    def _job_refresh(self, name):
         self.pix_cache.clear()
         try:
             store.apply_vault_hiding(self.conn)      # newly scanned photos that belong in a locked vault
@@ -245,10 +267,8 @@ class JobsMixin:
             if self.conn.execute("SELECT 1 FROM photos WHERE dropped=?", (goto[1],)).fetchone():
                 self.view = goto
         self.refresh_all()
-        if on_done:
-            on_done(res)
-        if self.regroup_pending:
-            self.schedule_regroup(now=True)
+
+    def _after_job(self, name):
         if self._scan_after:
             self._scan_after = False
             QTimer.singleShot(200, self.start_scan)
@@ -589,7 +609,8 @@ class JobsMixin:
                                getattr(self, "mis_worker", None), getattr(self, "collage_worker", None),
                                getattr(self, "copies_worker", None), getattr(self, "clip_worker", None),
                                getattr(self, "stats_worker", None), getattr(self, "lowlight_worker", None),
-                               getattr(self, "clarity_worker", None), getattr(self, "bodies_worker", None))
+                               getattr(self, "clarity_worker", None), getattr(self, "bodies_worker", None),
+                               getattr(self, "dest_worker", None), getattr(self, "cache_size_worker", None))
                    if w is not None]
         for w in workers:
             if w.isRunning():

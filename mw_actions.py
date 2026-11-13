@@ -68,16 +68,20 @@ class ActionsMixin:
         if regroup:
             self.schedule_regroup()
 
-    def next_placeholder_name(self, prefix):
-        """“Model 07”: the lowest number nobody uses (here, in the known-people file, or in a locked
-        vault), so two unnamed people never share a name - and when “Model 03” is renamed to who she
-        really is, 03 is free to be used again."""
-        pat = re.compile(rf"^{re.escape(prefix)}\s*0*(\d+)$", re.I)
+    def all_person_names(self):
         names = [r[0] for r in self.conn.execute("SELECT name FROM persons")]
         try:
             names += list(known.names())
         except Exception:
             pass
+        return names
+
+    def next_placeholder_name(self, prefix, names=None):
+        """“Model 07”: the lowest number nobody uses (here, in the known-people file, or in a locked
+        vault), so two unnamed people never share a name - and when “Model 03” is renamed to who she
+        really is, 03 is free to be used again."""
+        pat = re.compile(rf"^{re.escape(prefix)}\s*0*(\d+)$", re.I)
+        names = self.all_person_names() if names is None else names
         used = {int(m.group(1)) for m in map(pat.match, names) if m}
         n = 1
         while n in used:
@@ -91,12 +95,13 @@ class ActionsMixin:
         items = generic_names(self.settings)
         shown = [g["name"] for g in items if g["menu"]]
         more = [g["name"] for g in items if not g["menu"]]
+        names = self.all_person_names()           # read once for the whole menu
         for prefix in shown:
-            new = self.next_placeholder_name(prefix)
+            new = self.next_placeholder_name(prefix, names)
             menu.addAction(f"Tag new “{new}”{suffix}", lambda new=new, pre=prefix: on_pick(new, pre))
         sub = menu.addMenu("More generic names" if shown else "Tag as a generic name")
         for prefix in more:
-            new = self.next_placeholder_name(prefix)
+            new = self.next_placeholder_name(prefix, names)
             sub.addAction(f"Tag new “{new}”{suffix}", lambda new=new, pre=prefix: on_pick(new, pre))
         if more:
             sub.addSeparator()
@@ -131,7 +136,7 @@ class ActionsMixin:
             except Exception:
                 pass
         if refresh:
-            self.after_change()
+            self.quick_change(drop=None if self.view[0] == "person" else list(ids))
         self.statusBar().showMessage(f"✓ {name} - saved under “Unknown {prefix}” (rename any time)", 6000)
 
     def assign_ids(self, ids, name, refresh=True):
@@ -147,6 +152,17 @@ class ActionsMixin:
             else:
                 self.drop_from_view(ids)
             self.after_change(defer=True)
+
+    def quick_change(self, regroup=True, drop=None):
+        """After an action on the tiles you're working on: the gallery is brought up to date now
+        (the tiles that leave are taken out, or the gallery alone is reloaded) and the side lists and
+        counts catch up once you pause - so ignoring, tagging or closing the viewer never waits for
+        a full redraw (that's what made each click take half a second on a big library)."""
+        if drop:
+            self.drop_from_view(drop)
+        else:
+            self.refresh_grid()
+        self.after_change(regroup=regroup, defer=True)
 
     def drop_from_view(self, ids):
         """Named faces leave a list of unnamed faces / someone else's gallery: take their tiles out
@@ -292,7 +308,7 @@ class ActionsMixin:
         name = self.ask_name(f"Who's in {'this photo' if len(photos) == 1 else f'these {len(photos)} photos'}?")
         if name:
             store.tag_photos(self.conn, photos, store.get_or_create_person(self.conn, name))
-            self.after_change(regroup=False)
+            self.quick_change(regroup=False)
 
     def ask_category(self, photo_ids, title):
         paths = [r[0] for r in self.conn.execute(
@@ -492,6 +508,18 @@ class ActionsMixin:
         return out
 
     def dup_key(self):
+        """What the duplicate sets depend on. It reads every photo (a third of a second on a big
+        library), so it's re-read only after a change here, after background work, or every few
+        seconds - not for each photo you step through in the viewer."""
+        stamp = (id(self.conn), self.conn.total_changes, getattr(self, "_data_gen", 0))
+        got = getattr(self, "_dup_key_memo", None)
+        if got and got[0] == stamp and time.monotonic() - got[1] < 5:
+            return got[2]
+        key = self._dup_key_read()
+        self._dup_key_memo = (stamp, time.monotonic(), key)
+        return key
+
+    def _dup_key_read(self):
         return (id(self.conn),) + tuple(self.conn.execute(
             """SELECT COUNT(*), TOTAL(phash), TOTAL(discarded), TOTAL(sort_later),
                       (SELECT COUNT(*) FROM dup_ignore), (SELECT COUNT(*) FROM faces WHERE ignored=2),
@@ -919,16 +947,41 @@ class ActionsMixin:
         self.structure_changed(f"Folder created: {self.cat_name(cid)}"
                                + (f" ({len(photos)} photo{'s' if len(photos) != 1 else ''} in it)" if photos else ""))
 
-    def destinations(self, include_suggestions=False):
+    def destinations(self, include_suggestions=False, stale_ok=False):
         """store.photo_destinations, worked out once per change of the library (it reads every
-        photo, so the sidebar and the views share one copy)."""
-        key = (self.conn.total_changes, self._data_gen, include_suggestions, id(self.conn))
-        cache = getattr(self, "_dest_cache", {})
-        if key not in cache:
-            conf, sugg = store.photo_destinations(self.conn, "both")      # both kinds in one read
-            cache = {key[:2] + (False,) + key[3:]: conf, key[:2] + (True,) + key[3:]: sugg}
-            self._dest_cache = cache
-        return cache[key]
+        photo, so the sidebar and the views share one copy). stale_ok (the side list's folder
+        counts): if it's out of date, the last copy is used now and a fresh one is worked out in the
+        background - on a big library that takes seconds, and the lists redraw when it's ready."""
+        key = (self.conn.total_changes, self._data_gen, id(self.conn))
+        cache = getattr(self, "_dest_cache", None)
+        if cache and cache[0] == key:
+            return cache[2 if include_suggestions else 1]
+        if stale_ok and cache:
+            self._refresh_destinations(key)
+            return cache[2 if include_suggestions else 1]
+        conf, sugg = store.photo_destinations(self.conn, "both")      # both kinds in one read
+        self._dest_cache = (key, conf, sugg)
+        return sugg if include_suggestions else conf
+
+    def _refresh_destinations(self, key):
+        w = getattr(self, "dest_worker", None)
+        if w is not None and w.isRunning():
+            self._dest_again = True
+            return
+        self._dest_again = False
+
+        def done(res):
+            if getattr(self, "_closing", False) or res is None:
+                return
+            now = (self.conn.total_changes, self._data_gen, id(self.conn))
+            self._dest_cache = (key, res[0], res[1])
+            if now != key or self._dest_again:
+                self._refresh_destinations(now)          # changed again meanwhile: once more
+            else:
+                self.refresh_timer.start()               # the folder counts catch up when you pause
+        self.dest_worker = Worker(lambda conn, progress=None, cancelled=None: store.photo_destinations(conn, "both"))
+        self.dest_worker.ok.connect(done)
+        self.dest_worker.start_background(self.settings)
 
     def photo_dirs(self):
         """{photo id: folder}, re-read only when photos were added, removed or moved (not on every
@@ -947,9 +1000,9 @@ class ActionsMixin:
             self._unnamed, self._unnamed_key = store.unnamed_per_folder(self.conn, dirs), key
         return self._unnamed
 
-    def places(self):
+    def places(self, stale_ok=False):
         by_cat, uncategorized = {}, set()
-        for pid, dests in self.destinations().items():
+        for pid, dests in self.destinations(stale_ok=stale_ok).items():
             for base, person, inner in dests:
                 if base:
                     by_cat.setdefault(base, set()).add(pid)

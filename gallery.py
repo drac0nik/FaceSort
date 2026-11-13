@@ -456,15 +456,24 @@ def thumb_cache_dir():
     return os.path.join(store.data_dir(), "thumbs")
 
 
-def thumb_cache_size():
+def thumb_cache_size(folder=None):
+    """(pictures, bytes) in the thumbnail cache. os.scandir gives each file's size with the
+    folder listing on Windows (no separate look-up per file, which took seconds on big caches)."""
     total = n = 0
-    for root, _, files in os.walk(thumb_cache_dir()):
-        for f in files:
-            try:
-                total += os.path.getsize(os.path.join(root, f))
+    try:
+        entries = list(os.scandir(folder or thumb_cache_dir()))
+    except OSError:
+        return 0, 0
+    for e in entries:
+        try:
+            if e.is_dir(follow_symlinks=False):
+                a, b = thumb_cache_size(e.path)
+                n, total = n + a, total + b
+            else:
+                total += e.stat(follow_symlinks=False).st_size
                 n += 1
-            except OSError:
-                pass
+        except OSError:
+            pass
     return n, total
 
 

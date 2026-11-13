@@ -484,3 +484,72 @@ def test_side_list_icons_made_together(window, qapp):
     before = {k: v[1] for k, v in w.rep_cache.items()}
     w.rebuild_tree()
     assert len(w.rep_cache) == n and all(w.rep_cache[k][1] is before[k] for k in before)
+
+
+def test_actions_update_the_gallery_now_and_lists_later(window, qapp, monkeypatch):
+    """Ignoring faces takes their tiles out at once; the side lists wait until you pause."""
+    w = window
+    person = next(k for k in all_keys(w, w.tree) if k[0] == "person")
+    w.view = person
+    w.refresh_grid()
+    ids = [r[0] for r in w.model.rows if r[0] > 0][:1]
+    w.grid.setCurrentIndex(w.model.index(next(i for i, r in enumerate(w.model.rows) if r[0] == ids[0])))
+    trees = []
+    monkeypatch.setattr(w, "rebuild_tree", lambda *a, **k: trees.append(1))
+    w.act_ignore()
+    assert not trees, "the side lists weren't redrawn under your click"
+    assert ids[0] not in [r[0] for r in w.model.rows]
+    assert w.refresh_timer.isActive()
+    monkeypatch.undo()
+    w.idle()
+
+
+def test_folder_counts_worked_out_in_the_background(window, qapp, monkeypatch):
+    w = window
+    w.destinations()                                   # a current copy
+    calls = []
+    real = store.photo_destinations
+    monkeypatch.setattr(store, "photo_destinations", lambda *a, **k: (calls.append(1), real(*a, **k))[1])
+    w.conn.execute("UPDATE photos SET category_id=category_id")
+    w.conn.commit()
+    w.places(stale_ok=True)                            # out of date: the last copy now...
+    end = time.time() + 10
+    while not calls and time.time() < end:
+        pump(qapp, 0.05)
+    assert calls                                       # ... and a fresh one in the background
+    end = time.time() + 10
+    while w.dest_worker.isRunning() and time.time() < end:
+        pump(qapp, 0.05)
+    pump(qapp, 0.1)
+    n = len(calls)
+    w.places(stale_ok=True)
+    w.destinations()
+    assert len(calls) == n                             # now up to date: nothing worked out again
+    w.idle()
+
+
+def test_known_names_kept_until_the_file_changes(data_dir):
+    import known
+    known._NAMES.clear()
+    known.names()                                      # (makes the file)
+    first = known.names()
+    reads = []
+    real = known._db
+    known._db = lambda: (reads.append(1), real())[1]
+    try:
+        assert known.names() == first and not reads
+        with real() as k:
+            k.execute("INSERT INTO people(name) VALUES('Somebody New')")
+        time.sleep(0.02)
+        assert "Somebody New" in known.names() and reads
+    finally:
+        known._db = real
+
+
+def test_thumbnail_cache_counted(tmp_path):
+    import gallery
+    (tmp_path / "a").mkdir()
+    (tmp_path / "a" / "x.jpg").write_bytes(b"1" * 100)
+    (tmp_path / "y.jpg").write_bytes(b"2" * 50)
+    assert gallery.thumb_cache_size(str(tmp_path)) == (2, 150)
+    assert gallery.thumb_cache_size(str(tmp_path / "missing")) == (0, 0)
