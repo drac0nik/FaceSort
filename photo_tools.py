@@ -718,7 +718,7 @@ def _overlap(a, b):
     return inter / max(1e-6, min(a[2] * a[3], b[2] * b[3]))
 
 
-def _sharpen(bgr):
+def _clarify(bgr):
     """Without the model (or where no face is found): a careful clean-up - noise out, detail and
     local contrast up."""
     den = cv2.fastNlMeansDenoisingColored(bgr, None, 4, 4, 5, 15)
@@ -777,7 +777,7 @@ def face_clarity(rgb, mask, strength=0.8, cancelled=lambda: False):
     # where the brush went but no face was redrawn: careful sharpening instead
     rest = (cm > 0) & (weight < 0.5)
     if rest.any():
-        sharp = _sharpen(bgr).astype(np.float32)
+        sharp = _clarify(bgr).astype(np.float32)
         rw = cv2.GaussianBlur(rest.astype(np.float32), (0, 0), 2)[..., None]
         out = out * (1 - rw) + sharp * rw
     # only where painted (soft edge), and as strongly as asked
