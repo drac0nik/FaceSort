@@ -2,6 +2,7 @@
 import html
 import os
 import subprocess
+import threading
 import sys
 import aidetect
 import engine
@@ -9,7 +10,7 @@ import engine_hq
 import jobs
 import known
 import store
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QComboBox, QCompleter, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
     QFrame, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QRadioButton, QScrollArea,
@@ -287,13 +288,27 @@ class SettingsDialog(QDialog):
         self.gpu_label.setWordWrap(True)
         self.gpu_label.setContentsMargins(24, 0, 0, 0)
         lay.addWidget(self.gpu_label)
-        names = gpu_names()
-        if names:
-            g = QLabel("Graphics cards in this PC: " + ", ".join(names))
+        names = gpu_names(wait=False)             # (asked in the background when FaceSort starts)
+        if names or sys.platform == "win32":
+            g = QLabel("Graphics cards in this PC: " + (", ".join(names) if names else "looking…"))
             g.setStyleSheet("color: gray;")
             g.setWordWrap(True)
             g.setContentsMargins(24, 0, 0, 0)
             lay.addWidget(g)
+            if not names:
+                def fill(tries=[0]):
+                    got = gpu_names(wait=False)
+                    try:
+                        if got:
+                            g.setText("Graphics cards in this PC: " + ", ".join(got))
+                        elif tries[0] < 60:
+                            tries[0] += 1
+                            QTimer.singleShot(250, fill)
+                        else:
+                            g.hide()
+                    except RuntimeError:
+                        pass                       # (Settings was closed meanwhile)
+                QTimer.singleShot(250, fill)
         scan = lay
 
         lay = general
@@ -559,21 +574,44 @@ class SettingsDialog(QDialog):
 _gpu_names = None
 
 
-def gpu_names():
-    """Names of the graphics cards (Windows), for display only."""
+_gpu_lock = threading.Lock()
+
+
+def gpu_names(wait=True):
+    """Names of the graphics cards (Windows), for display only. Asking Windows takes from a fraction
+    of a second to several seconds, so it's done once, in the background (start it with
+    wait=False when FaceSort opens); until then wait=False returns []."""
     global _gpu_names
+    if _gpu_names is not None:
+        return _gpu_names
+    if not wait:
+        if _gpu_lock.acquire(blocking=False):
+            threading.Thread(target=_ask_gpu_names, daemon=True).start()
+        return []
+    with _gpu_lock:
+        pass
     if _gpu_names is None:
-        _gpu_names = []
+        _gpu_lock.acquire()
+        _ask_gpu_names()
+    return _gpu_names or []
+
+
+def _ask_gpu_names():
+    """(Holding _gpu_lock.) Ask Windows for the graphics cards' names."""
+    global _gpu_names
+    names = []
+    try:
         if sys.platform == "win32":
-            try:
-                out = subprocess.run(
-                    ["powershell", "-NoProfile", "-Command",
-                     "Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name }"],
-                    capture_output=True, text=True, timeout=8, creationflags=0x08000000)  # no console window
-                _gpu_names = [x.strip() for x in out.stdout.splitlines() if x.strip()]
-            except Exception:
-                pass
-    return _gpu_names
+            out = subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name }"],
+                capture_output=True, text=True, timeout=20, creationflags=0x08000000)  # no console window
+            names = [x.strip() for x in out.stdout.splitlines() if x.strip()]
+    except Exception:
+        pass
+    finally:
+        _gpu_names = names
+        _gpu_lock.release()
 
 
 def _count_in_background(dlg):

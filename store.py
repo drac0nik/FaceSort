@@ -74,6 +74,7 @@ NOTFACE_STRONG_SIM = 0.55  # high accuracy: very alike a strongly-read mark (pat
 
 # face clarity (see engine.clarity_from_norm)
 REF_MIN_CLARITY = 0.3      # someone's photos clearer than this are what other faces are compared with
+MMAP_BYTES = 1 << 30      # up to 1 GB of the library file read through memory-mapping
 SIDE_ON_EXTRA = 0.05      # a face turned fully side-on needs a match this much closer (head angle, 1.42)
 LOW_CLARITY_EXTRA = 0.06   # a completely unclear face needs a match this much closer to be suggested
 DEFAULT_CLARITY = 0.7      # faces not read yet
@@ -269,6 +270,11 @@ def connect(path=None):
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA synchronous=NORMAL")
+    # read the library through memory-mapping, with a bigger cache: after a background job writes
+    # (updating suggestions, reading face details) the lists re-read their indexes - from memory
+    # this way, instead of copying them from disk again (seconds on a big library)
+    conn.execute(f"PRAGMA mmap_size={MMAP_BYTES}")
+    conn.execute("PRAGMA cache_size=-32768")          # 32 MB per connection (default: 2 MB)
     conn.executescript(SCHEMA)
     cols = {r[1] for r in conn.execute("PRAGMA table_info(faces)")}
     if "fhash" not in cols:  # library from version 1.0.x

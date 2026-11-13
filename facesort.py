@@ -52,6 +52,8 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         self.rep_cache = {}                        # side-list face icons: face id -> (picture checksum, icon)
         self.rep_cache_checked = -1
         self.hi_cache = {}
+        import dialogs
+        dialogs.gpu_names(wait=False)              # (Settings shows them; asking Windows can take seconds)
         import stallwatch                          # speed report: notes moments the window is slow
         self.stallwatch = stallwatch.StallWatch(os.path.join(store.data_dir(), "speed.log"),
                                                 lambda: f"view={getattr(self, 'view', ('',))[0]}")

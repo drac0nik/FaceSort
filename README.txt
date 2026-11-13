@@ -153,6 +153,12 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+Settings opens at once (1.42.1) - from your speed report
+- Settings no longer waits while Windows is asked for the graphics cards' names (that took
+  up to 8 seconds): FaceSort asks once, in the background, when it starts.
+- The library is read through memory-mapping with a bigger cache, so the side lists re-read
+  their indexes from memory after background work instead of from disk.
+
 Smart Groups, reorganised; men / unsure; head angle (1.42)
 - Unknown faces: faces nobody is named for (and not like any group) on photos that aren't
   sorted at all - nobody tagged on them, no folder, not in your sorted library. A photo with
