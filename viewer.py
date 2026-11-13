@@ -1261,6 +1261,9 @@ class PhotoViewer(QWidget):
                 m.addAction("Name this face…", lambda: self.focus_face(f))
                 m.addSeparator()
                 self.win.generic_menu(m, lambda new, pre: self.tag_placeholder(f, new, pre))
+        if self.win.settings.get("face_details"):
+            m.addSeparator()
+            self.win.looks_menu(m, [fid])
         if manual:
             m.addAction("Delete this face box", lambda: self.delete_face_box(fid))
         else:

@@ -153,6 +153,20 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+Correct men / women, and FaceSort learns from it (1.43)
+- Right-click a face (in the gallery or on a face box in the viewer) > Looks... > Looks
+  female / Looks male. It moves out of (or into) Men straight away, and FaceSort's estimate
+  never changes it back. "Let FaceSort judge again" undoes it. Several faces at once work too.
+- Right-click a person in the People list > Man / Woman: one setting for all their faces.
+- Look-alikes follow: unnamed faces that are surely the same person as a face you corrected
+  take the same answer.
+- FaceSort learns: once it has at least 15 faces of each kind (your corrections, and the faces
+  of people you set as Man or Woman), it trains its own small model on the face fingerprints,
+  on this PC, tuned to your photos. Each face then gets two opinions - InsightFace's and
+  FaceSort's own; when they disagree, the face goes to Unsure, not Men. The more you
+  correct, the better it gets (it learns again a few seconds after you stop correcting).
+- "Ignore all" in Men only ignores what's still in Men - corrected faces are safe.
+
 Settings opens at once (1.42.1) - from your speed report
 - Settings no longer waits while Windows is asked for the graphics cards' names (that took
   up to 8 seconds): FaceSort asks once, in the background, when it starts.

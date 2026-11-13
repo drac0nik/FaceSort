@@ -169,18 +169,174 @@ def read_missing(conn, progress=lambda d, t: None, cancelled=lambda: False, batc
         conn.executemany("UPDATE faces SET male=?, yaw=?, pitch=?, roll=? WHERE id=?",
                          [((r or (-1.0, None, None, None)) + (fid,)) for (fid, _), r in zip(rows, res)])
         conn.commit()
+        update_guesses(conn, [fid for fid, _ in rows])
         done += len(rows)
         progress(done, total)
         time.sleep(0.01)                     # (gives the window its turn)
     return done
 
 
-# the SQL conditions for the Men / Unsure sub-groups (male = -1: couldn't be read -> Unsure)
+# ------------------------------------------------------------------ your corrections, and learning from them
+CARRY_MARGIN = 0.08           # a look-alike this much closer than the matching threshold takes your correction
+MIN_EACH = 15                 # labelled faces of each kind needed before FaceSort trains its own model
+
+
+def decide(male, learned, carried, said, px, yaw, person_sex=None):
+    """1 looks male, 0 looks female, 2 unsure, None not read yet. What you said wins, then the
+    person's Man / Woman, then a look-alike you corrected; otherwise InsightFace's estimate,
+    checked against FaceSort's own model once it has learned from you (if they disagree: unsure)."""
+    for v in (said, person_sex, carried):
+        if v is not None:
+            return int(v)
+    if male is None:
+        return None
+    if male < 0 or (px or 99) < SMALL_PX or abs(yaw or 0) > SIDE_ON:
+        return 2
+    if learned is None:
+        return 1 if male >= MALE else 0 if male <= FEMALE else 2
+    if male >= MALE and learned >= 0.5 or learned >= 0.95 and male >= 0.5:
+        return 1
+    if male <= FEMALE and learned < 0.5 or learned <= 0.05 and male <= 0.5:
+        return 0
+    return 2
+
+
+def update_guesses(conn, ids=None):
+    """Work the decision out again (for these faces, or all) and save what changed."""
+    q = """SELECT f.id, f.male, f.male_learned, f.male_carried, f.male_set, f.px, f.yaw, p.sex, f.sex_guess
+           FROM faces f LEFT JOIN persons p ON p.id=f.person_id"""
+    rows = []
+    if ids is None:
+        rows = conn.execute(q).fetchall()
+    else:
+        ids = list(ids)
+        for i in range(0, len(ids), 900):
+            part = ids[i:i + 900]
+            rows += conn.execute(q + f" WHERE f.id IN ({','.join('?' * len(part))})", part).fetchall()
+    changed = []
+    for fid, male, learned, carried, said, px, yaw, psex, old in rows:
+        new = decide(male, learned, carried, said, px, yaw, psex)
+        if new != old:
+            changed.append((new, fid))
+    if changed:
+        conn.executemany("UPDATE faces SET sex_guess=? WHERE id=?", changed)
+        conn.commit()
+    return len(changed)
+
+
+def set_said(conn, face_ids, value):
+    """Your correction on faces: 1 looks male, 0 looks female, None = let FaceSort judge again."""
+    face_ids = list(face_ids)
+    for i in range(0, len(face_ids), 900):
+        part = face_ids[i:i + 900]
+        conn.execute(f"UPDATE faces SET male_set=? WHERE id IN ({','.join('?' * len(part))})", [value] + part)
+    conn.commit()
+    update_guesses(conn, face_ids)
+
+
+def set_person_sex(conn, person_ids, value):
+    person_ids = list(person_ids)
+    conn.executemany("UPDATE persons SET sex=? WHERE id=?", [(value, p) for p in person_ids])
+    conn.commit()
+    ids = [r[0] for p in person_ids for r in conn.execute("SELECT id FROM faces WHERE person_id=?", (p,))]
+    update_guesses(conn, ids)
+
+
+def _train(X, y, steps=400, l2=1e-3, lr=0.05):
+    """Logistic regression (numpy, Adam), each kind weighted equally. Returns (w, b)."""
+    n, d = X.shape
+    pos = y.mean()
+    wt = np.where(y > 0.5, 0.5 / max(pos, 1e-6), 0.5 / max(1 - pos, 1e-6)).astype(np.float32)
+    w = np.zeros(d, np.float32)
+    b = np.float32(0.0)
+    m_w, v_w, m_b, v_b = np.zeros_like(w), np.zeros_like(w), 0.0, 0.0
+    for t in range(1, steps + 1):
+        z = X @ w + b
+        p = 1.0 / (1.0 + np.exp(-np.clip(z, -30, 30)))
+        g = (p - y) * wt / n
+        gw = X.T @ g + l2 * w
+        gb = float(g.sum())
+        m_w = 0.9 * m_w + 0.1 * gw
+        v_w = 0.999 * v_w + 0.001 * gw * gw
+        m_b = 0.9 * m_b + 0.1 * gb
+        v_b = 0.999 * v_b + 0.001 * gb * gb
+        w -= lr * (m_w / (1 - 0.9 ** t)) / (np.sqrt(v_w / (1 - 0.999 ** t)) + 1e-8)
+        b -= lr * (m_b / (1 - 0.9 ** t)) / (np.sqrt(v_b / (1 - 0.999 ** t)) + 1e-8)
+    return w, b
+
+
+def learn(conn, model, threshold, progress=lambda d, t: None, cancelled=lambda: False):
+    """(Background) Use what you told FaceSort:
+    1. look-alikes of faces you corrected take the same answer (when they're surely the same person)
+    2. with enough faces of each kind (your corrections, and the faces of people you set as Man or
+       Woman), FaceSort trains its own small model on the face fingerprints - tuned to your
+       photos - and every face gets its opinion too
+    3. the Men / Unsure decision is worked out again.
+    Returns {"carried": n, "trained": bool, "labelled": n}."""
+    import store
+    emb = store.emb_from_blob
+    # 1. look-alikes of the faces you corrected
+    said = conn.execute("SELECT emb, male_set FROM faces WHERE male_set IS NOT NULL AND model=?", (model,)).fetchall()
+    open_ = conn.execute("""SELECT id, emb FROM faces WHERE male_set IS NULL AND person_id IS NULL AND model=?""",
+                         (model,)).fetchall()
+    carried = {}
+    if said and open_:
+        S = np.stack([emb(b) for b, _ in said]).astype(np.float32)
+        S /= np.linalg.norm(S, axis=1, keepdims=True) + 1e-9
+        lab = np.array([v for _, v in said])
+        need = threshold + CARRY_MARGIN
+        for i in range(0, len(open_), 4096):
+            if cancelled():
+                return None
+            part = open_[i:i + 4096]
+            E = np.stack([emb(b) for _, b in part]).astype(np.float32)
+            E /= np.linalg.norm(E, axis=1, keepdims=True) + 1e-9
+            sims = E @ S.T
+            for k, (fid, _) in enumerate(part):
+                best = {v: float(sims[k][lab == v].max()) if (lab == v).any() else -1 for v in (0, 1)}
+                v = max(best, key=best.get)
+                if best[v] >= need and best[v] - best[1 - v] >= 0.03:
+                    carried[fid] = v
+            progress(min(i + 4096, len(open_)), len(open_) * 2)
+    conn.execute("UPDATE faces SET male_carried=NULL WHERE male_carried IS NOT NULL")
+    if carried:
+        conn.executemany("UPDATE faces SET male_carried=? WHERE id=?", [(v, f) for f, v in carried.items()])
+    conn.commit()
+    # 2. FaceSort's own model
+    rows = conn.execute("""SELECT f.emb, COALESCE(f.male_set, p.sex) FROM faces f LEFT JOIN persons p ON p.id=f.person_id
+                           WHERE f.model=? AND (f.male_set IS NOT NULL
+                                 OR (p.sex IS NOT NULL AND f.confirmed=1 AND f.ignored=0))""", (model,)).fetchall()
+    y = np.array([v for _, v in rows], np.float32)
+    trained = len(rows) and (y > 0.5).sum() >= MIN_EACH and (y < 0.5).sum() >= MIN_EACH
+    if trained:
+        X = np.stack([emb(b) for b, _ in rows]).astype(np.float32)
+        X /= np.linalg.norm(X, axis=1, keepdims=True) + 1e-9
+        w, b = _train(X, y)
+        out = []
+        cur = conn.execute("SELECT id, emb FROM faces WHERE model=?", (model,))
+        while True:
+            if cancelled():
+                return None
+            part = cur.fetchmany(4096)
+            if not part:
+                break
+            E = np.stack([emb(bb) for _, bb in part]).astype(np.float32)
+            E /= np.linalg.norm(E, axis=1, keepdims=True) + 1e-9
+            p = 1.0 / (1.0 + np.exp(-np.clip(E @ w + b, -30, 30)))
+            out += [(round(float(v), 4), fid) for (fid, _), v in zip(part, p)]
+        conn.executemany("UPDATE faces SET male_learned=? WHERE id=?", out)
+    else:
+        conn.execute("UPDATE faces SET male_learned=NULL WHERE male_learned IS NOT NULL")
+    conn.commit()
+    # 3. the decision
+    update_guesses(conn)
+    return {"carried": len(carried), "trained": bool(trained), "labelled": len(rows)}
+
+
+# the SQL conditions for the Men / Unsure sub-groups
 def men_sql(a="f."):
-    return (f"{a}male >= {MALE} AND COALESCE({a}px, 99) >= {SMALL_PX} "
-            f"AND ABS(COALESCE({a}yaw, 0)) <= {SIDE_ON}")
+    return f"{a}sex_guess = 1"
 
 
 def unsure_sql(a="f."):
-    return (f"{a}male IS NOT NULL AND ({a}male < 0 OR ({a}male > {FEMALE} AND {a}male < {MALE}) "
-            f"OR COALESCE({a}px, 99) < {SMALL_PX} OR ABS(COALESCE({a}yaw, 0)) > {SIDE_ON})")
+    return f"{a}sex_guess = 2"

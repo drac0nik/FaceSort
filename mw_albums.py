@@ -422,6 +422,15 @@ class AlbumsMixin:
             cat = c.execute("SELECT category_id FROM persons WHERE id=?", (pid,)).fetchone()
             cat = cat[0] if cat else None
             m.addAction("Rename / merge…", self.rename_person)
+            if self.settings.get("face_details"):
+                cur = c.execute("SELECT sex FROM persons WHERE id=?", (pid,)).fetchone()
+                cur = cur[0] if cur else None
+                sm = m.addMenu("Man / Woman")
+                for value, label in ((1, "Man"), (0, "Woman"), (None, "Not set")):
+                    a = sm.addAction(label, lambda v=value: self.set_person_sex([pid], v))
+                    a.setCheckable(True)
+                    a.setChecked(cur == value)
+                sm.setToolTip("Teaches FaceSort which faces look male or female (for Smart Groups > Men / Unsure)")
             nsug = c.execute("SELECT COUNT(*) FROM faces WHERE person_id=? AND confirmed=0 AND ignored=0",
                              (pid,)).fetchone()[0]
             ntat = c.execute("SELECT COUNT(*) FROM tattoo_suggestions WHERE person_id=?", (pid,)).fetchone()[0]

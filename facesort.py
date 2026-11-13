@@ -80,6 +80,8 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         self.regroup_timer.timeout.connect(self.start_regroup)
         self.refresh_timer = QTimer(self, singleShot=True, interval=450)
         self.refresh_timer.timeout.connect(self._deferred_refresh)
+        self.sex_timer = QTimer(self, singleShot=True, interval=5000)         # learn from corrections, once you pause
+        self.sex_timer.timeout.connect(lambda: self.start_sex_learning())
         self.pending_timer = QTimer(self, singleShot=True, interval=6000)     # Sort into folders (N)
         self.pending_timer.timeout.connect(lambda: None if self.busy() else self.start_misplaced())
         # remembering people (known-people file + reference file) is saved in the background a

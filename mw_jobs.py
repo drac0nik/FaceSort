@@ -38,7 +38,7 @@ class JobsMixin:
         if self.busy():
             return True
         for name in ("regroup_worker", "remember_worker", "dup_worker", "copies_worker", "mis_worker",
-                     "clip_worker", "stats_worker", "clarity_worker", "bodies_worker", "attrs_worker"):
+                     "clip_worker", "stats_worker", "clarity_worker", "bodies_worker", "attrs_worker", "sex_worker"):
             wk = getattr(self, name, None)
             if wk is not None and wk.isRunning():
                 return True
@@ -173,9 +173,25 @@ class JobsMixin:
         self.attrs_worker = Worker(lambda conn, progress, cancelled: face_attrs.read_missing(
             conn, lambda d, t: progress(d, t, f"Reading face details… {d:,} / {t:,}"), cancelled))
         self.attrs_worker.progress.connect(lambda d, t, m: self.statusBar().showMessage(m, 4000))
-        self.attrs_worker.ok.connect(lambda n: n and (self.schedule_regroup(), self.refresh_timer.start()))
+        self.attrs_worker.ok.connect(lambda n: n and (self.schedule_regroup(), self.start_sex_learning()))
         self.attrs_worker.failed.connect(lambda tb: log(tb))
         self.attrs_worker.start_background(self.settings)
+
+    def start_sex_learning(self):
+        """In the background: look-alikes of faces you corrected, FaceSort's own model trained on
+        your corrections and the people you set as Man / Woman, and the Men / Unsure decision."""
+        if not self.settings.get("face_details"):
+            return
+        w = getattr(self, "sex_worker", None)
+        if w and w.isRunning():
+            self.sex_timer.start()                  # once more when this one's done
+            return
+        model = self.settings.get("engine", "sface")
+        self.sex_worker = Worker(lambda conn, progress, cancelled: face_attrs.learn(
+            conn, model, store.threshold(self.settings, model), lambda d, t: None, cancelled))
+        self.sex_worker.ok.connect(lambda res: res and self.refresh_timer.start())
+        self.sex_worker.failed.connect(lambda tb: log(tb))
+        self.sex_worker.start_background(self.settings)
 
     def start_bodies(self):
         """Same-shoot suggestions: find the people in photos not looked at yet (in the background,
@@ -651,7 +667,8 @@ class JobsMixin:
                                getattr(self, "copies_worker", None), getattr(self, "clip_worker", None),
                                getattr(self, "stats_worker", None), getattr(self, "lowlight_worker", None),
                                getattr(self, "clarity_worker", None), getattr(self, "bodies_worker", None),
-                               getattr(self, "dest_worker", None), getattr(self, "attrs_worker", None))
+                               getattr(self, "dest_worker", None), getattr(self, "attrs_worker", None),
+                               getattr(self, "sex_worker", None))
                    if w is not None]
         for w in workers:
             if w.isRunning():

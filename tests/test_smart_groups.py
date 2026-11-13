@@ -72,6 +72,7 @@ def test_men_and_unsure(window, photos, monkeypatch):
     c.execute("UPDATE faces SET male=0.5, yaw=0, px=120 WHERE id=?", (d1,))          # can't tell
     c.execute("UPDATE faces SET male=0.95, yaw=80, px=120 WHERE id=?", (d2,))        # turned right round
     c.commit()
+    face_attrs.update_guesses(c)
     w.settings["face_details"] = True
     w.rebuild_tree()
     keys = list(all_keys(w, w.tree2))
@@ -243,3 +244,84 @@ def test_side_on_faces_need_a_closer_match(data_dir):
     after = c.execute("SELECT COUNT(*) FROM faces WHERE person_id=? AND confirmed=0", (alice,)).fetchone()[0]
     assert after <= before
     lib.conn.close()
+
+
+# ------------------------------------------------------------------ corrections and learning (1.43)
+def test_decide_rules():
+    d = face_attrs.decide
+    assert d(0.97, None, None, None, 120, 0) == 1 and d(0.05, None, None, None, 120, 0) == 0
+    assert d(0.5, None, None, None, 120, 0) == 2 and d(0.97, None, None, None, 20, 0) == 2      # small
+    assert d(0.97, None, None, 0, 120, 0) == 0                     # what you said wins
+    assert d(0.97, None, None, None, 120, 0, person_sex=0) == 0    # then the person's Man / Woman
+    assert d(0.97, None, 0, None, 120, 0) == 0                     # then a corrected look-alike
+    assert d(0.97, 0.1, None, None, 120, 0) == 2                   # the two models disagree: unsure
+    assert d(0.97, 0.9, None, None, 120, 0) == 1
+    assert d(0.6, 0.99, None, None, 120, 0) == 1 and d(0.4, 0.01, None, None, 120, 0) == 0
+    assert d(None, None, None, None, 120, 0) is None
+
+
+def test_correcting_a_face_takes_it_out_of_men(window, photos, monkeypatch):
+    w, c = window, window.conn
+    solo = face_ids(c, photos["solo"])[0]
+    c.execute("UPDATE faces SET male=0.97, yaw=0, px=120 WHERE id=?", (solo,))
+    c.commit()
+    face_attrs.update_guesses(c)
+    w.settings["face_details"] = True
+    assert solo in shown(w, ("unknown", "men"))
+    w.grid.setCurrentIndex(w.model.index(next(i for i, r in enumerate(w.model.rows) if r[0] == solo)))
+    w.set_looks([solo], 0)
+    assert solo not in {r[0] for r in w.model.rows}                 # out of the list at once
+    assert c.execute("SELECT male_set, sex_guess FROM faces WHERE id=?", (solo,)).fetchone() == (0, 0)
+    assert solo in shown(w, ("unknown", None)) and solo not in shown(w, ("unknown", "men"))
+    w.set_looks([solo], None)                                        # let FaceSort judge again
+    assert c.execute("SELECT male_set, sex_guess FROM faces WHERE id=?", (solo,)).fetchone() == (None, 1)
+    w.idle()
+
+
+def test_learning_from_corrections(data_dir):
+    """Two kinds of people: once FaceSort is told about some of each, look-alikes follow and its own
+    model sorts the rest (the stored estimate is deliberately wrong for everyone here)."""
+    from conftest import build_library
+    lib = build_library(data_dir, people=("Ann", "Bea", "Cal", "Dan"), per_person=20, named_each=20, strangers=0)
+    c = lib.conn
+    rng = np.random.default_rng(3)
+    # women's and men's fingerprints lean different ways (as real ones do)
+    lean = unit(rng.normal(size=128))
+    for (fid, person), in [((r[0], r[1]),) for r in c.execute("SELECT f.id, p.name FROM faces f JOIN persons p ON p.id=f.person_id")]:
+        e = store.emb_from_blob(c.execute("SELECT emb FROM faces WHERE id=?", (fid,)).fetchone()[0]).astype(np.float32)
+        e = unit(e + (1.5 if person in ("Cal", "Dan") else -1.5) * lean)
+        c.execute("UPDATE faces SET emb=?, male=0.5, yaw=0, px=120 WHERE id=?", (e.astype(np.float32).tobytes(), fid))
+    c.commit()
+    ids = {n: c.execute("SELECT id FROM persons WHERE name=?", (n,)).fetchone()[0] for n in ("Ann", "Bea", "Cal", "Dan")}
+    face_attrs.set_person_sex(c, [ids["Ann"]], 0)
+    face_attrs.set_person_sex(c, [ids["Cal"]], 1)
+    res = face_attrs.learn(c, "sface", store.threshold(lib.settings, "sface"))
+    assert res["trained"] and res["labelled"] >= 40
+    bea = [r[0] for r in c.execute("SELECT male_learned FROM faces WHERE person_id=?", (ids["Bea"],))]
+    dan = [r[0] for r in c.execute("SELECT male_learned FROM faces WHERE person_id=?", (ids["Dan"],))]
+    assert np.mean(bea) < 0.3 and np.mean(dan) > 0.7               # people it was never told about
+    # a corrected unnamed face: its near-twin takes the same answer
+    f1, f2 = [r[0] for r in c.execute("SELECT id FROM faces WHERE person_id=? LIMIT 2", (ids["Dan"],))]
+    c.execute("UPDATE faces SET emb=(SELECT emb FROM faces WHERE id=?) WHERE id=?", (f1, f2))
+    c.execute("UPDATE faces SET person_id=NULL, confirmed=0 WHERE id IN (?, ?)", (f1, f2))
+    c.commit()
+    face_attrs.set_said(c, [f1], 0)
+    face_attrs.learn(c, "sface", store.threshold(lib.settings, "sface"))
+    assert c.execute("SELECT male_carried, sex_guess FROM faces WHERE id=?", (f2,)).fetchone() == (0, 0)
+    lib.conn.close()
+
+
+def test_looks_menu(window, photos):
+    from PySide6.QtWidgets import QMenu
+    w, c = window, window.conn
+    ids = face_ids(c, photos["duo"])
+    m = QMenu()
+    sub = w.looks_menu(m, ids)
+    texts = [a.text() for a in sub.actions() if a.text()]
+    assert texts == ["Looks female   (2 faces)", "Looks male   (2 faces)"]
+    w.set_looks(ids, 1)
+    m2 = QMenu()
+    sub = w.looks_menu(m2, ids)
+    acts = {a.text(): a for a in sub.actions() if a.text()}
+    assert acts["Looks male   (2 faces)"].isChecked() and "Let FaceSort judge again   (2 faces)" in acts
+    w.idle()

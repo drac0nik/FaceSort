@@ -420,15 +420,26 @@ def connect(path=None):
         for col in ("male", "yaw", "pitch", "roll"):
             conn.execute(f"ALTER TABLE faces ADD COLUMN {col} REAL")
         conn.commit()
+    if "sex_guess" not in fc:          # 1.43: your corrections and what FaceSort learned from them
+        # male_set: you said (1 looks male, 0 looks female) · male_carried: from a look-alike you
+        # corrected · male_learned: FaceSort's own model, trained on your corrections (0-1)
+        # sex_guess: the decision the Men / Unsure groups use (1 male, 0 female, 2 unsure)
+        for col, typ in (("male_set", "INTEGER"), ("male_carried", "INTEGER"), ("male_learned", "REAL"),
+                         ("sex_guess", "INTEGER")):
+            conn.execute(f"ALTER TABLE faces ADD COLUMN {col} {typ}")
+        conn.commit()
+    if "sex" not in {r[1] for r in conn.execute("PRAGMA table_info(persons)")}:
+        conn.execute("ALTER TABLE persons ADD COLUMN sex INTEGER")      # 1.43: Man (1) / Woman (0), if you set it
+        conn.commit()
     conn.execute("CREATE INDEX IF NOT EXISTS photos_category ON photos(category_id)")
     # covering index: lists and counts read this instead of the face rows (which hold fingerprints
     # and thumbnails), so big libraries stay quick
     new_index = not conn.execute("SELECT 1 FROM sqlite_master WHERE name='faces_cover'").fetchone()
-    if not new_index and "yaw" not in {r[2] for r in conn.execute("PRAGMA index_info(faces_cover)")}:
-        conn.execute("DROP INDEX faces_cover")          # 1.42: the index also holds the face details
+    if not new_index and "sex_guess" not in {r[2] for r in conn.execute("PRAGMA index_info(faces_cover)")}:
+        conn.execute("DROP INDEX faces_cover")          # 1.43: the index also holds the men / unsure decision
         new_index = True
     conn.execute("CREATE INDEX IF NOT EXISTS faces_cover ON faces(ignored, person_id, confirmed, cluster, photo_id, "
-                 "w, h, px, score, manual, clarity, male, yaw, pitch)")
+                 "w, h, px, score, manual, clarity, sex_guess, yaw, pitch)")
     if new_index or not conn.execute("SELECT 1 FROM sqlite_master WHERE name='sqlite_stat1'").fetchone():
         conn.execute("ANALYZE")      # lets SQLite pick the right index for each query
         conn.commit()

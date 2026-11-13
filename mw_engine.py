@@ -69,7 +69,8 @@ class EngineMixin:
         # place, then search-by-description indexing
         self._bg_queue = [self.start_stats, self.start_clarity, self.start_copies_check, self.start_misplaced,
                           self.start_clip_index, self.start_bodies, self.offer_folder_cleanup, self.start_update_check,
-                          self.offer_dark_look, self.offer_face_details, self.start_face_details]
+                          self.offer_dark_look, self.offer_face_details, self.start_face_details,
+                          self.start_sex_learning]
         self._bg_timer = QTimer(self)
         self._bg_timer.timeout.connect(self.bg_tick)
         QTimer.singleShot(2500, lambda: None if getattr(self, "_closing", False) else self._bg_timer.start(1200))
@@ -346,6 +347,37 @@ class EngineMixin:
                 f"Check the {n:,} photos already in your library for dark ones and look at those again now?\n"
                 "Names you gave are kept. (Later: Settings > Look again in dark photos.)") == QMessageBox.Yes:
             self.rescan_dark(quiet=True)
+
+    def looks_menu(self, menu, face_ids):
+        """Right-click faces > Looks…: correct FaceSort's men / women estimate (and teach it)."""
+        q = ",".join("?" * len(face_ids))
+        said = {r[0] for r in self.conn.execute(f"SELECT male_set FROM faces WHERE id IN ({q})", face_ids)}
+        n = f"   ({len(face_ids)} faces)" if len(face_ids) > 1 else ""
+        sub = menu.addMenu("Looks…")
+        for value, label in ((0, "Looks female"), (1, "Looks male")):
+            a = sub.addAction(label + n, lambda v=value: self.set_looks(face_ids, v))
+            a.setCheckable(True)
+            a.setChecked(said == {value})
+        if said - {None}:
+            sub.addSeparator()
+            sub.addAction("Let FaceSort judge again" + n, lambda: self.set_looks(face_ids, None))
+        return sub
+
+    def set_looks(self, face_ids, value):
+        face_attrs.set_said(self.conn, face_ids, value)
+        if self.view[0] in ("unknown", "partial") and self.view[1] in ("men", "unsure") and value is not None \
+                and not (self.view[1] == "men" and value == 1):
+            self.drop_from_view(face_ids)            # not in this list any more
+        word = {0: "female", 1: "male"}.get(value)
+        self.statusBar().showMessage((f"✓ Marked as looking {word}" if word else "✓ FaceSort will judge again")
+                                     + " - FaceSort learns from this", 6000)
+        self.after_change(regroup=False, defer=True)
+        self.sex_timer.start()
+
+    def set_person_sex(self, person_ids, value):
+        face_attrs.set_person_sex(self.conn, person_ids, value)
+        self.statusBar().showMessage("✓ Saved - FaceSort learns from this", 5000)
+        self.sex_timer.start()
 
     def offer_face_details(self):
         """Once (1.42): offer the two small face-detail models (Men / Unsure groups, head angle)."""
@@ -636,6 +668,8 @@ class EngineMixin:
         named = [r for r in self.conn.execute(
             f"SELECT f.id, p.name FROM faces f JOIN persons p ON p.id=f.person_id WHERE f.id IN ({','.join('?' * len(faces))})",
             faces)] if faces else []
+        if faces and self.settings.get("face_details"):
+            self.looks_menu(m, list(faces))
         if faces and not named:          # faces with no name yet: one new numbered person for them
             self.generic_menu(m, lambda new, pre, ids=list(faces): self.assign_placeholder(ids, new, pre),
                               f"   ({len(faces)} faces)" if len(faces) > 1 else "")
