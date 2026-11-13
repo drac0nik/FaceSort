@@ -4,6 +4,7 @@ auto-enhance, restoring old faded photos, and colourizing black & white / sepia 
 
 All functions take and return RGB uint8 arrays (full size)."""
 import os
+import re
 import threading
 
 import cv2
@@ -626,3 +627,163 @@ def heal(rgb, mask, cancelled=lambda: False):
     done = rgb.copy()
     done[y0:y1, x0:x1] = cv2.cvtColor(np.clip(res, 0, 255).astype(np.uint8), cv2.COLOR_BGR2RGB)
     return done
+
+
+# ---- face clarity brush: paint over a soft or blurry face and it's made clearer
+CLARITY_URL = "https://github.com/drac0nik/FaceSort/releases/download/models-gfpgan/gfpgan_1.4.onnx"
+CLARITY_SHA_URL = CLARITY_URL + ".sha256"     # published with it (.github/workflows/models.yml)
+CLARITY_MB = 340
+# where the eyes, nose and mouth corners sit in the model's 512 x 512 face (FFHQ alignment)
+FFHQ_512 = np.array([[192.98138, 239.94708], [318.90277, 240.1936], [256.63416, 314.01935],
+                     [201.26117, 371.41043], [313.08905, 371.15118]], np.float32)
+
+
+def clarity_model_path():
+    return os.path.join(engine.store_data_dir(), "models", "face_clarity", "gfpgan_1.4.onnx")
+
+
+def clarity_ready():
+    return os.path.exists(clarity_model_path())
+
+
+def download_clarity(progress=lambda d, t, m: None, cancelled=lambda: False):
+    """The face clarity model (GFPGAN 1.4, about 340 MB, once), checked against its checksum."""
+    import hashlib
+    import urllib.request
+    dest = clarity_model_path()
+    if os.path.exists(dest):
+        return True
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    tmp = dest + ".part"
+    h = hashlib.sha256()
+    with urllib.request.urlopen(urllib.request.Request(CLARITY_SHA_URL, headers={"User-Agent": "FaceSort"}),
+                                timeout=30) as r:
+        want = re.search(r"\b([0-9a-f]{64})\b", r.read().decode("utf-8", "replace"), re.I)
+    if not want:
+        raise RuntimeError("the model's checksum couldn't be read")
+    want = want.group(1).lower()
+    req = urllib.request.Request(CLARITY_URL, headers={"User-Agent": "FaceSort"})
+    with urllib.request.urlopen(req, timeout=60) as r, open(tmp, "wb") as f:
+        total = int(r.headers.get("Content-Length") or CLARITY_MB << 20)
+        got = 0
+        while True:
+            if cancelled():
+                f.close()
+                os.remove(tmp)
+                return False
+            chunk = r.read(1 << 20)
+            if not chunk:
+                break
+            f.write(chunk)
+            h.update(chunk)
+            got += len(chunk)
+            progress(got >> 20, total >> 20, f"Getting the face clarity model… {got >> 20} / {total >> 20} MB")
+    if h.hexdigest() != want:
+        os.remove(tmp)
+        raise RuntimeError("the downloaded model doesn't match its checksum - not used")
+    os.replace(tmp, dest)
+    return True
+
+
+def _faces_in(bgr):
+    """YuNet rows (box, 5 landmarks, score) for the faces in a picture."""
+    det = cv2.FaceDetectorYN.create(engine.DET_MODEL, "", (320, 320), 0.6, 0.3, 5000)
+    h, w = bgr.shape[:2]
+    k = min(1.0, 1600 / max(h, w))
+    img = cv2.resize(bgr, (round(w * k), round(h * k)), interpolation=cv2.INTER_AREA) if k < 1 else bgr
+    found = []
+    for side in (None, 640, 320):
+        im = img
+        s = 1.0
+        if side:
+            if max(img.shape[:2]) <= side * 1.4:
+                continue
+            s = side / max(img.shape[:2])
+            im = cv2.resize(img, (round(img.shape[1] * s), round(img.shape[0] * s)), interpolation=cv2.INTER_AREA)
+        det.setInputSize((im.shape[1], im.shape[0]))
+        _, faces = det.detect(im)
+        for f in ([] if faces is None else faces):
+            f = f.copy()
+            f[:14] /= s * k
+            box = f[:4]
+            if not any(_overlap(box, g[:4]) > 0.4 for g in found):
+                found.append(f)
+    return found
+
+
+def _overlap(a, b):
+    x0, y0 = max(a[0], b[0]), max(a[1], b[1])
+    x1, y1 = min(a[0] + a[2], b[0] + b[2]), min(a[1] + a[3], b[1] + b[3])
+    inter = max(0.0, x1 - x0) * max(0.0, y1 - y0)
+    return inter / max(1e-6, min(a[2] * a[3], b[2] * b[3]))
+
+
+def _sharpen(bgr):
+    """Without the model (or where no face is found): a careful clean-up - noise out, detail and
+    local contrast up."""
+    den = cv2.fastNlMeansDenoisingColored(bgr, None, 4, 4, 5, 15)
+    blur = cv2.GaussianBlur(den, (0, 0), 1.6)
+    sharp = cv2.addWeighted(den, 1.8, blur, -0.8, 0)
+    lab = cv2.cvtColor(sharp, cv2.COLOR_BGR2LAB)
+    lab[:, :, 0] = cv2.createCLAHE(clipLimit=1.6, tileGridSize=(4, 4)).apply(lab[:, :, 0])
+    return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+
+
+def face_clarity(rgb, mask, strength=0.8, cancelled=lambda: False):
+    """(rgb with the painted faces made clearer, faces done). Each face under the brush is lined up,
+    redrawn sharper by the face model (GFPGAN), put back, and blended in only where you painted.
+    The model draws fine detail it judges likely (lashes, skin texture): good for soft, blurry or
+    low-resolution faces that are still visible; it can't show what isn't there."""
+    m = (mask > 0).astype(np.uint8)
+    if not m.any():
+        return rgb, 0
+    H, W = m.shape
+    ys, xs = np.nonzero(m)
+    span = max(np.ptp(ys), np.ptp(xs)) + 1
+    pad = int(span * 0.8) + 32
+    y0, y1 = max(0, ys.min() - pad), min(H, ys.max() + pad + 1)
+    x0, x1 = max(0, xs.min() - pad), min(W, xs.max() + pad + 1)
+    bgr = cv2.cvtColor(np.ascontiguousarray(rgb[y0:y1, x0:x1]), cv2.COLOR_RGB2BGR)
+    cm = m[y0:y1, x0:x1]
+    out = bgr.astype(np.float32)
+    weight = np.zeros(cm.shape, np.float32)
+    done = 0
+    if clarity_ready():
+        for f in _faces_in(bgr):
+            if cancelled():
+                raise RuntimeError("cancelled")
+            fx, fy, fw, fh = f[:4]
+            if cm[max(0, int(fy)):int(fy + fh), max(0, int(fx)):int(fx + fw)].sum() < 0.08 * fw * fh:
+                continue                                  # not this face: hardly painted over
+            lm = f[4:14].reshape(5, 2).astype(np.float32)
+            M, _ = cv2.estimateAffinePartial2D(lm, FFHQ_512, method=cv2.LMEDS)
+            if M is None:
+                continue
+            face = cv2.warpAffine(bgr, M, (512, 512), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT101)
+            x = cv2.cvtColor(face, cv2.COLOR_BGR2RGB).astype(np.float32) / 127.5 - 1
+            y = _run(clarity_model_path(), {"input": x.transpose(2, 0, 1)[None]})[0][0]
+            new = cv2.cvtColor(((np.clip(y.transpose(1, 2, 0), -1, 1) + 1) * 127.5).astype(np.uint8), cv2.COLOR_RGB2BGR)
+            # back into the photo, with a soft oval edge around the face
+            oval = np.zeros((512, 512), np.float32)
+            cv2.ellipse(oval, (256, 280), (205, 245), 0, 0, 360, 1.0, -1)
+            oval = cv2.GaussianBlur(oval, (0, 0), 18)
+            Mi = cv2.invertAffineTransform(M)
+            back = cv2.warpAffine(new, Mi, (bgr.shape[1], bgr.shape[0]), flags=cv2.INTER_LINEAR,
+                                  borderMode=cv2.BORDER_REFLECT101)
+            wmask = cv2.warpAffine(oval, Mi, (bgr.shape[1], bgr.shape[0]), flags=cv2.INTER_LINEAR)
+            out = out * (1 - wmask[..., None]) + back.astype(np.float32) * wmask[..., None]
+            weight = np.maximum(weight, wmask)
+            done += 1
+    # where the brush went but no face was redrawn: careful sharpening instead
+    rest = (cm > 0) & (weight < 0.5)
+    if rest.any():
+        sharp = _sharpen(bgr).astype(np.float32)
+        rw = cv2.GaussianBlur(rest.astype(np.float32), (0, 0), 2)[..., None]
+        out = out * (1 - rw) + sharp * rw
+    # only where painted (soft edge), and as strongly as asked
+    soft = cv2.GaussianBlur(cv2.dilate(cm, np.ones((5, 5), np.uint8)).astype(np.float32), (0, 0),
+                            max(2.0, span / 60))[..., None] * float(strength)
+    res = out * soft + bgr.astype(np.float32) * (1 - soft)
+    result = rgb.copy()
+    result[y0:y1, x0:x1] = cv2.cvtColor(np.clip(res, 0, 255).astype(np.uint8), cv2.COLOR_BGR2RGB)
+    return result, done

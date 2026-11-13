@@ -801,6 +801,10 @@ class PhotoViewer(QWidget):
         up.setToolTipsVisible(True)
         a = m.addAction("Touch-up brush…", self.open_touchup)
         a.setToolTip("Paint over a spot, scratch, date stamp or stray object; it's filled in from around it")
+        a = m.addAction("Face clarity brush…" + ("" if photo_tools.clarity_ready() else
+                                                 f"   (gets a {photo_tools.CLARITY_MB} MB model once)"),
+                        lambda: self.open_touchup("clarity"))
+        a.setToolTip("Paint over a soft, blurry or low-resolution face; it's redrawn sharper")
         m.addSeparator()
         m.addAction("Auto enhance (light)", lambda: self.run_tool("enhance"))
         m.addAction("Restore old / faded photo", lambda: self.run_tool("restore"))
@@ -891,7 +895,7 @@ class PhotoViewer(QWidget):
             b.setEnabled(False)
         self.tool.submit(work)
 
-    def open_touchup(self):
+    def open_touchup(self, mode="heal"):
         """The touch-up brush on this photo (or on the preview, if tools were already used)."""
         if self.is_video or self.is_anim or not self.path or self.tool.busy:
             return
@@ -905,7 +909,7 @@ class PhotoViewer(QWidget):
             except Exception as e:
                 self.toast.setText(f"Couldn't open the photo: {e}")
                 return
-        d = TouchUpDialog(self, src, os.path.basename(path))
+        d = TouchUpDialog(self, src, os.path.basename(path), mode)
         if not d.exec() or not d.changed() or self.path != path:
             return
         out = d.rgb
@@ -915,8 +919,8 @@ class PhotoViewer(QWidget):
         qimg = QImage(np.ascontiguousarray(shown).data, shown.shape[1], shown.shape[0], 3 * shown.shape[1],
                       QImage.Format_RGB888).copy()
         self.edit_bar.show()
-        self._tool_done({"rgb": out, "exif": exif, "qimg": qimg, "label": "touched up",
-                         "info": f"{d.fills} fill{'s' if d.fills != 1 else ''}", "path": path}, None)
+        self._tool_done({"rgb": out, "exif": exif, "qimg": qimg, "label": d.label(),
+                         "info": f"{d.fills} change{'s' if d.fills != 1 else ''}", "path": path}, None)
 
     def _tool_step(self, f):
         if self.tool.busy:

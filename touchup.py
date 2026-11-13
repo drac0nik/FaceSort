@@ -5,8 +5,8 @@ result goes back to the viewer as a preview, and is only ever saved as a copy ne
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QImage, QKeySequence, QPainter, QPainterPath, QPen, QShortcut
-from PySide6.QtWidgets import (QCheckBox, QDialog, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout,
-                               QWidget)
+from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QDialog, QHBoxLayout, QLabel, QMessageBox, QPushButton,
+                               QRadioButton, QSlider, QVBoxLayout, QWidget)
 
 import cv2
 
@@ -76,8 +76,9 @@ class BrushCanvas(QWidget):
         p.drawImage(QRectF(ox, oy, w * s, h * s), img)
         if not self.show_before:
             p.setRenderHint(QPainter.Antialiasing)
+            col = QColor(60, 160, 255, 120) if self.dlg.clarity_mode() else QColor(255, 40, 40, 130)
             for pts, r in list(zip(self.strokes, self.radii)) + ([(self.cur, self.cur_r)] if self.cur else []):
-                pen = QPen(QColor(255, 40, 40, 130), max(1.0, 2 * r * s), Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+                pen = QPen(col, max(1.0, 2 * r * s), Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
                 p.setPen(pen)
                 path = QPainterPath(QPointF(ox + pts[0][0] * s, oy + pts[0][1] * s))
                 for x, y in pts[1:] or pts[:1]:
@@ -172,7 +173,7 @@ class BrushCanvas(QWidget):
 
 
 class TouchUpDialog(QDialog):
-    def __init__(self, parent, rgb, title=""):
+    def __init__(self, parent, rgb, title="", mode="heal"):
         super().__init__(parent)
         self.setWindowTitle("Touch-up brush" + (f" - {title}" if title else ""))
         self.setWindowFlag(Qt.WindowMaximizeButtonHint, True)
@@ -182,16 +183,37 @@ class TouchUpDialog(QDialog):
         self.before_q = self.qimg
         self.undo, self.redo = [], []
         self.fills = 0
+        self.ops = []                        # what each fill was: "heal" / "clarity" (for undo too)
         self.worker = ToolWorker()
         self.worker.done.connect(self._filled)
 
         lay = QVBoxLayout(self)
-        tip = QLabel("Paint over what should go - a spot, a scratch, a date stamp, a stray hair - and let go: it's "
-                     "filled in from what's around it. Paint a little past its edges. Wheel = zoom, right-drag = move "
-                     "around, Shift + wheel or [ ] = brush size, hold \\ to see the photo before.")
-        tip.setWordWrap(True)
-        tip.setStyleSheet("color: gray;")
-        lay.addWidget(tip)
+        modes = QHBoxLayout()
+        self.heal_rb = QRadioButton("Heal")
+        self.heal_rb.setToolTip("Paint over a spot, scratch, date stamp or stray hair: it's filled in from around it")
+        self.clar_rb = QRadioButton("Face clarity")
+        self.clar_rb.setToolTip("Paint over a soft, blurry or low-resolution face: it's redrawn sharper")
+        grp = QButtonGroup(self)
+        for b in (self.heal_rb, self.clar_rb):
+            grp.addButton(b)
+            modes.addWidget(b)
+        (self.clar_rb if mode == "clarity" else self.heal_rb).setChecked(True)
+        self.strength_l = QLabel("Strength")
+        self.strength = QSlider(Qt.Horizontal)
+        self.strength.setRange(20, 100)
+        self.strength.setValue(75)
+        self.strength.setFixedWidth(140)
+        self.strength.setToolTip("How much of the clearer face is used - lower keeps more of the original look")
+        modes.addSpacing(16)
+        modes.addWidget(self.strength_l)
+        modes.addWidget(self.strength)
+        modes.addSpacing(16)
+        self.tip = QLabel()
+        self.tip.setWordWrap(True)
+        self.tip.setStyleSheet("color: gray;")
+        modes.addWidget(self.tip, 1)
+        lay.addLayout(modes)
+        grp.buttonToggled.connect(lambda *a: self._mode_changed())
         self.canvas = BrushCanvas(self)
         lay.addWidget(self.canvas, 1)
         row = QHBoxLayout()
@@ -259,9 +281,28 @@ class TouchUpDialog(QDialog):
             self.resize(int(scr.width() * 0.85), int(scr.height() * 0.85))
         else:
             self.resize(1200, 850)
+        self._mode_changed()
         self._buttons()
 
     # -- state
+    def clarity_mode(self):
+        return self.clar_rb.isChecked()
+
+    def _mode_changed(self):
+        c = self.clarity_mode()
+        self.strength_l.setVisible(c)
+        self.strength.setVisible(c)
+        if c:
+            self.tip.setText("Paint over a face that's soft, blurry or small and let go: it's redrawn clearer by a face "
+                             "model on this PC (fine detail like lashes and skin is the model's best guess). Paint the "
+                             "whole face, or just the part to sharpen.")
+            if self.size.value() < 60:
+                self.size.setValue(80)
+        else:
+            self.tip.setText("Paint over what should go - a spot, a scratch, a date stamp, a stray hair - and let go: "
+                             "it's filled in from what's around it. Paint a little past its edges. Wheel = zoom, "
+                             "right-drag = move around, Shift + wheel or [ ] = brush size, hold \\ to see before.")
+        self.canvas.update()
     def busy(self):
         return self.worker.busy
 
@@ -313,10 +354,56 @@ class TouchUpDialog(QDialog):
             return
         mask = self.canvas.mask()
         src = self.rgb
-        self.status.setText("Filling…  (Esc to stop)")
+        if self.clarity_mode():
+            if not photo_tools.clarity_ready() and not self._get_model():
+                self.clear_strokes()
+                return
+            k = self.strength.value() / 100
+            self.status.setText("Making the face clearer…  (Esc to stop)")
+            work = lambda step, cancelled: (*photo_tools.face_clarity(src, mask, k, cancelled), src, "clarity")
+        else:
+            self.status.setText("Filling…  (Esc to stop)")
+            work = lambda step, cancelled: (photo_tools.heal(src, mask, cancelled), 0, src, "heal")
         self._buttons()
         self.fill_b.setEnabled(False)
-        self.worker.submit(lambda step, cancelled: (photo_tools.heal(src, mask, cancelled), src))
+        self.worker.submit(work)
+
+    def _get_model(self):
+        """The face clarity model, downloaded once (asked first). True when it's ready."""
+        if QMessageBox.question(self, "Face clarity", f"Face clarity uses a face model of about {photo_tools.CLARITY_MB} MB "
+                                "(GFPGAN 1.4, Apache licence), downloaded once from FaceSort's GitHub page. After that "
+                                "it works on this PC only - your photos are never uploaded.\n\nDownload it now?"
+                                ) != QMessageBox.Yes:
+            return False
+        self._dl = {"done": False, "err": None, "msg": ""}
+
+        def run(step, cancelled):
+            return photo_tools.download_clarity(lambda d, t, m: self._dl.__setitem__("msg", m), cancelled)
+        self.worker.done.disconnect(self._filled)
+        self.worker.done.connect(self._downloaded)
+        self.worker.submit(run)
+        self._buttons()
+        from PySide6.QtCore import QEventLoop, QTimer
+        loop = QEventLoop()
+        tick = QTimer(self)
+        tick.timeout.connect(lambda: (self.status.setText(self._dl["msg"] + "  (Esc to stop)") if self._dl["msg"] else None,
+                                      loop.quit() if self._dl["done"] else None))
+        tick.start(200)
+        loop.exec()
+        tick.stop()
+        self.worker.done.disconnect(self._downloaded)
+        self.worker.done.connect(self._filled)
+        self._buttons()
+        if self._dl["err"]:
+            self.status.setText("")
+            QMessageBox.warning(self, "Face clarity", f"The model couldn't be downloaded:\n{self._dl['err']}")
+            return False
+        self.status.setText("Model ready")
+        return photo_tools.clarity_ready()
+
+    def _downloaded(self, res, err):
+        self._dl["err"] = None if res else (err or "cancelled")
+        self._dl["done"] = True
 
     def _filled(self, res, err):
         self.clear_strokes()
@@ -324,22 +411,28 @@ class TouchUpDialog(QDialog):
             self.status.setText("Stopped" if err and "cancel" in err else f"Couldn't fill that: {err}")
             self._buttons()
             return
-        out, src = res
+        out, faces, src, kind = res
         if src is not self.rgb:
             return
-        self._push(out)
+        self._push(out, kind)
         self.fills += 1
-        self.status.setText(f"{self.fills} fill{'s' if self.fills != 1 else ''}")
+        if kind == "clarity":
+            self.status.setText(f"{faces} face{'s' if faces != 1 else ''} made clearer" if faces else
+                                "No face found under the brush - sharpened instead")
+        else:
+            self.status.setText(f"{self.fills} change{'s' if self.fills != 1 else ''}")
         self._buttons()
 
-    def _push(self, out):
+    def _push(self, out, kind="heal"):
         # undo keeps only the part that changed
         diff = np.any(out != self.rgb, axis=2)
         if diff.any():
             ys, xs = np.nonzero(diff)
             y0, y1, x0, x1 = ys.min(), ys.max() + 1, xs.min(), xs.max() + 1
             self.undo.append((y0, y1, x0, x1, self.rgb[y0:y1, x0:x1].copy(), out[y0:y1, x0:x1].copy()))
+            self.ops.append(kind)
             del self.undo[:-UNDO_STEPS]
+            del self.ops[:-UNDO_STEPS]
             self.redo.clear()
         self.rgb = out
         self.qimg = to_qimage(out)
@@ -357,19 +450,25 @@ class TouchUpDialog(QDialog):
         if self.undo and not self.busy():
             rec = self.undo.pop()
             self._apply(rec, False)
-            self.redo.append(rec)
+            self.redo.append((rec, self.ops.pop() if self.ops else "heal"))
             self.fills = max(0, self.fills - 1)
             self.status.setText("Undone")
             self._buttons()
 
     def do_redo(self):
         if self.redo and not self.busy():
-            rec = self.redo.pop()
+            rec, kind = self.redo.pop()
             self._apply(rec, True)
             self.undo.append(rec)
+            self.ops.append(kind)
             self.fills += 1
             self.status.setText("Redone")
             self._buttons()
+
+    def label(self):
+        """What was done, for the viewer's preview line and the copy's name."""
+        kinds = set(self.ops)
+        return " ".join(n for k, n in (("heal", "touched up"), ("clarity", "face clarity")) if k in kinds) or "touched up"
 
     def changed(self):
         return self.rgb is not self.first and bool(np.any(self.rgb != self.first))

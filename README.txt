@@ -153,6 +153,18 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+Face clarity brush (1.41)
+- In the viewer: Tools > Face clarity brush... (or the "Face clarity" switch in the touch-up
+  brush). Paint over a face that's soft, blurry or small and let go: it's redrawn clearer by a
+  face model (GFPGAN 1.4) on this PC. Strength sets how much of the clearer face is used;
+  paint the whole face, or just the part you want sharper.
+- The model draws fine detail it judges likely (lashes, skin texture, hair strands): it works
+  on faces that are visible but soft. It can't show what isn't there - a covered or turned-away
+  face stays as it is. Where no face is found under the brush, the area is sharpened instead.
+- The model (about 340 MB) is downloaded once, the first time you use it, from FaceSort's
+  GitHub page, and checked against its published checksum. Your photos are never uploaded.
+- As with the other tools: a preview first, saved as a copy next to the original.
+
 Touch-up brush (1.40)
 - In the viewer: Tools > Touch-up brush... Paint over a spot, a scratch, dust, a date stamp
   or a stray hair and let go: it's filled in from what's around it. Thin marks are blended

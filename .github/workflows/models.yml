@@ -1,0 +1,54 @@
+# Publishes the face clarity model (GFPGAN 1.4, Apache-2.0) as the "models-gfpgan" pre-release,
+# which FaceSort downloads the first time the Face clarity brush is used. Run it by hand from the
+# Actions tab (once). It downloads TencentARC's official weights, checks them, converts them to
+# ONNX unchanged, checks the result against PyTorch, and uploads it with its checksum.
+# (A pre-release, so the app's update check - which looks at the latest full release - ignores it.)
+name: Face clarity model
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Get GFPGAN and its official weights
+        run: |
+          mkdir work
+          git clone https://github.com/TencentARC/GFPGAN work/src
+          git -C work/src checkout 7552a7791caad982045a7bbe5634bbf1cd5c8679
+          curl -sSL -o work/GFPGANv1.4.pth https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth
+          echo "e2cd4703ab14f4d01fd1383a8a8b266f9a5833dacee8e6a79d3bf21a1b6be5ad  work/GFPGANv1.4.pth" | sha256sum -c -
+
+      - name: Convert to ONNX
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install onnx onnxscript onnxruntime numpy
+          python tools/export_gfpgan.py work
+          cd work
+          sha256sum gfpgan_1.4.onnx > gfpgan_1.4.onnx.sha256
+          cp src/LICENSE GFPGAN-LICENSE.txt
+          cat gfpgan_1.4.onnx.sha256
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd work
+          printf '%s\n' "Face model used by FaceSort's Face clarity brush (downloaded by the app on first use; not an app release)." "" \
+            "gfpgan_1.4.onnx: GFPGAN v1.4 by TencentARC (https://github.com/TencentARC/GFPGAN), converted unchanged from the official GFPGANv1.4.pth (sha256 e2cd4703ab14f4d01fd1383a8a8b266f9a5833dacee8e6a79d3bf21a1b6be5ad) to ONNX. Input/output: 1x3x512x512 RGB in [-1, 1]." "" \
+            "Licence: Apache License 2.0 - see GFPGAN-LICENSE.txt." > notes.md
+          gh release delete models-gfpgan --cleanup-tag --yes || true
+          gh release create models-gfpgan --target "${{ github.sha }}" --prerelease \
+            --title "Face clarity model (GFPGAN 1.4)" --notes-file notes.md \
+            gfpgan_1.4.onnx gfpgan_1.4.onnx.sha256 GFPGAN-LICENSE.txt
