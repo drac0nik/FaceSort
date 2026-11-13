@@ -44,7 +44,7 @@ class JobsMixin:
 
     def bg_tick(self):
         """Start the next startup check once everything else has finished."""
-        if not self._bg_queue:
+        if getattr(self, "_closing", False) or not self._bg_queue:
             self._bg_timer.stop()
             return
         if self.bg_running():
@@ -412,7 +412,7 @@ class JobsMixin:
             log(f"saving known people: {ex}")
 
     def start_remember(self):
-        if not self._remember_dirty:
+        if not self._remember_dirty or getattr(self, "_closing", False):
             return
         if self.busy() or (self.regroup_worker and self.regroup_worker.isRunning()) or \
                 (self.remember_worker and self.remember_worker.isRunning()):
@@ -452,6 +452,8 @@ class JobsMixin:
             self.regroup_timer.start()
 
     def start_regroup(self):
+        if getattr(self, "_closing", False):
+            return
         if self.busy() or (self.regroup_worker and self.regroup_worker.isRunning()):
             self.regroup_pending = True
             if self.regroup_worker and self.regroup_worker.isRunning():
@@ -572,6 +574,7 @@ class JobsMixin:
                      include_dropped=dlg.include_dropped(), convert_webp=dlg.convert())
 
     def closeEvent(self, e):
+        self._closing = True              # (a timer or job signal still on its way must not start anything)
         getattr(self, "stallwatch", None) and self.stallwatch.stop()
         try:
             store.save_settings(self.settings)  # remembers the thumbnail size

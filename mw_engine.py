@@ -71,7 +71,7 @@ class EngineMixin:
                           self.offer_dark_look]
         self._bg_timer = QTimer(self)
         self._bg_timer.timeout.connect(self.bg_tick)
-        QTimer.singleShot(2500, lambda: self._bg_timer.start(1200))
+        QTimer.singleShot(2500, lambda: None if getattr(self, "_closing", False) else self._bg_timer.start(1200))
         # videos older versions couldn't read are tried again (FFmpeg can read many of them now)
         if not s.get("video_retry_ffmpeg"):
             s["video_retry_ffmpeg"] = True
