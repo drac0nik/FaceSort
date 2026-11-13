@@ -799,6 +799,8 @@ class PhotoViewer(QWidget):
                                lambda f=f: self.run_tool("upscale", f))
             act.setEnabled(ok and not busy and w > 0)
         up.setToolTipsVisible(True)
+        a = m.addAction("Touch-up brush…", self.open_touchup)
+        a.setToolTip("Paint over a spot, scratch, date stamp or stray object; it's filled in from around it")
         m.addSeparator()
         m.addAction("Auto enhance (light)", lambda: self.run_tool("enhance"))
         m.addAction("Restore old / faded photo", lambda: self.run_tool("restore"))
@@ -888,6 +890,33 @@ class PhotoViewer(QWidget):
         for b in (self.edit_save, self.edit_hold, self.edit_more):
             b.setEnabled(False)
         self.tool.submit(work)
+
+    def open_touchup(self):
+        """The touch-up brush on this photo (or on the preview, if tools were already used)."""
+        if self.is_video or self.is_anim or not self.path or self.tool.busy:
+            return
+        from touchup import TouchUpDialog
+        path = self.path
+        exif = None
+        src = self.edit_rgb
+        if src is None:
+            try:
+                src, exif = photo_tools.load_full(path)
+            except Exception as e:
+                self.toast.setText(f"Couldn't open the photo: {e}")
+                return
+        d = TouchUpDialog(self, src, os.path.basename(path))
+        if not d.exec() or not d.changed() or self.path != path:
+            return
+        out = d.rgb
+        h, w = out.shape[:2]
+        k = min(1.0, 4096 / max(w, h))
+        shown = cv2.resize(out, (max(1, round(w * k)), max(1, round(h * k))), interpolation=cv2.INTER_AREA) if k < 1 else out
+        qimg = QImage(np.ascontiguousarray(shown).data, shown.shape[1], shown.shape[0], 3 * shown.shape[1],
+                      QImage.Format_RGB888).copy()
+        self.edit_bar.show()
+        self._tool_done({"rgb": out, "exif": exif, "qimg": qimg, "label": "touched up",
+                         "info": f"{d.fills} fill{'s' if d.fills != 1 else ''}", "path": path}, None)
 
     def _tool_step(self, f):
         if self.tool.busy:

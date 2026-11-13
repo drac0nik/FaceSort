@@ -153,6 +153,19 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+Touch-up brush (1.40)
+- In the viewer: Tools > Touch-up brush... Paint over a spot, a scratch, dust, a date stamp
+  or a stray hair and let go: it's filled in from what's around it. Thin marks are blended
+  away; wider areas get texture copied from nearby (grass stays grass, a wall stays a wall).
+- Wheel zooms (at the mouse), right-drag or Space + drag moves around, Shift + wheel or
+  [ ] changes the brush size, hold \ (or "Hold: before") to see the photo as it was.
+  Ctrl+Z / Ctrl+Y undo and redo each fill. Untick "Fill when I let go" to paint several
+  strokes first and press Fill (Enter).
+- Paint a little past the edges of what should go. Big areas over busy detail (a hole across
+  folds of a curtain) can come out patchy - undo and fill it in a few smaller strokes.
+- Done brings it back to the viewer as a preview, like the other tools: save it as a copy
+  next to the original ("... - touched up.jpg"). The original is never changed.
+
 Speed report (1.39.2)
 - FaceSort notes every moment the window is slow to respond (a quarter second or more) and
   what it was busy with, in speed.log in the data folder (Settings > General > Speed report >

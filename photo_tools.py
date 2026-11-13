@@ -494,3 +494,135 @@ def smooth_shadows(rgb, lift=False, progress=lambda f: None, cancelled=lambda: F
     out = out * 255 + (rng.random(out.shape, dtype=np.float32) - rng.random(out.shape, dtype=np.float32))
     progress(1.0)
     return np.clip(out + 0.5, 0, 255).astype(np.uint8)
+
+
+# ---- touch-up brush: fill a painted area from what's around it
+HEAL_MAX_AREA = 50000      # painted pixels filled at full detail; bigger areas are filled smaller, then scaled up
+
+
+def _patch_fill(bgr, hole, half, cancelled=lambda: False):
+    """Exemplar fill (Criminisi et al.): the hole is filled from its edge inwards, each time copying
+    the best-matching piece of the picture around it, edges and lines first - so texture and lines
+    continue instead of being smeared."""
+    img = bgr.astype(np.float32)
+    known = (hole == 0)
+    orig = known.astype(np.uint8)          # pieces are copied only from the photo as it was, never from
+                                           # what was just filled (that's how mistakes would spread)
+    conf = known.astype(np.float32)
+    h, w = hole.shape
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    gx, gy = cv2.Sobel(gray, cv2.CV_32F, 1, 0), cv2.Sobel(gray, cv2.CV_32F, 0, 1)
+    grad = cv2.magnitude(gx, gy)
+    grad /= grad.max() or 1
+    kern = np.ones((2 * half + 1, 2 * half + 1), np.uint8)
+    reach = max(40, 6 * half)
+    left = int((~known).sum())
+    guard = left + 50
+    while left > 0 and guard > 0:
+        guard -= 1
+        if cancelled():
+            raise RuntimeError("cancelled")
+        k8 = known.astype(np.uint8)
+        front = (cv2.dilate(k8, np.ones((3, 3), np.uint8)) > 0) & ~known
+        fy, fx = np.nonzero(front)
+        if not len(fy):
+            break
+        # priority: how much is already known around the point, times how strong an edge leads into it
+        cavg = cv2.blur(conf, (2 * half + 1, 2 * half + 1))
+        g = cv2.dilate(grad * known, np.ones((3, 3), np.uint8))
+        pri = cavg[fy, fx] * (g[fy, fx] + 0.05)
+        j = int(np.argmax(pri))
+        cy, cx = int(fy[j]), int(fx[j])
+        ty0, ty1 = max(0, cy - half), min(h, cy + half + 1)
+        tx0, tx1 = max(0, cx - half), min(w, cx + half + 1)
+        th, tw = ty1 - ty0, tx1 - tx0
+        tk = known[ty0:ty1, tx0:tx1]
+        # where to look: a window around the point, only at pieces that are wholly known
+        sy0, sy1 = max(0, cy - reach), min(h, cy + reach + 1)
+        sx0, sx1 = max(0, cx - reach), min(w, cx + reach + 1)
+        if sy1 - sy0 < th or sx1 - sx0 < tw:
+            break
+        tmpl = img[ty0:ty1, tx0:tx1]
+        m3 = np.repeat(tk[..., None], 3, 2).astype(np.float32)
+        if tk.any():
+            res = cv2.matchTemplate(img[sy0:sy1, sx0:sx1], tmpl, cv2.TM_SQDIFF, mask=m3)
+        else:
+            res = np.zeros((sy1 - sy0 - th + 1, sx1 - sx0 - tw + 1), np.float32)
+        whole = cv2.erode(orig[sy0:sy1, sx0:sx1], np.ones((th, tw), np.uint8),
+                          anchor=(0, 0), borderType=cv2.BORDER_CONSTANT, borderValue=0)
+        ok = whole[:res.shape[0], :res.shape[1]] > 0
+        if not ok.any():
+            reach *= 2                                   # nothing whole nearby: look further
+            if reach > max(h, w):
+                break
+            continue
+        res = np.where(ok, np.nan_to_num(res, nan=1e30, posinf=1e30), np.float32(1e30))
+        by, bx = np.unravel_index(int(np.argmin(res)), res.shape)
+        src = img[sy0 + by:sy0 + by + th, sx0 + bx:sx0 + bx + tw]
+        fillm = ~tk
+        img[ty0:ty1, tx0:tx1][fillm] = src[fillm]
+        conf[ty0:ty1, tx0:tx1][fillm] = cavg[cy, cx]
+        gsrc = grad[sy0 + by:sy0 + by + th, sx0 + bx:sx0 + bx + tw]
+        grad[ty0:ty1, tx0:tx1][fillm] = gsrc[fillm]
+        known[ty0:ty1, tx0:tx1] = True
+        left -= int(fillm.sum())
+    if left > 0:                                         # (anything left: smooth fill)
+        img = cv2.inpaint(np.clip(img, 0, 255).astype(np.uint8), (~known).astype(np.uint8), 3,
+                          cv2.INPAINT_TELEA).astype(np.float32)
+    return np.clip(img, 0, 255).astype(np.uint8)
+
+
+def heal(rgb, mask, cancelled=lambda: False):
+    """rgb with the painted area (mask > 0) filled in from its surroundings: thin marks (dust, a
+    scratch, a date stamp) are blended away; wider areas get texture copied from nearby, so grass
+    stays grass and a wall stays a wall."""
+    m = (mask > 0).astype(np.uint8)
+    if not m.any():
+        return rgb
+    h, w = m.shape
+    ys, xs = np.nonzero(m)
+    span = max(np.ptp(ys), np.ptp(xs))
+    pad = 32 + int(0.6 * span)
+    y0, y1 = max(0, ys.min() - pad), min(h, ys.max() + pad + 1)
+    x0, x1 = max(0, xs.min() - pad), min(w, xs.max() + pad + 1)
+    crop = np.ascontiguousarray(rgb[y0:y1, x0:x1])
+    cm = cv2.dilate(m[y0:y1, x0:x1], np.ones((3, 3), np.uint8))      # cover the soft edge of what's removed
+    bgr = cv2.cvtColor(crop, cv2.COLOR_RGB2BGR)
+    thick = float(cv2.distanceTransform(cm, cv2.DIST_L2, 3).max())    # half the width of the widest stroke
+    if thick <= 3:
+        out = cv2.inpaint(bgr, cm, 3, cv2.INPAINT_TELEA)
+    else:
+        area = int(cm.sum())
+        k = min(1.0, (HEAL_MAX_AREA / area) ** 0.5)
+        if k < 1:
+            sw, sh = max(16, round(bgr.shape[1] * k)), max(16, round(bgr.shape[0] * k))
+            small = cv2.resize(bgr, (sw, sh), interpolation=cv2.INTER_AREA)
+            sm = (cv2.resize(cm.astype(np.float32), (sw, sh), interpolation=cv2.INTER_AREA) > 0.01).astype(np.uint8)
+            fill = _patch_fill(small, sm, 4, cancelled)
+            # soften the seams between the copied pieces (their grain is put back below)
+            fill = cv2.bilateralFilter(fill, 5, 18, 3)
+            fill = cv2.resize(fill, (bgr.shape[1], bgr.shape[0]), interpolation=cv2.INTER_CUBIC)
+            fill = cv2.GaussianBlur(fill, (0, 0), 0.5 / k)
+            base = bgr.copy()
+            base[cm > 0] = fill[cm > 0]
+            # grain at full size, like the area around it (the scaled-up fill is a little soft)
+            ring = (cv2.dilate(cm, np.ones((15, 15), np.uint8)) > 0) & (cm == 0)
+            detail = bgr.astype(np.float32) - cv2.GaussianBlur(bgr, (0, 0), 1.5).astype(np.float32)
+            have = base.astype(np.float32) - cv2.GaussianBlur(base, (0, 0), 1.5).astype(np.float32)
+            want = np.median(np.abs(detail[ring]), axis=0) if ring.any() else np.zeros(3)
+            got = np.median(np.abs(have[cm > 0]), axis=0)
+            extra = np.sqrt(np.maximum(want ** 2 - got ** 2, 0)) * 1.25
+            noise = np.random.default_rng(area).normal(0, 1, bgr.shape[:2]).astype(np.float32)
+            add = noise[..., None] * extra[None, None, :] * (cm > 0)[..., None]
+            out = np.clip(base.astype(np.float32) + add, 0, 255).astype(np.uint8)
+        else:
+            out = _patch_fill(bgr, cm, max(3, min(5, round(thick / 3))), cancelled)
+            # soften the seams between the copied pieces, keeping most of their texture
+            smooth = cv2.bilateralFilter(out, 5, 24, 2)
+            out = np.where((cm > 0)[..., None], cv2.addWeighted(out, 0.4, smooth, 0.6, 0), out)
+    # blend the edge over a couple of pixels so no seam shows
+    soft = cv2.GaussianBlur(cv2.dilate(cm, np.ones((3, 3), np.uint8)).astype(np.float32), (0, 0), 1.0)[..., None]
+    res = out.astype(np.float32) * soft + bgr.astype(np.float32) * (1 - soft)
+    done = rgb.copy()
+    done[y0:y1, x0:x1] = cv2.cvtColor(np.clip(res, 0, 255).astype(np.uint8), cv2.COLOR_BGR2RGB)
+    return done
