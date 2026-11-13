@@ -257,6 +257,9 @@ class SettingsMixin:
             if n:
                 self.statusBar().showMessage(f"Photos library: remembered details for {n:,} photos loaded", 10000)
             self.start_scan()
+        if new.get("update_repo") != old.get("update_repo"):
+            self._update_info = None                         # (another project: ask it afresh)
+        self.show_update_state(getattr(self, "_update_info", None))
         if dlg.clear_requested:
             return self.clear_library()
         if new.get("engine") != old.get("engine"):

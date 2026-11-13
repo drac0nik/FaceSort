@@ -70,21 +70,43 @@ class JobsMixin:
             self.settings["update_checked"] = time.time()
             store.save_settings(self.settings)
             self._update_info = info
-            if info:
-                self.update_btn.setText(f"Update to {info['version']}")
-                self.update_btn.setToolTip(f"FaceSort {info['version']} is out (you have {APP_VERSION}) - click "
-                                           "to see what's new and install it")
-                self.a_update.setVisible(True)
-            elif force:
+            self.show_update_state(info)
+            if not info and force:
                 self.statusBar().showMessage(f"FaceSort {APP_VERSION} is the newest version.", 8000)
 
         def failed(tb):
             log(tb)
+            self.show_update_state(getattr(self, "_update_info", None))
             if force:
                 self.statusBar().showMessage("Couldn't check for updates: " + tb.strip().splitlines()[-1][:160], 12000)
         self.update_worker.ok.connect(done)
         self.update_worker.failed.connect(failed)
+        if force:
+            self.update_btn.setText("Checking…")
+            self.update_btn.setEnabled(False)
         self.update_worker.start()
+
+    def show_update_state(self, info):
+        """The toolbar button: "Check for updates", or a green "Update to x.y.z" once one is out."""
+        b = self.update_btn
+        b.setEnabled(True)
+        if info:
+            b.setText(f"Update to {info['version']}")
+            b.setStyleSheet("QToolButton { color: #22c55e; font-weight: bold; }")
+            b.setToolTip(f"FaceSort {info['version']} is out (you have {APP_VERSION}) - click to see what's new "
+                         "and install it")
+        else:
+            b.setText("Check for updates")
+            b.setStyleSheet("")
+            b.setToolTip(f"You have FaceSort {APP_VERSION}. Click to ask GitHub whether a newer version is out "
+                         "(FaceSort also checks by itself once a day).")
+        self.a_update.setVisible(bool(info) or bool(updater.repo(self.settings)))
+
+    def update_clicked(self):
+        if getattr(self, "_update_info", None):
+            self.show_update()
+        else:
+            self.start_update_check(force=True)
 
     def show_update(self):
         info = getattr(self, "_update_info", None)

@@ -155,14 +155,13 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         tb.addWidget(spacer)
-        self.update_btn = QToolButton()                 # shown only when a newer version is out
-        self.update_btn.setText("Update available")
+        # "Check for updates", which becomes a green "Update to x.y.z" when a newer version is out
+        self.update_btn = QToolButton()
         self.update_btn.setIcon(app_icon("export"))
         self.update_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        self.update_btn.setStyleSheet("QToolButton { color: #22c55e; font-weight: bold; }")
-        self.update_btn.clicked.connect(self.show_update)
+        self.update_btn.clicked.connect(self.update_clicked)
         self.a_update = tb.addWidget(self.update_btn)
-        self.a_update.setVisible(False)
+        self.show_update_state(None)
         self.a_details = QAction(app_icon("info"), "Details", self)      # its button sits by the thumbnail slider
         self.a_details.triggered.connect(lambda on: self.show_details(on))
         self.a_details.setToolTip("Show / hide the details panel on the right (size, dimensions, EXIF…)")

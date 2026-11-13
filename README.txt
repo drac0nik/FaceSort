@@ -153,6 +153,10 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+Check for updates button (1.41.2)
+- The toolbar (top right, beside Settings) has a "Check for updates" button. When a newer
+  version is out it turns into the green "Update to x.y.z" button in the same place.
+
 Quicker clicks (1.41.1) - from your speed report
 - Ignoring, removing, discarding, tagging photos, confirming same-shoot matches and closing
   the viewer update the gallery straight away; the side lists and counts catch up when you

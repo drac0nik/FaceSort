@@ -319,17 +319,30 @@ def test_update_button_appears_when_a_newer_version_is_out(window, qapp, monkeyp
     import time as _t
     import updater
     w = window
-    assert not w.a_update.isVisible()
+    assert w.a_update.isVisible() and w.update_btn.text() == "Check for updates"     # (FaceSort's own project)
     info = {"version": "9.9.9", "notes": "Better", "page": "https://example.invalid", "installer": "x",
             "size": 1, "sha256": "ab" * 32, "name": "FaceSort-Setup-9.9.9.exe"}
     monkeypatch.setattr(updater, "check_job", lambda conn, settings, progress=None, cancelled=None: info)
     w.settings["update_repo"] = "someone/FaceSort"
     w.start_update_check(force=True)
     end = _t.time() + 10
-    while _t.time() < end and not w.a_update.isVisible():
+    while _t.time() < end and w.update_btn.text() != "Update to 9.9.9":
         pump(qapp, 0.1)
     assert w.a_update.isVisible() and w.update_btn.text() == "Update to 9.9.9"
     assert w.settings["update_checked"] > 0
+    # nothing newer: back to "Check for updates", and a click asks again
+    monkeypatch.setattr(updater, "check_job", lambda conn, settings, progress=None, cancelled=None: None)
+    w._update_info = None
+    w.update_clicked()
+    assert w.update_btn.text() == "Checking…" and not w.update_btn.isEnabled()
+    end = _t.time() + 10
+    while _t.time() < end and not w.update_btn.isEnabled():
+        pump(qapp, 0.1)
+    assert w.update_btn.text() == "Check for updates" and "newest version" in w.statusBar().currentMessage()
+    w.settings["update_repo"] = "not a project"
+    monkeypatch.setattr(updater, "UPDATE_REPO", "")
+    w.show_update_state(None)
+    assert not w.a_update.isVisible()                    # no project to ask: no button
 
 
 # ------------------------------------------------------------------ generic names
