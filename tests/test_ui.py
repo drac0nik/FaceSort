@@ -566,3 +566,19 @@ def test_thumbnail_cache_counted(tmp_path):
     (tmp_path / "y.jpg").write_bytes(b"2" * 50)
     assert gallery.thumb_cache_size(str(tmp_path)) == (2, 150)
     assert gallery.thumb_cache_size(str(tmp_path / "missing")) == (0, 0)
+
+
+def test_drop_scans_only_the_dropped_paths(window, qapp, tmp_path, monkeypatch):
+    from conftest import write_photo
+    w = window
+    d = tmp_path / "Holiday"
+    write_photo(str(d / "x.jpg"), 801)
+    got = []
+    monkeypatch.setattr(w, "start_scan", lambda **k: got.append(k))
+    monkeypatch.setattr(w, "busy", lambda: False)
+    assert w.handle_drop([str(d)], answers=((), None, False))
+    assert got and got[0]["opts"]["roots"] == [str(d)]
+    w._scan_after = {"roots": [str(d)]}             # dropped while busy: the same drop-only scan afterwards
+    w._after_job("other")
+    pump(qapp, 0.4)
+    assert got[-1]["opts"] == {"roots": [str(d)]}

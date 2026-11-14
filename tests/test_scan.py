@@ -177,3 +177,33 @@ def test_scan_options_defaults():
     assert o["videos"] is False and o["limit"] == 250 and o["mode"] == "both" and o["others"] is False
     o = jobs.scan_options({}, {"limit": "x", "min_kb": -5, "bogus": 1})
     assert o["limit"] == 0 and o["min_kb"] == 0 and "bogus" not in o
+
+
+def test_a_drop_scans_only_what_was_dropped(lib, tmp_path):
+    """Dropping a folder: only its photos are looked at and imported - not other new photos in your
+    folders, and no check of the rest of the library (that's for the next Scan)."""
+    conn, lib = lib
+    jobs.scan_library(conn, store.load_settings())
+    before = {r[0] for r in conn.execute("SELECT path FROM photos")}
+    elsewhere = store.norm_path(os.path.join(lib, "New", "not dropped.jpg"))
+    write_photo(elsewhere, 701)
+    gone = next(iter(before))
+    os.remove(gone)                                    # (a full scan would notice this)
+    drop = tmp_path / "Dropped"
+    a, b = (store.norm_path(str(drop / f"d{i}.jpg")) for i in (1, 2))
+    write_photo(a, 702)
+    write_photo(b, 703)
+    looked = []
+    real_iter = jobs.iter_files
+    jobs.iter_files = lambda folder, **k: (looked.append(folder), real_iter(folder, **k))[1]
+    try:
+        st = jobs.scan_library(conn, store.load_settings(), opts={"roots": [str(drop)]})
+    finally:
+        jobs.iter_files = real_iter
+    paths = {r[0] for r in conn.execute("SELECT path FROM photos")}
+    assert {a, b} <= paths and st["scanned"] == 2
+    assert elsewhere not in paths                      # waits for the next Scan
+    assert gone in paths and not st["removed"]         # the library wasn't checked
+    assert [store.norm_path(f) for f in looked] == [store.norm_path(str(drop))]
+    st = jobs.scan_library(conn, store.load_settings())   # the next normal Scan picks up the rest
+    assert elsewhere in {r[0] for r in conn.execute("SELECT path FROM photos")}

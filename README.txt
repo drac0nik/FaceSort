@@ -153,6 +153,12 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+Drops scan only what you dropped (1.43.2)
+- Dropping folders or photos on the window scans just those: the rest of your folders isn't
+  walked, checked or imported first (new photos elsewhere wait for your next Scan), and the
+  library-wide catch-up work (duplicate close-ups, AI detector) is left for later too - so the
+  dropped photos are in and tagged as soon as they're read.
+
 Duplicates always listed (1.43.1)
 - Smart Groups > Duplicates is always there ("0 sets" when none were found), so you can see the
   duplicate check is on. FaceSort checks new photos in the background.

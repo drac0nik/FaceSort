@@ -106,7 +106,7 @@ def scan_options(settings, opts=None):
     o = {"mode": "both", "folders": None, "limit": settings.get("import_limit", 0) or 0, "order": "folder",
          "videos": vm != "separate", "video_mode": "with" if vm == "with" else "after", "others": False,
          "min_kb": 0, "exclude": [], "missing": "remove", "nofaces_again": False, "dark_again": False,
-         "dupes_after": False, "shoot_after": True, "light": False}
+         "dupes_after": False, "shoot_after": True, "light": False, "roots": None}
     o.update({k: v for k, v in (opts or {}).items() if k in o})
     try:
         o["limit"] = max(0, int(o["limit"] or 0))
@@ -252,6 +252,13 @@ def scan_library(conn, settings, progress=lambda done, total, msg: None, cancell
 
     progress(0, 0, "Looking for photos…")
     found = {}
+    drop_scan = bool(o["roots"])
+    if drop_scan:
+        # a drop: only the folders and files you dropped are looked at - nothing else in your
+        # folders is walked, checked or imported (that waits for the next Scan)
+        roots = [store.norm_path(r) for r in o["roots"]]
+        folders = [r for r in roots if os.path.isdir(r)]
+        only_files = [r for r in roots if os.path.isfile(r)]
     if only is not None:
         for p in only:
             try:
@@ -260,7 +267,7 @@ def scan_library(conn, settings, progress=lambda done, total, msg: None, cancell
                 continue
             found[p] = (round(st.st_mtime, 3), st.st_size)
         folders = []
-    for p in ([] if only is not None else settings.get("files", [])):          # single files you dropped in
+    for p in (only_files if drop_scan else [] if only is not None else settings.get("files", [])):  # dropped files
         p = store.norm_path(p)
         try:
             st = os.stat(p)
@@ -285,7 +292,7 @@ def scan_library(conn, settings, progress=lambda done, total, msg: None, cancell
         known_kind[p] = "other" if oth else "video" if vid else "photo"
     # forget photos that were deleted from folders that are still reachable
     gone = []
-    checking = o["mode"] in ("both", "verify") and only is None
+    checking = o["mode"] in ("both", "verify") and only is None and not drop_scan
     ex_names = {e.lower() for e in o["exclude"] if e and not os.path.isabs(e)}
     for p in (known if checking else ()):
         if p in found:
@@ -333,7 +340,7 @@ def scan_library(conn, settings, progress=lambda done, total, msg: None, cancell
         todo = [p for p in todo if p not in small]
     if o["order"] in ("newest", "oldest"):
         todo.sort(key=lambda p: found[p][0], reverse=o["order"] == "newest")
-    mode = ("separate" if not o["videos"] else o["video_mode"]) if only is None else "with"
+    mode = ("separate" if not o["videos"] else o["video_mode"]) if only is None and not drop_scan else "with"
     rules = store.drop_rules(conn)
     # what you dragged in is always imported in full and first (no limit, videos included)
     dropped = [p for p in todo if rules and store.rules_matching(rules, p)] if not check_only else []
@@ -349,7 +356,7 @@ def scan_library(conn, settings, progress=lambda done, total, msg: None, cancell
         todo.sort(key=engine.is_video)          # every photo before any video (stable: folder order kept)
         dropped.sort(key=engine.is_video)
     limit = o["limit"]
-    if only is not None:
+    if only is not None or drop_scan:
         limit_rest = []
     elif check_only:
         limit_rest, todo = todo, []
@@ -367,9 +374,10 @@ def scan_library(conn, settings, progress=lambda done, total, msg: None, cancell
             store.clear_drop_rules(conn)
         if settings.get("use_gpu", True):
             engine.get_gpu(True)
-        read_existing_tags(conn, settings, progress, cancelled)
-        if not check_only:
-            check_extras(conn, settings, progress, cancelled)
+        if not drop_scan:                 # (catch-up work for the whole library: not for a drop)
+            read_existing_tags(conn, settings, progress, cancelled)
+            if not check_only:
+                check_extras(conn, settings, progress, cancelled)
         return stats
 
     min_face = int(settings.get("min_face_px", 32))
@@ -429,8 +437,9 @@ def scan_library(conn, settings, progress=lambda done, total, msg: None, cancell
     if not cancelled():
         if rules:
             store.clear_drop_rules(conn)          # everything dropped in has been imported and tagged
-        read_existing_tags(conn, settings, progress, cancelled)
-        check_extras(conn, settings, progress, cancelled)
+        if not drop_scan:
+            read_existing_tags(conn, settings, progress, cancelled)
+            check_extras(conn, settings, progress, cancelled)
         try:
             stats["copies_named"] = store.names_from_copies(conn)     # copies of group photos keep their names
         except Exception:

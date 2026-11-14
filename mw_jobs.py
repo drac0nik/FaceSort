@@ -326,8 +326,9 @@ class JobsMixin:
 
     def _after_job(self, name):
         if self._scan_after:
+            drop = self._scan_after if isinstance(self._scan_after, dict) else None
             self._scan_after = False
-            QTimer.singleShot(200, self.start_scan)
+            QTimer.singleShot(200, lambda: self.start_scan(opts=drop))
         queued = getattr(self, "_scan_queue", None)
         if queued:
             self._scan_queue = []

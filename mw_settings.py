@@ -110,10 +110,12 @@ class SettingsMixin:
             msg += f" · {len(others)} other file{'s' if len(others) != 1 else ''} kept with them (~links / ~archives / ~files)"
         self.statusBar().showMessage(msg, 12000)
         self.refresh_all()
+        # only what you dropped is scanned (not the rest of your folders - that's for the next Scan)
+        drop = {"roots": dirs + files, "mode": "both", "shoot_after": True}
         if self.busy():
-            self._scan_after = True          # scans as soon as the current job ends
+            self._scan_after = drop          # scans as soon as the current job ends
         else:
-            self.start_scan(videos_only=False)
+            self.start_scan(videos_only=False, opts=drop)
         return True
 
     @staticmethod
