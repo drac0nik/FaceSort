@@ -153,6 +153,13 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+Duplicates always listed (1.43.1)
+- Smart Groups > Duplicates is always there ("0 sets" when none were found), so you can see the
+  duplicate check is on. FaceSort checks new photos in the background.
+- Fixed: the duplicate list could keep being postponed while you were busy (each redraw, and
+  each photo you stepped to in the viewer, restarted its countdown), so new duplicates could
+  take a long time to show up.
+
 Correct men / women, and FaceSort learns from it (1.43)
 - Right-click a face (in the gallery or on a face box in the viewer) > Looks... > Looks
   female / Looks male. It moves out of (or into) Men straight away, and FaceSort's estimate

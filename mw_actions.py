@@ -542,7 +542,9 @@ class ActionsMixin:
                     self._dup_key = key
                 else:
                     self._dups = []
-            if not wait:
+            if not wait and not self.dup_timer.isActive():
+                # (not restarted on every ask: asked often - stepping through photos, redraws - it
+                # would never get its turn)
                 self.dup_timer.start()
         return self._dups
 

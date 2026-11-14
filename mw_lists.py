@@ -445,12 +445,13 @@ class ListsMixin:
                     it.addChild(ch)
             it.setExpanded(True)
         ndup = len(self.dup_sets())
-        if ndup:
-            it = QTreeWidgetItem([f"Duplicates   {ndup} set{'s' if ndup != 1 else ''}"])
-            it.setIcon(0, app_icon("dupes"))
-            it.setData(0, Qt.UserRole, ("dupes", None))
-            it.setToolTip(0, "The same picture more than once (exact copies, or resized / re-saved copies)")
-            sec3.addChild(it)
+        it = QTreeWidgetItem([f"Duplicates   {ndup} set{'s' if ndup != 1 else ''}"])   # (always shown: 0 = none found)
+        it.setIcon(0, app_icon("dupes"))
+        it.setData(0, Qt.UserRole, ("dupes", None))
+        it.setToolTip(0, "The same picture more than once (exact copies, or resized / re-saved copies). FaceSort "
+                         "checks new photos in the background; copies made on purpose for each person on a group "
+                         "photo don't count.")
+        sec3.addChild(it)
         nmis = len(getattr(self, "_misplaced", None) or ())
         if nmis:
             it = QTreeWidgetItem([f"Not where they belong   {nmis}"])

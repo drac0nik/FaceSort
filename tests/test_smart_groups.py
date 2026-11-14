@@ -325,3 +325,22 @@ def test_looks_menu(window, photos):
     acts = {a.text(): a for a in sub.actions() if a.text()}
     assert acts["Looks male   (2 faces)"].isChecked() and "Let FaceSort judge again   (2 faces)" in acts
     w.idle()
+
+
+def test_duplicates_group_always_shown(window, qapp):
+    """Duplicates is always in Smart Groups (0 sets = none found), and being asked for the sets
+    often - a redraw, each photo in the viewer - doesn't keep postponing the background work."""
+    w = window
+    w._dup_key = None                                  # (out of date)
+    end = time.time() + 15
+    while time.time() < end and not w.dup_sets():
+        w.dup_sets()                                   # asked every 0.1 s
+        pump(qapp, 0.1)
+    assert w.dup_sets(), "the duplicate sets were never worked out"
+    w.rebuild_tree()
+    item = w.find_tree_item(("dupes", None))
+    assert item is not None and item.text(0).startswith("Duplicates   1 set")
+    w._dups, w._dup_key = [], w.dup_key()              # none found: still listed
+    w.rebuild_tree()
+    assert w.find_tree_item(("dupes", None)).text(0) == "Duplicates   0 sets"
+    w.idle()
