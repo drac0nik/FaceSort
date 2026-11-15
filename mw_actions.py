@@ -609,6 +609,21 @@ class ActionsMixin:
             cond += " AND " + face_attrs.unsure_sql()
         return cond
 
+    def ignore_untagged_on(self, photo_ids):
+        """Partially tagged: ignore every face box on these photos nobody is confirmed on (the tagged
+        people stay). Undo: Smart Groups > Ignored."""
+        q = ",".join("?" * len(photo_ids))
+        ids = [r[0] for r in self.conn.execute(
+            f"""SELECT id FROM faces WHERE photo_id IN ({q}) AND ignored=0
+                AND NOT (person_id IS NOT NULL AND confirmed=1)""", photo_ids)]
+        if not ids:
+            return
+        store.set_ignored(self.conn, ids, True)
+        self.statusBar().showMessage(f"✓ {len(ids):,} untagged face{'s' if len(ids) != 1 else ''} ignored on "
+                                     f"{len(photo_ids):,} photo{'s' if len(photo_ids) != 1 else ''} "
+                                     "(bring any back from Ignored)", 8000)
+        self.quick_change(regroup=False, drop=ids)
+
     def nofaces_sql(self):
         """No faces found: no face box at all (found, or drawn by hand), nobody tagged, and not sorted
         (no folder, not in your sorted library)."""

@@ -153,6 +153,11 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+Ignore the rest of a group photo (1.44.1)
+- Smart Groups > Partially tagged: right-click one or more photos > "Ignore the other untagged
+  faces on this photo" (or "these N photos"). Every face box nobody is confirmed on is set aside;
+  the people you tagged stay. Bring any back from Smart Groups > Ignored.
+
 Recommended tags, Safe view and No people (1.44)
 - Settings > Content (off until you switch it on): FaceSort reads what's in each photo, on this PC,
   with two small models downloaded once (about 30 MB): NudeNet 3.4 (AGPL-3.0) for people and body

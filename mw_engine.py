@@ -680,6 +680,9 @@ class EngineMixin:
                 m.addSeparator()
         if faces:
             m.addAction(f"Name {len(faces)} face{'s' if len(faces) > 1 else ''}…\tEnter", self.act_name)
+        if kind == "partial" and sp1:
+            m.addAction(app_icon("cancel"), "Ignore the other untagged faces on " + ("this photo" if len(sp1) == 1 else f"these {len(sp1)} photos"),
+                        lambda ps=list(sp1): self.ignore_untagged_on(ps))
         if len(ids) == 1:
             m.addAction("Tag Person - draw a box around a missed face…\tT", self.act_tag_person)
         m.addAction(("Tag people on this photo…" if len(self.sel_photos()) == 1 else "Tag people on these photos…")

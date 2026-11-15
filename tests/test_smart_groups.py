@@ -344,3 +344,36 @@ def test_duplicates_group_always_shown(window, qapp):
     w.rebuild_tree()
     assert w.find_tree_item(("dupes", None)).text(0) == "Duplicates   0 sets"
     w.idle()
+
+
+def test_ignore_untagged_on_partially_tagged(window, photos):
+    w, c = window, window.conn
+    tagged = photos["tagged"]
+    rest = face_ids(c, tagged)[1:]
+    assert set(rest) <= shown(w, ("partial", None))
+    w.ignore_untagged_on([tagged])
+    assert not shown(w, ("partial", None)) & set(face_ids(c, tagged))
+    states = dict(c.execute("SELECT id, ignored FROM faces WHERE photo_id=?", (tagged,)))
+    assert all(states[f] == 1 for f in rest)
+    assert states[face_ids(c, tagged)[0]] == 0 and c.execute(
+        "SELECT confirmed FROM faces WHERE id=?", (face_ids(c, tagged)[0],)).fetchone()[0] == 1   # Dora stays
+    # the right-click menu offers it in Partially tagged
+    import mw_engine
+    from PySide6.QtWidgets import QMenu
+    seen = []
+
+    class Menu(QMenu):
+        def exec(self, *a):
+            seen.extend(x.text() for x in self.actions())
+    orig, mw_engine.QMenu = mw_engine.QMenu, Menu
+    try:
+        other = photos["duo"]
+        store.assign(c, face_ids(c, other)[:1], store.get_or_create_person(c, "Edna"))
+        w.view = ("partial", None)
+        w.refresh_grid()
+        i = next(i for i, r in enumerate(w.model.rows) if r[0] > 0)
+        w.grid.setCurrentIndex(w.model.index(i))
+        w.grid_menu(w.grid.visualRect(w.model.index(i)).center())
+    finally:
+        mw_engine.QMenu = orig
+    assert any(t.startswith("Ignore the other untagged faces on this photo") for t in seen)
