@@ -248,6 +248,13 @@ class SettingsDialog(QDialog):
                                    "this PC. Side-on faces are then matched more carefully, and front-on faces are "
                                    "picked for the people list. Men / women is an estimate: unclear faces go to Unsure.")
         lay.addWidget(self.cb_details)
+        import content
+        self.cb_content = QCheckBox("Content: recommended tags, Safe view and No people"
+                                    + ("" if content.ready() else f"   (gets {content.DOWNLOAD_MB} MB of models once)"))
+        self.cb_content.setChecked(bool(self.s.get("content_on")))
+        self.cb_content.setToolTip("NudeNet (AGPL) and an NSFW classifier (MIT) read each photo once on this PC: how "
+                                   "explicit it is, what tags fit it, and whether anyone's in it.")
+        lay.addWidget(self.cb_content)
         rr = QHBoxLayout()
         dark_again = QPushButton("Look again in dark photos")
         dark_again.setToolTip("Find the dark photos scanned before this existed and look at them again.\n"
@@ -386,6 +393,16 @@ class SettingsDialog(QDialog):
         heading("Generic names", lay)
         self.generic = GenericNamesEditor(generic_names(self.s))
         lay.addWidget(self.generic)
+        heading("Tags", lay)
+        from tagcolumn import tag_list
+        self.cb_tagcol = QCheckBox("Show recommended tags beside the photo in the viewer")
+        self.cb_tagcol.setChecked(bool(self.s.get("tag_column", True)))
+        lay.addWidget(self.cb_tagcol)
+        self.cb_safe_sugg = QCheckBox("Safe view also blurs suggestive photos (underwear, swimwear, partly undressed)")
+        self.cb_safe_sugg.setChecked(bool(self.s.get("safe_suggestive")))
+        lay.addWidget(self.cb_safe_sugg)
+        self.tags_edit = TagListEditor(tag_list(self.s))
+        lay.addWidget(self.tags_edit)
         lay = scan
         heading("Videos", lay)
         vl = QLabel("Faces are looked for in 7 moments spread through each video; each person is kept once. "
@@ -548,6 +565,7 @@ class SettingsDialog(QDialog):
         s["dark_second_look"] = self.cb_dark.isChecked()
         s["same_shoot"] = self.cb_shoot.isChecked()
         s["face_details"] = self.cb_details.isChecked()
+        s["content_on"] = self.cb_content.isChecked()
         s["background_cpu"] = "gentle" if self.cb_gentle.isChecked() else "full"
         s["tattoo_min_inliers"] = self.tat.value()
         s["keywords_all_people"] = self.cb_kw.isChecked()
@@ -567,6 +585,9 @@ class SettingsDialog(QDialog):
         s["always_sidecar"] = self.cb_sidecar.isChecked()
         s["keep_modified_date"] = self.cb_mtime.isChecked()
         s["generic_names"] = self.generic.result_list()
+        s["tag_list"] = self.tags_edit.result_list()
+        s["tag_column"] = self.cb_tagcol.isChecked()
+        s["safe_suggestive"] = self.cb_safe_sugg.isChecked()
         s["settings_tab"] = self.tabs.currentIndex()       # opens on the same tab next time
         return s
 
@@ -638,14 +659,19 @@ class GenericNamesEditor(QWidget):
     """The list of generic names (“Model” -> Model 01, Model 02, …). Ticked = shown straight in the
     right-click menu of a face; the others are under “More generic names”."""
 
+    NOTE = ("Right-click a face > Tag new “Model 04” names it with the lowest number nobody has, and "
+            "puts that person in the folder “Unknown Model”. When you later rename them, their number "
+            "is free again. Ticked names are in the right-click menu itself; the others are under "
+            "“More generic names”.")
+    TICK_TIP = "Ticked: in the right-click menu. Double-click to rename."
+    DEFAULTS = PLACEHOLDER_NAMES
+    WHAT = "Generic names"
+
     def __init__(self, items, parent=None):
         super().__init__(parent)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        note = QLabel("Right-click a face > Tag new “Model 04” names it with the lowest number nobody has, and "
-                      "puts that person in the folder “Unknown Model”. When you later rename them, their number "
-                      "is free again. Ticked names are in the right-click menu itself; the others are under "
-                      "“More generic names”.")
+        note = QLabel(self.NOTE)
         note.setWordWrap(True)
         note.setStyleSheet("color: gray;")
         lay.addWidget(note)
@@ -677,7 +703,7 @@ class GenericNamesEditor(QWidget):
         it = QListWidgetItem(name)
         it.setFlags(it.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsEditable)
         it.setCheckState(Qt.Checked if menu else Qt.Unchecked)
-        it.setToolTip("Ticked: in the right-click menu. Double-click to rename.")
+        it.setToolTip(self.TICK_TIP)
         it.setData(Qt.UserRole, name)
         self.list.addItem(it)
         if select:
@@ -690,11 +716,10 @@ class GenericNamesEditor(QWidget):
     def _valid(self, text, skip=None):
         name = clean_generic(text)
         if not name:
-            QMessageBox.information(self, "Generic names", "Type a name without a number at the end - "
-                                    "the number is added for each new person.")
+            QMessageBox.information(self, self.WHAT, "Type a name without a number at the end.")
             return ""
         if name.casefold() in {n.casefold() for n in self.names(skip)}:
-            QMessageBox.information(self, "Generic names", f"“{name}” is already in the list.")
+            QMessageBox.information(self, self.WHAT, f"“{name}” is already in the list.")
             return ""
         return name
 
@@ -742,13 +767,28 @@ class GenericNamesEditor(QWidget):
 
     def defaults(self):
         have = {n.casefold() for n in self.names()}
-        for n in PLACEHOLDER_NAMES:
+        for n in self.DEFAULTS:
             if n.casefold() not in have:
                 self._add_item(n, True)
 
     def result_list(self):
         return [{"name": self.list.item(i).text(), "menu": self.list.item(i).checkState() == Qt.Checked}
                 for i in range(self.list.count())]
+
+
+class TagListEditor(GenericNamesEditor):
+    """Settings > Tagging > Tags: the tags the viewer's tag column suggests."""
+    NOTE = ("Beside each photo in the viewer, FaceSort suggests up to 10 of these tags (and your albums): what's in "
+            "the photo (Explicit, Lingerie…), the scene (Beach, Studio…), and your own tags - learned from the "
+            "photos you put in them. Click a tag to add it; each tag is also an album, and is written into the "
+            "file as a keyword. Unticked tags aren't suggested.")
+    TICK_TIP = "Ticked: suggested in the viewer. Double-click to rename."
+    WHAT = "Tags"
+
+    @property
+    def DEFAULTS(self):
+        import content
+        return content.CONTENT_TAGS + content.SCENE_TAGS
 
 
 class GenericNamesDialog(QDialog):

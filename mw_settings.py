@@ -259,6 +259,12 @@ class SettingsMixin:
             if n:
                 self.statusBar().showMessage(f"Photos library: remembered details for {n:,} photos loaded", 10000)
             self.start_scan()
+        if new.get("content_on") and not old.get("content_on"):
+            import content
+            QTimer.singleShot(400, self.get_content_models if not content.ready() else self.start_content)
+        if bool(new.get("tag_column", True)) != bool(old.get("tag_column", True)) or \
+                new.get("safe_suggestive") != old.get("safe_suggestive"):
+            self.safe_view_changed()
         if new.get("face_details") and not old.get("face_details"):
             import face_attrs
             QTimer.singleShot(300, self.get_face_details if not face_attrs.ready() else self.start_face_details)

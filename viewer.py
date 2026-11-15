@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QStackedWidget, QToolButton, QVBoxLayout, QWidget)
 from icons import app_icon
 from ui_common import (
-    ElidedLabel, key_html, LEGEND_GRAY, MEDIA_OK, open_file, path_label, QAudioOutput,
+    ElidedLabel, key_html, LEGEND_GRAY, MEDIA_OK, blur_regions, open_file, path_label, QAudioOutput,
     QMediaMetaData, QMediaPlayer, QVideoSink, QVideoWidget, show_in_folder, SPEEDS, VIDEO_COL)
 from viewer_parts import (
     chip, CompareView, EnhancedView, Filmstrip, frame_planes, LowLightWorker, MarkSlider, PhotoCanvas,
@@ -245,6 +245,9 @@ class PhotoViewer(QWidget):
         self._ll_worker = LowLightWorker()
         self._ll_worker.done.connect(self._ll_done)
         mid.addWidget(self.media, 1)
+        from tagcolumn import TagColumn
+        self.tag_col = TagColumn(self)           # recommended tags, beside the photo
+        mid.addWidget(self.tag_col)
         lay.addLayout(mid, 1)
         # video controls: play / pause, position, speed, screenshot, sound
         self.video_bar = QWidget()
@@ -368,9 +371,6 @@ class PhotoViewer(QWidget):
                 self.people_chips = holder
             else:
                 self.cat_chip = holder
-        self.top5 = QHBoxLayout()
-        self.top5.setSpacing(4)
-        crow.addLayout(self.top5)
         lay.addLayout(prow)
         lay.addLayout(crow)
 
@@ -1264,6 +1264,8 @@ class PhotoViewer(QWidget):
         if self.win.settings.get("face_details"):
             m.addSeparator()
             self.win.looks_menu(m, [fid])
+        if self.win.settings.get("content_on"):
+            self.win.content_menu(m, [self.photo_id()[0]])
         if manual:
             m.addAction("Delete this face box", lambda: self.delete_face_box(fid))
         else:
@@ -1409,6 +1411,7 @@ class PhotoViewer(QWidget):
         self.next_b.setEnabled(self.pos < len(self.items) - 1)
         self.reload_faces()
         self.update_compare()
+        self.refresh_tag_column()
 
     # ---- duplicates side by side
     def dup_partners(self):
@@ -1472,6 +1475,10 @@ class PhotoViewer(QWidget):
             rgb = img[:, :, ::-1].copy()
             if self.is_video and self.low_light:
                 rgb = engine.low_light(rgb, self.low_light)
+            if not self.is_video:
+                boxes = self.win.safe_boxes(self.photo_id()[0])          # Safe view
+                if boxes is not None:
+                    rgb = np.ascontiguousarray(blur_regions(rgb, boxes))
             h, w = rgb.shape[:2]
             self.image = QImage(rgb.data, w, h, 3 * w, QImage.Format_RGB888).copy()
         except Exception as e:
@@ -1658,7 +1665,7 @@ class PhotoViewer(QWidget):
         QTimer.singleShot(120, go)
 
     def rebuild_chips(self):
-        for holder in (self.people_chips, self.cat_chip, self.top5):
+        for holder in (self.people_chips, self.cat_chip):
             while holder.count():
                 w = holder.takeAt(0).widget()
                 if w:
@@ -1670,16 +1677,13 @@ class PhotoViewer(QWidget):
                                              lambda _=False, pid=pid, name=name: self.untag(pid, name)))
         if self.category:
             self.cat_chip.addWidget(chip(self.category, "Remove this photo's folder", self.clear_category))
-        for i, name in enumerate(store.top_categories(self.win.conn)):
-            b = QPushButton(name)
-            b.setToolTip(f"Set folder: {name}   (Alt+{i + 1})")
-            b.setFocusPolicy(Qt.NoFocus)
-            b.setAutoDefault(False)
-            b.setMaximumWidth(150)
-            if name == self.category:
-                b.setEnabled(False)
-            b.clicked.connect(lambda _=False, name=name: self.apply_bar("category", name))
-            self.top5.addWidget(b)
+
+    def refresh_tag_column(self):
+        try:
+            pid = self.photo_id()[0] if self.path else None
+        except Exception:
+            pid = None
+        self.tag_col.refresh(pid)
 
     def untag(self, person_id, name):
         pid, _ = self.photo_id()
@@ -1782,9 +1786,10 @@ class PhotoViewer(QWidget):
         ids = {f[0] for f in faces}
         self.sel_faces = (self.sel_faces | ids) if add else ids
         if len(self.sel_faces) == 1 and not add:
-            f = faces[0]
-            self.sel_faces = set()
-            self.focus_face(f)
+            # (a single box dragged around stays selected - only clicking a box opens the People bar)
+            self.focus_id = None
+            self.toast.setText("1 face selected - click it to tag it · I ignores it · N not a face · Esc clears")
+            self.canvas.update()
             return
         self.focus_id = None
         self._sel_toast()

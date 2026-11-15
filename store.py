@@ -154,6 +154,19 @@ CREATE TABLE IF NOT EXISTS categories(          -- folders: your save layout ("M
     inside_person INTEGER DEFAULT 0,  -- (old versions) shared folder inside each person's folder
     owner_id INTEGER REFERENCES persons(id) ON DELETE CASCADE   -- top folder of a person's own folders
 );
+CREATE TABLE IF NOT EXISTS photo_content(      -- what's in a photo (content.py, 1.44)
+    photo_id INTEGER PRIMARY KEY REFERENCES photos(id) ON DELETE CASCADE,
+    info TEXT,                    -- the two models' readings (JSON)
+    level INTEGER,                -- 0 Safe, 1 Suggestive, 2 Explicit, 3 Unsure
+    level_set INTEGER,            -- your correction (wins)
+    subject TEXT                  -- nobody in it: food / landscape / text / animals / other
+);
+CREATE INDEX IF NOT EXISTS photo_content_subject ON photo_content(subject);
+CREATE TABLE IF NOT EXISTS album_rejects(      -- "not for this album" (1.44: album suggestions learn from it)
+    album_id INTEGER REFERENCES albums(id) ON DELETE CASCADE,
+    photo_id INTEGER REFERENCES photos(id) ON DELETE CASCADE,
+    PRIMARY KEY(album_id, photo_id)
+);
 CREATE TABLE IF NOT EXISTS placed_paths(      -- files Sort into folders wrote into the sorted library (1.42)
     path TEXT PRIMARY KEY
 );
@@ -427,6 +440,9 @@ def connect(path=None):
         for col, typ in (("male_set", "INTEGER"), ("male_carried", "INTEGER"), ("male_learned", "REAL"),
                          ("sex_guess", "INTEGER")):
             conn.execute(f"ALTER TABLE faces ADD COLUMN {col} {typ}")
+        conn.commit()
+    if "tag" not in {r[1] for r in conn.execute("PRAGMA table_info(albums)")}:
+        conn.execute("ALTER TABLE albums ADD COLUMN tag INTEGER DEFAULT 0")   # 1.44: used as a tag (written as a keyword)
         conn.commit()
     if "sex" not in {r[1] for r in conn.execute("PRAGMA table_info(persons)")}:
         conn.execute("ALTER TABLE persons ADD COLUMN sex INTEGER")      # 1.43: Man (1) / Woman (0), if you set it
@@ -895,7 +911,17 @@ def apply_keywords(conn, photo_id, keywords, settings, known_names=None):
     every = bool(settings.get("keywords_all_people"))
     known_names = known_person_names(conn) if known_names is None else known_names
     names = list(people)
+    try:                         # 1.44: tag keywords (FaceSort writes them) go back into their album
+        tags = {n.casefold(): aid for aid, n in conn.execute("SELECT id, name FROM albums WHERE tag=1")}
+    except sqlite3.OperationalError:
+        tags = {}
     for k in plain:
+        aid = tags.get(k.casefold())
+        if aid is not None and k.casefold() not in known_names:
+            conn.execute("""INSERT OR IGNORE INTO album_photos(album_id, photo_id, added) SELECT ?, ?, ?
+                            WHERE NOT EXISTS (SELECT 1 FROM album_rejects WHERE album_id=? AND photo_id=?)""",
+                         (aid, photo_id, time.time(), aid, photo_id))
+            continue
         if prefix and k.casefold().startswith(prefix.casefold()) and k[len(prefix):].strip():
             names.append(k[len(prefix):].strip())
         elif k.casefold() in known_names or every:
@@ -1170,6 +1196,48 @@ def add_to_album(conn, aid, photo_ids):
 def remove_from_album(conn, aid, photo_ids):
     conn.executemany("DELETE FROM album_photos WHERE album_id=? AND photo_id=?", [(aid, p) for p in photo_ids])
     conn.commit()
+
+
+def tag_photo(conn, photo_id, name, on=True):
+    """Recommended tags (1.44): a tag is an album of the same name (made the first time). The
+    album is marked as a tag, so its name is written into the files as a keyword."""
+    row = conn.execute("SELECT id FROM albums WHERE name=?", (name,)).fetchone()
+    if row is None:
+        if not on:
+            return
+        aid = create_album(conn, name)
+    else:
+        aid = row[0]
+    conn.execute("UPDATE albums SET tag=1 WHERE id=?", (aid,))
+    if on:
+        add_to_album(conn, aid, [photo_id])
+        conn.execute("DELETE FROM album_rejects WHERE album_id=? AND photo_id=?", (aid, photo_id))
+    else:
+        remove_from_album(conn, aid, [photo_id])
+        conn.execute("INSERT OR IGNORE INTO album_rejects(album_id, photo_id) VALUES(?, ?)", (aid, photo_id))
+    conn.commit()
+
+
+def tag_search(conn, text):
+    """Photo ids in the tags / albums whose name matches the search (whole name, or one of the
+    words), newest first; photos hidden by a locked vault never."""
+    t = " ".join(text.casefold().split())
+    if not t:
+        return []
+    aids = [aid for aid, name in conn.execute("SELECT id, name FROM albums")
+            if name.casefold() == t or t in name.casefold().split() or name.casefold() in t.split()]
+    if not aids:
+        return []
+    q = ",".join("?" * len(aids))
+    return [r[0] for r in conn.execute(f"""SELECT DISTINCT ap.photo_id FROM album_photos ap JOIN photos ph
+                                          ON ph.id=ap.photo_id WHERE ap.album_id IN ({q}) AND ph.error IS NULL
+                                          AND COALESCE(ph.sort_later, 0) != 2 ORDER BY ap.added DESC""", aids)]
+
+
+def photo_tags(conn, photo_id):
+    """The albums / tags a photo is in, oldest-added first."""
+    return [r[0] for r in conn.execute("""SELECT a.name FROM album_photos ap JOIN albums a ON a.id=ap.album_id
+                                          WHERE ap.photo_id=? ORDER BY ap.added, a.name""", (photo_id,))]
 
 
 def albums_of(conn, photo_ids):

@@ -52,6 +52,7 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         self.rep_cache = {}                        # side-list face icons: face id -> (picture checksum, icon)
         self.rep_cache_checked = -1
         self.hi_cache = {}
+        self.safe_on, self._safe_photos, self._safe_faces, self._safe_cache = False, set(), set(), {}
         import dialogs
         dialogs.gpu_names(wait=False)              # (Settings shows them; asking Windows can take seconds)
         import stallwatch                          # speed report: notes moments the window is slow
@@ -80,6 +81,8 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         self.regroup_timer.timeout.connect(self.start_regroup)
         self.refresh_timer = QTimer(self, singleShot=True, interval=450)
         self.refresh_timer.timeout.connect(self._deferred_refresh)
+        self.content_timer = QTimer(self, singleShot=True, interval=5000)     # learn Safe / Suggestive / Explicit
+        self.content_timer.timeout.connect(lambda: self.start_content_learning())
         self.sex_timer = QTimer(self, singleShot=True, interval=5000)         # learn from corrections, once you pause
         self.sex_timer.timeout.connect(lambda: self.start_sex_learning())
         self.pending_timer = QTimer(self, singleShot=True, interval=6000)     # Sort into folders (N)
@@ -100,6 +103,7 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         self._build_status()
         self.setAcceptDrops(True)       # drop photos, videos or folders anywhere on the window
         self._scan_after = False
+        self.safe_view_changed()                   # (what Safe view blurs, before anything is drawn)
         self.refresh_all(first=True)
         if self.settings.get("detector_version", 1) < DETECTOR_VERSION:
             # face detection improved since these photos were scanned: re-check the ones
@@ -161,6 +165,12 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         tb.addWidget(spacer)
+        self.a_safe = QAction(app_icon("safe"), "Safe view", self)    # blur explicit photos everywhere
+        self.a_safe.setCheckable(True)
+        self.a_safe.setChecked(bool(self.settings.get("safe_view")))
+        self.a_safe.setToolTip("Safe view: blur explicit photos everywhere (and suggestive ones, if chosen in Settings)")
+        self.a_safe.toggled.connect(self.toggle_safe_view)
+        tb.addAction(self.a_safe)
         # "Check for updates", which becomes a green "Update to x.y.z" when a newer version is out
         self.update_btn = QToolButton()
         self.update_btn.setIcon(app_icon("export"))

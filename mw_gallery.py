@@ -686,7 +686,7 @@ class GalleryMixin:
             self.subtitle.setText(f"{len(rows):,} photo{'s' if len(rows) != 1 else ''}, best match first"
                                   + (f" · {have:,} of {total:,} photos searchable so far (the rest are being prepared)"
                                      if have < total else "")
-                                  + ". Found by what's in the picture - no tags needed.")
+                                  + ". Tagged photos first, then found by what's in the picture.")
             self.set_buttons([])
         elif kind == "album":
             row = c.execute("SELECT name FROM albums WHERE id=?", (ident,)).fetchone()
@@ -694,10 +694,19 @@ class GalleryMixin:
                                               WHERE ap.album_id=? AND COALESCE(ph.sort_later, 0) != 2
                                               AND ph.error IS NULL""", (ident,))}
             rows = self.photo_rows(ids, limit=50000)
+            sugg = self.album_suggested(ident, row[0]) if row else []
+            self._album_sugg = {-r[0] for r in sugg}
+            if sugg:                     # 1.44: photos FaceSort thinks belong here, learned from the album
+                rows = self.sort_rows(rows) + [(0, f"Suggested for this album   ·   {len(sugg):,}",
+                                                ("album_sugg",), 1)] + sugg
             self.title.setText(f"Album · {row[0] if row else '?'}")
-            self.subtitle.setText(f"{len(rows):,} photo{'s' if len(rows) != 1 else ''}. Albums never move a file - a photo can "
-                                  "be in several. Drag photos onto an album to add them; right-click > Remove from album.")
-            self.set_buttons([])
+            self.subtitle.setText(f"{len(rows) - len(sugg) - (1 if sugg else 0):,} photo{'s' if len(rows) != 1 else ''}. "
+                                  "Albums never move a file - a photo can be in several. Drag photos onto an album to add "
+                                  "them; right-click > Remove from album."
+                                  + (" Suggested photos at the end: right-click > Add to album, or Not for this album "
+                                     "(FaceSort learns from both)." if sugg else ""))
+            self.set_buttons([("Add all suggested", lambda aid=ident: self.add_album_suggestions(aid), True)]
+                             if sugg else [])
         elif kind == "vault":
             rows = []
             name = c.execute("SELECT name FROM categories WHERE id=?", (ident,)).fetchone()
@@ -840,6 +849,14 @@ class GalleryMixin:
                                   "to tag people, A to set a folder (or drag them onto one) - Sort into folders then "
                                   "moves them with the photos. Double-click opens one.")
             self.set_buttons([("Tag people…", self.act_tag, True), ("Set folder…", self.act_category, True)])
+        elif kind == "nopeople":
+            import content
+            rows = c.execute(f"""SELECT -ph.id, ph.path, NULL, 1 FROM photos ph WHERE {self.nopeople_sql(ident)}
+                                 ORDER BY ph.path LIMIT 5000""").fetchall()
+            self.title.setText("No people" + (f" · {content.SUBJECTS[ident][0]}" if ident in content.SUBJECTS else ""))
+            self.subtitle.setText(f"{len(rows):,} photo{'s' if len(rows) != 1 else ''} with nobody in them. "
+                                  "Press A to put them in a folder, D to discard, or Enter to tag someone FaceSort missed.")
+            self.set_buttons([("Set folder…", self.act_category, True), ("Tag people…", self.act_tag, True)])
         elif kind == "nofaces":
             rows = c.execute(f"""SELECT -ph.id, ph.path, NULL, 1 FROM photos ph WHERE {self.nofaces_sql()}
                                  ORDER BY ph.path LIMIT 5000""").fetchall()
@@ -874,8 +891,8 @@ class GalleryMixin:
         self.zoom_row.setVisible(kind != "errors")
         if kind in self.smart_kinds() and kind not in ("dupes", "errors", "shoot"):
             rows = self.split_by_folder(rows)  # Smart Groups: one section per folder path
-        if kind != "search":                # (search results stay best match first)
-            rows = self.sort_rows(rows)
+        if kind not in ("search", "album") or (kind == "album" and not getattr(self, "_album_sugg", None)):
+            rows = self.sort_rows(rows)     # (search results stay best match first; album suggestions too)
         if getattr(self, "_dry", False):
             self._dry_rows = rows
             return
@@ -1071,6 +1088,8 @@ class GalleryMixin:
                      "Sort [L]ater again = take out", "[N]ot a Face", "[I]gnore"]
         elif kind == "later_nofaces":
             items = ["[T]ag Person", "[Enter] Tag Whole Photo", "[D]iscard", "Sort [L]ater again = take out"]
+        elif kind == "nopeople":
+            items = ["[A] Set Folder", "[T]ag Person", "[Enter] Tag Whole Photo", "[D]iscard", "Sort [L]ater"]
         elif kind == "nofaces":
             items = ["[T]ag Person", "[Enter] Tag Whole Photo", "[R]emove Tags", "[D]iscard", "Sort [L]ater"]
         elif kind == "unassoc":

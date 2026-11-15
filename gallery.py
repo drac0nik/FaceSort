@@ -34,7 +34,8 @@ class FaceModel(QAbstractListModel):
                 return path
             return None
         if role == Qt.DecorationRole:
-            return self.win.face_pixmap(fid, path)
+            pm = self.win.face_pixmap(fid, path)
+            return self.win.safe_pixmap(fid, pm) if getattr(self.win, "safe_on", False) else pm
         if role == ROLE_ID:
             return fid
         if role == ROLE_VIDEO:

@@ -49,6 +49,9 @@ class AlbumsMixin:
 
     def remove_photos_from_album(self, aid, photos):
         store.remove_from_album(self.conn, aid, photos)
+        self.conn.executemany("INSERT OR IGNORE INTO album_rejects(album_id, photo_id) VALUES(?, ?)",
+                              [(aid, p) for p in photos])      # (not suggested back - FaceSort learns from it)
+        self.conn.commit()
         self.statusBar().showMessage(f"{len(photos):,} photo{'s' if len(photos) != 1 else ''} taken out of the album "
                                      "(nothing was deleted).", 6000)
         self.rebuild_tree()
@@ -90,11 +93,63 @@ class AlbumsMixin:
         sub.addAction("New album…", lambda: self.new_album(photos))
         return sub
 
+    # ---------------------------------------------------------------- album suggestions (1.44)
+    def album_scorer(self):
+        import content
+        from tagcolumn import tag_list
+        key = (self.conn.execute("SELECT COUNT(*), TOTAL(id) FROM albums").fetchone(), repr(tag_list(self.settings)))
+        if getattr(self, "_album_scorer_key", None) != key:
+            self._album_scorer = content.TagScorer(self.conn, [t["name"] for t in tag_list(self.settings) if t["menu"]])
+            self._album_scorer_key = key
+        return self._album_scorer
+
+    def album_suggested(self, aid, name):
+        """Grid rows of photos FaceSort suggests for an album, best first (needs search by description)."""
+        if not (self.settings.get("clip_on") and clip_search.available()):
+            return []
+        sig = (aid, name) + tuple(self.conn.execute(
+            """SELECT (SELECT COUNT(*) FROM album_photos WHERE album_id=?), (SELECT COUNT(*) FROM album_rejects
+               WHERE album_id=?), (SELECT COUNT(*) FROM clip_emb)""", (aid, aid)).fetchone())
+        cache = getattr(self, "_album_sugg_cache", None)
+        if cache and cache[0] == sig:
+            hits = cache[1]
+        else:
+            try:
+                hits = self.album_scorer().album_suggestions(name)
+            except Exception as e:
+                log(f"album suggestions: {e}")
+                return []
+            self._album_sugg_cache = (sig, hits)
+        if not hits:
+            return []
+        order = {pid: i for i, (pid, _p) in enumerate(hits)}
+        rows = [r for r in self.photo_rows(set(order), limit=len(order) + 1)
+                if self.conn.execute("SELECT COALESCE(sort_later, 0) != 2 AND error IS NULL FROM photos WHERE id=?",
+                                     (-r[0],)).fetchone()[0]]
+        return sorted(rows, key=lambda r: order.get(-r[0], 1 << 30))
+
+    def add_album_suggestions(self, aid, photo_ids=None):
+        ids = list(photo_ids if photo_ids is not None else getattr(self, "_album_sugg", ()))
+        if ids:
+            store.add_to_album(self.conn, aid, ids)
+            self.conn.executemany("DELETE FROM album_rejects WHERE album_id=? AND photo_id=?", [(aid, p) for p in ids])
+            self.conn.commit()
+            self.after_change(regroup=False)
+
+    def reject_album_suggestions(self, aid, photo_ids):
+        self.conn.executemany("INSERT OR IGNORE INTO album_rejects(album_id, photo_id) VALUES(?, ?)",
+                              [(aid, p) for p in photo_ids])
+        self.conn.commit()
+        self.after_change(regroup=False)
+
     # ---------------------------------------------------------------- search by description
     def describe_search(self):
         text = " ".join(self.search_box.text().split())
         if not text:
             return
+        tag_hits = store.tag_search(self.conn, text)      # 1.44: photos tagged / in an album by that name first
+        if tag_hits and not (self.settings.get("clip_on") and clip_search.available()):
+            return self.show_search(text, [(p, 1.0) for p in tag_hits])
         if not clip_search.available():
             if QMessageBox.question(
                     self, "Search by description",
@@ -119,6 +174,8 @@ class AlbumsMixin:
         have, total = clip_search.index_counts(self.conn)
         if have == 0:
             self.start_clip_index()
+            if tag_hits:
+                return self.show_search(text, [(p, 1.0) for p in tag_hits])
             self.statusBar().showMessage("Getting your photos ready to search - try again in a moment.", 8000)
             return
         QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -130,6 +187,11 @@ class AlbumsMixin:
             return
         finally:
             QApplication.restoreOverrideCursor()
+        tagged = set(tag_hits)
+        self.show_search(text, [(p, 1.0) for p in tag_hits] + [h for h in hits if h[0] not in tagged])
+        self.start_clip_index()          # anything new since
+
+    def show_search(self, text, hits):
         self._search = (text, hits)
         self.close_viewer(refresh=False)
         for t in self.trees:
@@ -139,7 +201,6 @@ class AlbumsMixin:
             t.blockSignals(False)
         self.view = ("search", text)
         self.refresh_grid()
-        self.start_clip_index()          # anything new since
 
     def start_clip_index(self):
         """Prepare photos for searching by description, in the background (carries on where it
@@ -156,6 +217,7 @@ class AlbumsMixin:
         self.clip_worker.progress.connect(lambda d, t, m: self.statusBar().showMessage(m, 4000))
         self.clip_worker.ok.connect(lambda n: n and self.statusBar().showMessage(
             f"Search by description: {n:,} more photo{'s' if n != 1 else ''} ready.", 6000))
+        self.clip_worker.ok.connect(lambda n: n and self.start_subjects())   # No people: what they're of
         self.clip_worker.failed.connect(lambda tb: self.statusBar().showMessage(
             "Search by description: couldn't prepare the photos - " + tb.strip().splitlines()[-1][:160], 15000))
         self.clip_worker.start()

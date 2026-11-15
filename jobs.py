@@ -5,6 +5,7 @@ import hashlib
 import os
 import re
 import shutil
+import sqlite3
 import time
 
 import numpy as np
@@ -655,7 +656,14 @@ def write_tags(conn, settings, progress=lambda done, total, msg: None, cancelled
     written = {}
     for pid, kw in conn.execute("SELECT photo_id, keyword FROM written"):
         written.setdefault(pid, set()).add(kw)
-    photo_ids = sorted(set(named) | set(written) | set(photo_people))
+    photo_tags = {}                    # 1.44: tags (albums marked as tags) are written as plain keywords
+    try:
+        for pid, name in conn.execute("""SELECT ap.photo_id, a.name FROM album_photos ap JOIN albums a
+                                         ON a.id=ap.album_id WHERE a.tag=1 ORDER BY ap.added, a.name"""):
+            photo_tags.setdefault(pid, []).append(name)
+    except sqlite3.OperationalError:
+        pass
+    photo_ids = sorted(set(named) | set(written) | set(photo_people) | set(photo_tags))
     others = {r[0] for r in conn.execute("SELECT id FROM photos WHERE is_other=1")}
     photo_ids = [p for p in photo_ids if p not in others]       # nothing is ever written into other files
     stats["total"] = len(photo_ids)
@@ -675,6 +683,9 @@ def write_tags(conn, settings, progress=lambda done, total, msg: None, cancelled
             k = prefix + name
             if k not in desired:
                 desired.append(k)
+        for name in photo_tags.get(pid, []):
+            if name not in desired:
+                desired.append(name)
         category = None
         prev = written.get(pid, set())
         # Face rectangles only for photos without an EXIF rotation (apps disagree on

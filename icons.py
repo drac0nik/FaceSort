@@ -412,6 +412,51 @@ def _draw(p, name):
         for i in range(5):
             p.drawRect(QRectF(13 + i * 8.5, 21, 4, 3))
             p.drawRect(QRectF(13 + i * 8.5, 40, 4, 3))
+    elif name == "safe":                      # an eye with a line through it (Safe view)
+        p.setPen(QPen(white, 5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        p.setBrush(Qt.NoBrush)
+        path = QPainterPath(QPointF(8, 32))
+        path.quadTo(QPointF(32, 8), QPointF(56, 32))
+        path.quadTo(QPointF(32, 56), QPointF(8, 32))
+        p.drawPath(path)
+        p.setBrush(white)
+        p.drawEllipse(QPointF(32, 32), 7, 7)
+        p.setPen(QPen(QColor(239, 68, 68), 6, Qt.SolidLine, Qt.RoundCap))
+        p.drawLine(QPointF(12, 52), QPointF(52, 12))
+    elif name in ("nopeople", "landscape"):   # mountains and the sun
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(250, 204, 21))
+        p.drawEllipse(QPointF(46, 18), 7, 7)
+        p.setBrush(white)
+        p.drawPolygon(QPolygonF([QPointF(6, 52), QPointF(24, 22), QPointF(36, 40), QPointF(42, 32), QPointF(58, 52)]))
+    elif name == "food":                      # a fork and a knife
+        p.setPen(QPen(white, 5, Qt.SolidLine, Qt.RoundCap))
+        for x in (16, 22, 28):
+            p.drawLine(QPointF(x, 10), QPointF(x, 24))
+        p.drawLine(QPointF(22, 24), QPointF(22, 54))
+        p.drawArc(QRectF(16, 14, 12, 14), 180 * 16, 180 * 16)
+        p.setBrush(white)
+        p.setPen(Qt.NoPen)
+        p.drawRoundedRect(QRectF(38, 10, 9, 26), 4, 4)
+        p.setPen(QPen(white, 5, Qt.SolidLine, Qt.RoundCap))
+        p.drawLine(QPointF(42, 30), QPointF(42, 54))
+    elif name == "text":                      # a page of text
+        p.setPen(QPen(white, 4, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(QRectF(14, 8, 36, 48), 4, 4)
+        for i, y in enumerate((20, 28, 36, 44)):
+            p.drawLine(QPointF(21, y), QPointF(43 if i % 2 == 0 else 36, y))
+    elif name == "animals":                   # a paw print
+        p.setPen(Qt.NoPen)
+        p.setBrush(white)
+        p.drawEllipse(QPointF(32, 40), 11, 9)
+        for x, y in ((16, 28), (25, 18), (39, 18), (48, 28)):
+            p.drawEllipse(QPointF(x, y), 5, 6)
+    elif name == "other":                     # three dots
+        p.setPen(Qt.NoPen)
+        p.setBrush(white)
+        for x in (16, 32, 48):
+            p.drawEllipse(QPointF(x, 32), 5, 5)
     elif name == "partial":                   # two people, one ticked (a group photo, partly tagged)
         p.setPen(Qt.NoPen)
         p.setBrush(white)

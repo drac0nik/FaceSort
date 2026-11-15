@@ -7,6 +7,7 @@ import engine
 import jobs
 import known
 import bodies
+import content
 import face_attrs
 import updater
 import store
@@ -16,7 +17,7 @@ from ui_common import (APP_VERSION, bodies_job, clarity_job, log, log_path, open
                        scan_and_group, stats_job, Worker)
 from dialogs import ExportDialog, ScanDialog
 
-LOOK_ONLY_JOBS = {"discardlook", "colordl", "facedl"}   # jobs that only read or download (no redraw after)
+LOOK_ONLY_JOBS = {"discardlook", "colordl", "facedl", "contentdl"}   # jobs that only read or download (no redraw after)
 REGROUP_IDLE = 3.0       # (gentle background mode) seconds without a key / click before suggestions update
 
 
@@ -38,7 +39,8 @@ class JobsMixin:
         if self.busy():
             return True
         for name in ("regroup_worker", "remember_worker", "dup_worker", "copies_worker", "mis_worker",
-                     "clip_worker", "stats_worker", "clarity_worker", "bodies_worker", "attrs_worker", "sex_worker"):
+                     "clip_worker", "subjects_worker", "stats_worker", "clarity_worker", "bodies_worker", "attrs_worker", "sex_worker",
+                     "content_worker"):
             wk = getattr(self, name, None)
             if wk is not None and wk.isRunning():
                 return True
@@ -176,6 +178,47 @@ class JobsMixin:
         self.attrs_worker.ok.connect(lambda n: n and (self.schedule_regroup(), self.start_sex_learning()))
         self.attrs_worker.failed.connect(lambda tb: log(tb))
         self.attrs_worker.start_background(self.settings)
+
+    def start_content(self):
+        """In the background: what's in photos not read yet (levels, tags, people or not)."""
+        if not self.settings.get("content_on") or not content.ready():
+            return
+        w = getattr(self, "content_worker", None)
+        if w and w.isRunning():
+            return
+        if not self.conn.execute("""SELECT 1 FROM photos ph LEFT JOIN photo_content pc ON pc.photo_id=ph.id
+                                    WHERE pc.photo_id IS NULL AND ph.error IS NULL AND ph.is_video=0
+                                    AND COALESCE(ph.is_other, 0)=0 LIMIT 1""").fetchone():
+            return
+        self.content_worker = Worker(lambda conn, progress, cancelled: content.read_missing(
+            conn, lambda d, t: progress(d, t, f"Reading what's in photos… {d:,} / {t:,}"), cancelled))
+        self.content_worker.progress.connect(lambda d, t, m: self.statusBar().showMessage(m, 4000))
+        self.content_worker.ok.connect(lambda n: n and (self.refresh_timer.start(), self.safe_view_changed()))
+        self.content_worker.failed.connect(lambda tb: log(tb))
+        self.content_worker.start_background(self.settings)
+
+    def start_subjects(self):
+        """No people's sub-groups (food, landscapes…) again, once more photos have a CLIP description."""
+        if not self.settings.get("content_on") or getattr(self, "_closing", False):
+            return
+        w = getattr(self, "subjects_worker", None)
+        if w and w.isRunning():
+            return
+        self.subjects_worker = Worker(lambda conn, progress, cancelled: content.update_subjects(conn))
+        self.subjects_worker.ok.connect(lambda n: n and self.refresh_timer.start())
+        self.subjects_worker.failed.connect(lambda tb: log(tb))
+        self.subjects_worker.start_background(self.settings)
+
+    def start_content_learning(self):
+        """Your Safe / Suggestive / Explicit corrections: FaceSort learns from them (background)."""
+        w = getattr(self, "content_learn_worker", None)
+        if w and w.isRunning():
+            self.content_timer.start()
+            return
+        self.content_learn_worker = Worker(lambda conn, progress, cancelled: content.learn_levels(conn, cancelled))
+        self.content_learn_worker.ok.connect(lambda n: n and (self.refresh_timer.start(), self.safe_view_changed()))
+        self.content_learn_worker.failed.connect(lambda tb: log(tb))
+        self.content_learn_worker.start_background(self.settings)
 
     def start_sex_learning(self):
         """In the background: look-alikes of faces you corrected, FaceSort's own model trained on
@@ -339,6 +382,7 @@ class JobsMixin:
             if getattr(self, "_shoot_after", True):
                 QTimer.singleShot(6000, self.start_bodies)     # ... and the people in them (same shoot)
             QTimer.singleShot(3000, self.start_face_details)   # men / unsure and head angle for new faces
+            QTimer.singleShot(4000, self.start_content)        # what's in the new photos
         nxt = getattr(self, "_after_dupes", None)
         if name == "dupes" and nxt:
             self._after_dupes = None
@@ -669,7 +713,9 @@ class JobsMixin:
                                getattr(self, "stats_worker", None), getattr(self, "lowlight_worker", None),
                                getattr(self, "clarity_worker", None), getattr(self, "bodies_worker", None),
                                getattr(self, "dest_worker", None), getattr(self, "attrs_worker", None),
-                               getattr(self, "sex_worker", None))
+                               getattr(self, "sex_worker", None), getattr(self, "content_worker", None),
+                               getattr(self, "subjects_worker", None),
+                               getattr(self, "content_learn_worker", None))
                    if w is not None]
         for w in workers:
             if w.isRunning():

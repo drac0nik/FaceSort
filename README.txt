@@ -153,6 +153,36 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+Recommended tags, Safe view and No people (1.44)
+- Settings > Content (off until you switch it on): FaceSort reads what's in each photo, on this PC,
+  with two small models downloaded once (about 30 MB): NudeNet 3.4 (AGPL-3.0) for people and body
+  areas, and GantMan's nsfw_model 1.2.0 (MIT) for drawings / neutral / sexy / porn - plus search by
+  description (CLIP) when that's on. Each photo is judged Safe, Suggestive, Explicit or Unsure.
+- Recommended tags: beside the photo in the viewer, a column of up to 10 tag buttons. Click a tag
+  to add it (it turns blue with a tick), click again to take it off. "+ Add a tag..." makes a new
+  one. Suggestions come from what's in the photo, the scene (Beach, Studio...), your own tags, and
+  tags you've used lately. Settings > Tagging > Tags: edit the list (unticked tags aren't
+  suggested), or switch the column off.
+- A tag is an album of the same name: tagged photos fill it, and FaceSort learns from it - open
+  the album and photos it thinks belong there are at the end under "Suggested for this album"
+  (right-click > Add to album or Not for this album; "Add all suggested"). Taking a photo out of
+  an album, or a tag off a photo, also teaches it.
+- Tags are written into the files as keywords (with Write tags) and read back from them. Search
+  finds photos by tag first, then by description. Photos in a locked vault never show up.
+- Safe view (toolbar, eye button): blurs Explicit photos everywhere - just the explicit areas in
+  the viewer when FaceSort found them, the whole picture otherwise. Settings: also blur
+  Suggestive photos.
+- Wrong? Right-click a photo or face box > Content... > Safe / Suggestive / Explicit (or the level
+  button above the tags). Your choice sticks - it's never changed back - and FaceSort learns from
+  your corrections. "Let FaceSort judge again" undoes it.
+- Smart Groups > No people: photos with nobody in them (no face, no body, nobody tagged) and not
+  sorted yet, split into Food, Landscapes and nature, Text and screenshots, Animals and Other.
+  They're no longer listed under No faces found.
+- The viewer's recent-folder buttons (next to the folder bar) are gone (Alt+1-5 still works).
+- Dragging a box around a single untagged face selects it without opening the People bar - only
+  clicking the face box itself does.
+- FaceSort is now licensed under the GNU AGPL-3.0 (see LICENSE), as NudeNet requires.
+
 Drops scan only what you dropped (1.43.2)
 - Dropping folders or photos on the window scans just those: the rest of your folders isn't
   walked, checked or imported first (new photos elsewhere wait for your next Scan), and the

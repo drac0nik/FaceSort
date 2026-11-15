@@ -29,7 +29,7 @@ try:                                     # video playback (Qt's own player, FFmp
 except Exception:
     MEDIA_OK = False
 SPEEDS = (0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 4.0)
-APP_VERSION = "1.43.2"
+APP_VERSION = "1.44.0"
 IDLE_REDRAW = 1.2       # seconds without a key / click before the sidebar and lists are fully redrawn
 DETECTOR_VERSION = 3   # bump when detection improves, so photos with no faces get re-checked
 SUGGEST = QColor(232, 160, 32)
@@ -409,6 +409,37 @@ def path_label():
         m.exec(e.globalPos())
     lb.contextMenuEvent = menu
     return lb
+
+
+def blurred_pixmap(pm):
+    """Safe view: a thumbnail blurred beyond recognition (shrunk right down, then smoothed back up)."""
+    if pm is None or pm.isNull():
+        return pm
+    img = pm.toImage()
+    w, h = img.width(), img.height()
+    small = img.scaled(max(1, w // 14), max(1, h // 14), Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+    out = QPixmap.fromImage(small.scaled(w, h, Qt.IgnoreAspectRatio, Qt.SmoothTransformation))
+    out.setDevicePixelRatio(pm.devicePixelRatio())
+    return out
+
+
+def blur_regions(rgb, boxes):
+    """Safe view in the viewer: blur these areas of the picture (0-1 boxes), or all of it."""
+    import cv2
+    h, w = rgb.shape[:2]
+    k = max(15, (max(h, w) // 25) | 1)
+    if not boxes:
+        return cv2.GaussianBlur(cv2.resize(cv2.resize(rgb, (max(1, w // 24), max(1, h // 24))), (w, h)), (k, k), 0)
+    out = rgb.copy()
+    for x, y, bw, bh in boxes:
+        x0, y0 = max(0, int((x - bw * 0.15) * w)), max(0, int((y - bh * 0.15) * h))
+        x1, y1 = min(w, int((x + bw * 1.15) * w)), min(h, int((y + bh * 1.15) * h))
+        if x1 - x0 > 2 and y1 - y0 > 2:
+            part = out[y0:y1, x0:x1]
+            ph, pw = part.shape[:2]
+            out[y0:y1, x0:x1] = cv2.GaussianBlur(cv2.resize(cv2.resize(part, (max(1, pw // 12), max(1, ph // 12))),
+                                                            (pw, ph)), (k, k), 0)
+    return out
 
 
 class PixCache(dict):

@@ -2,6 +2,7 @@
 import os
 import rotate
 import engine
+import content
 import face_attrs
 import engine_hq
 import jobs
@@ -70,7 +71,7 @@ class EngineMixin:
         self._bg_queue = [self.start_stats, self.start_clarity, self.start_copies_check, self.start_misplaced,
                           self.start_clip_index, self.start_bodies, self.offer_folder_cleanup, self.start_update_check,
                           self.offer_dark_look, self.offer_face_details, self.start_face_details,
-                          self.start_sex_learning]
+                          self.start_sex_learning, self.offer_content, self.start_content]
         self._bg_timer = QTimer(self)
         self._bg_timer.timeout.connect(self.bg_tick)
         QTimer.singleShot(2500, lambda: None if getattr(self, "_closing", False) else self._bg_timer.start(1200))
@@ -363,6 +364,33 @@ class EngineMixin:
             sub.addAction("Let FaceSort judge again" + n, lambda: self.set_looks(face_ids, None))
         return sub
 
+    def content_menu(self, menu, photo_ids):
+        """Right-click > Content…: correct Safe / Suggestive / Explicit (FaceSort learns from it)."""
+        if not photo_ids:
+            return None
+        q = ",".join("?" * len(photo_ids))
+        said = {r[0] for r in self.conn.execute(f"SELECT level_set FROM photo_content WHERE photo_id IN ({q})",
+                                                photo_ids)}
+        now = {r[0] for r in self.conn.execute(f"SELECT level FROM photo_content WHERE photo_id IN ({q})", photo_ids)}
+        n = f"   ({len(photo_ids)} photos)" if len(photo_ids) > 1 else ""
+        title = "Content…" + (f"   ({content.LEVELS.get(next(iter(now)))})" if len(now) == 1 and None not in now else "")
+        sub = menu.addMenu(title)
+        for value in (0, 1, 2):
+            a = sub.addAction(content.LEVELS[value] + n, lambda v=value: self.set_content_level(photo_ids, v))
+            a.setCheckable(True)
+            a.setChecked(said == {value})
+        if said - {None}:
+            sub.addSeparator()
+            sub.addAction("Let FaceSort judge again" + n, lambda: self.set_content_level(photo_ids, None))
+        return sub
+
+    def set_content_level(self, photo_ids, value):
+        content.set_level(self.conn, photo_ids, value)
+        self.statusBar().showMessage((f"✓ Marked {content.LEVELS[value]}" if value is not None else
+                                      "✓ FaceSort will judge again") + " - FaceSort learns from this", 6000)
+        self.safe_view_changed()
+        self.content_timer.start()
+
     def set_looks(self, face_ids, value):
         face_attrs.set_said(self.conn, face_ids, value)
         if self.view[0] in ("unknown", "partial") and self.view[1] in ("men", "unsure") and value is not None \
@@ -378,6 +406,38 @@ class EngineMixin:
         face_attrs.set_person_sex(self.conn, person_ids, value)
         self.statusBar().showMessage("✓ Saved - FaceSort learns from this", 5000)
         self.sex_timer.start()
+
+    def offer_content(self):
+        """Once (1.44): offer the two content models (Safe view, recommended tags, No people)."""
+        if self.settings.get("content_on") is not None:
+            return
+        if content.ready():
+            self.settings["content_on"] = True
+            store.save_settings(self.settings)
+            return
+        if os.environ.get("FACESORT_NO_PROMPT"):
+            return
+        yes = QMessageBox.question(
+            self, "Recommended tags, Safe view and No people",
+            "New: FaceSort can tell what's in your photos - recommended tags beside each photo in the viewer "
+            "(Beach, Studio, Lingerie… and your own), Safe view (blurs explicit photos, from the toolbar), and a "
+            "No people group (food, landscapes, screenshots…).\n\n"
+            f"This needs two small models (about {content.DOWNLOAD_MB} MB, once): NudeNet (AGPL licence) and an NSFW "
+            "classifier (MIT licence). They work on this PC only - your photos are never uploaded. Scene tags and "
+            "No people's parts also use the search-by-description model, if you've got it.\n\n"
+            "Download them now? (Later: Settings > Scanning > Content.)") == QMessageBox.Yes
+        self.settings["content_on"] = yes
+        store.save_settings(self.settings)
+        if yes:
+            self.get_content_models()
+
+    def get_content_models(self):
+        def got(ok):
+            if ok and content.ready():
+                self.start_content()
+        if not self.run_job("contentdl", lambda conn, progress, cancelled: content.download(progress, cancelled),
+                            on_done=got):
+            QTimer.singleShot(30000, self.get_content_models)
 
     def offer_face_details(self):
         """Once (1.42): offer the two small face-detail models (Men / Unsure groups, head angle)."""
@@ -668,6 +728,8 @@ class EngineMixin:
         named = [r for r in self.conn.execute(
             f"SELECT f.id, p.name FROM faces f JOIN persons p ON p.id=f.person_id WHERE f.id IN ({','.join('?' * len(faces))})",
             faces)] if faces else []
+        if self.settings.get("content_on"):
+            self.content_menu(m, self.sel_photos())
         if faces and self.settings.get("face_details"):
             self.looks_menu(m, list(faces))
         if faces and not named:          # faces with no name yet: one new numbered person for them
@@ -689,7 +751,14 @@ class EngineMixin:
             tm.addAction(app_icon("rotate_left"), "Turn left (anticlockwise)\t[", lambda: self.rotate_selected(False))
             tm.addAction(app_icon("rotate_right"), "Turn right (clockwise)\t]", lambda: self.rotate_selected(True))
             if kind == "album":
-                m.addAction("Remove from album", lambda aid=self.view[1]: self.remove_photos_from_album(aid, sp_dup))
+                sugg = [p for p in sp_dup if p in (getattr(self, "_album_sugg", None) or ())]
+                if sugg:
+                    m.addAction(app_icon("album", "purple"), "Add to album",
+                                lambda aid=self.view[1]: self.add_album_suggestions(aid, sugg))
+                    m.addAction("Not for this album", lambda aid=self.view[1]: self.reject_album_suggestions(aid, sugg))
+                if len(sugg) < len(sp_dup):
+                    m.addAction("Remove from album", lambda aid=self.view[1]: self.remove_photos_from_album(
+                        aid, [p for p in sp_dup if p not in sugg]))
             m.addSeparator()
             nskip = self.conn.execute(f"SELECT COUNT(*) FROM photos WHERE dup_skip=1 AND id IN "
                                       f"({','.join(map(str, sp_dup[:5000]))})").fetchone()[0]

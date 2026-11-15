@@ -444,6 +444,25 @@ class ListsMixin:
                     ch.setToolTip(0, tip)
                     it.addChild(ch)
             it.setExpanded(True)
+        if self.settings.get("content_on"):
+            import content
+            counts = dict(c.execute(f"""SELECT pc.subject, COUNT(*) FROM photos ph JOIN photo_content pc
+                                       ON pc.photo_id=ph.id WHERE {self.nopeople_sql()}
+                                       GROUP BY pc.subject""").fetchall())
+            nnp = sum(counts.values())
+            if nnp:
+                it = QTreeWidgetItem([f"No people   {nnp}"])
+                it.setIcon(0, app_icon("nopeople"))
+                it.setData(0, Qt.UserRole, ("nopeople", None))
+                it.setToolTip(0, "Photos with nobody in them - food, landscapes, screenshots, animals… "
+                                 "(no face, no body, nobody tagged, and not sorted yet)")
+                sec3.addChild(it)
+                for key, (label, _) in content.SUBJECTS.items():
+                    if counts.get(key):
+                        ch = QTreeWidgetItem([f"{label}   {counts[key]}"])
+                        ch.setIcon(0, app_icon(key))
+                        ch.setData(0, Qt.UserRole, ("nopeople", key))
+                        it.addChild(ch)
         ndup = len(self.dup_sets())
         it = QTreeWidgetItem([f"Duplicates   {ndup} set{'s' if ndup != 1 else ''}"])   # (always shown: 0 = none found)
         it.setIcon(0, app_icon("dupes"))

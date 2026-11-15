@@ -612,8 +612,18 @@ class ActionsMixin:
     def nofaces_sql(self):
         """No faces found: no face box at all (found, or drawn by hand), nobody tagged, and not sorted
         (no folder, not in your sorted library)."""
-        return (f"{NOFACES_WHERE} AND NOT EXISTS (SELECT 1 FROM faces f WHERE f.photo_id=ph.id "
-                f"AND f.ignored NOT IN (3, 4)) AND NOT {self.sorted_photo_sql()}")
+        sql = (f"{NOFACES_WHERE} AND NOT EXISTS (SELECT 1 FROM faces f WHERE f.photo_id=ph.id "
+               f"AND f.ignored NOT IN (3, 4)) AND NOT {self.sorted_photo_sql()}")
+        if self.settings.get("content_on"):      # (photos with nobody in them are under No people instead)
+            sql += " AND NOT EXISTS (SELECT 1 FROM photo_content pc WHERE pc.photo_id=ph.id AND pc.subject IS NOT NULL)"
+        return sql
+
+    def nopeople_sql(self, subject=None):
+        """No people (1.44): photos with nobody in them (no face, no body, nobody tagged) that aren't
+        sorted, optionally only one subject (food, landscape, text, animals, other)."""
+        sub = "pc.subject IS NOT NULL" if subject is None else f"pc.subject='{subject}'"
+        return (f"{NOFACES_WHERE} AND NOT {self.sorted_photo_sql()} AND EXISTS (SELECT 1 FROM photo_content pc "
+                f"WHERE pc.photo_id=ph.id AND {sub})")
 
     def smart_face_counts(self, kind):
         """(all, men, unsure) for Unknown faces / Partially tagged, in one read."""

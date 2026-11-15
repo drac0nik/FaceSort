@@ -3,6 +3,7 @@ import os
 import re
 import time
 import zlib
+import content
 import engine
 import jobs
 import known
@@ -11,7 +12,7 @@ from PySide6.QtCore import QEvent, QSize, Qt
 from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import QDialog
 from viewer_parts import PersonPicker
-from ui_common import round_pixmap
+from ui_common import blurred_pixmap, round_pixmap
 
 
 class DataMixin:
@@ -92,6 +93,60 @@ class DataMixin:
                     del self.pix_cache[k]
             self.pix_cache[fid] = pm
         return pm
+
+    # ---- Safe view (toolbar): explicit photos (and, if chosen, suggestive ones) are blurred
+    def safe_view_changed(self):
+        """Work out what Safe view blurs (and redraw), after it's switched or photos were read."""
+        self.safe_on = bool(self.settings.get("safe_view")) and bool(self.settings.get("content_on"))
+        levels = (1, 2) if self.settings.get("safe_suggestive") else (2,)
+        if self.safe_on:
+            q = ",".join(map(str, levels))
+            self._safe_photos = {r[0] for r in self.conn.execute(f"SELECT photo_id FROM photo_content WHERE level IN ({q})")}
+            self._safe_faces = {r[0] for r in self.conn.execute(
+                f"SELECT f.id FROM faces f JOIN photo_content pc ON pc.photo_id=f.photo_id WHERE pc.level IN ({q})")}
+        else:
+            self._safe_photos, self._safe_faces = set(), set()
+        self._safe_cache = {}
+        if hasattr(self, "a_safe"):
+            self.a_safe.setChecked(bool(self.settings.get("safe_view")))
+        if hasattr(self, "grid"):
+            self.grid.viewport().update()
+        v = getattr(self, "viewer", None)
+        if v is not None and v.isVisible():
+            v._shown = None
+            v.load_picture()
+            v.canvas.update()
+            v.refresh_tag_column()
+
+    def safe_pixmap(self, fid, pm):
+        if not (fid in self._safe_faces if fid > 0 else -fid in self._safe_photos):
+            return pm
+        key = (fid, pm.cacheKey() if pm is not None else 0)
+        got = self._safe_cache.get(key)
+        if got is None:
+            got = self._safe_cache[key] = blurred_pixmap(pm)
+            if len(self._safe_cache) > 4000:
+                self._safe_cache.clear()
+        return got
+
+    def safe_boxes(self, photo_id):
+        """For the viewer: None = show as is; [] = blur it all; [boxes] = blur just those areas."""
+        if not getattr(self, "safe_on", False) or photo_id not in self._safe_photos:
+            return None
+        import json
+        row = self.conn.execute("SELECT info, level_set FROM photo_content WHERE photo_id=?", (photo_id,)).fetchone()
+        if not row or row[1] is not None or not row[0]:
+            return []
+        return content.blur_boxes(json.loads(row[0]))
+
+    def toggle_safe_view(self, on):
+        self.settings["safe_view"] = bool(on)
+        store.save_settings(self.settings)
+        if on and not self.settings.get("content_on"):
+            self.statusBar().showMessage("Safe view needs Content turned on (Settings > Scanning > Content).", 8000)
+        self.safe_view_changed()
+        self.statusBar().showMessage("Safe view on - explicit photos are blurred" if on and self.safe_on
+                                     else "Safe view off", 4000)
 
     def make_rep_icons(self, wanted):
         """The round face icons of the side lists, for [(item, face id)]: the pictures are read in a
