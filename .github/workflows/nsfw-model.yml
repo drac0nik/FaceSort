@@ -1,0 +1,64 @@
+# Publishes the content model (GantMan nsfw_model 1.2.0, MIT) as the "models-nsfw" pre-release,
+# which FaceSort downloads when Content (recommended tags, Safe view, No people) is turned on.
+# Run it by hand from the Actions tab (once). It downloads GantMan's official release, checks it,
+# converts the TFLite model to ONNX unchanged, checks the result against TFLite, and uploads it.
+# (NudeNet, the other content model, comes straight from its PyPI wheel - nothing to publish.)
+name: Content model
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Get GantMan's model
+        run: |
+          mkdir work
+          curl -sSL -o work/model.zip https://github.com/GantMan/nsfw_model/releases/download/1.2.0/mobilenet_v2_140_224.1.zip
+          echo "22c0892695929639c16ea302996b8f64df9c52e7a6c1d874c1de1047bfe109f7  work/model.zip" | sha256sum -c -
+          cd work && unzip -q model.zip
+          curl -sSL -o GantMan-LICENSE.txt https://raw.githubusercontent.com/GantMan/nsfw_model/master/LICENSE.md
+
+      - name: Convert to ONNX and check
+        run: |
+          pip install tensorflow-cpu tf2onnx onnxruntime numpy
+          cd work
+          TFL=$(find . -name saved_model.tflite | head -n1)
+          python -m tf2onnx.convert --tflite "$TFL" --opset 17 --output gantman_nsfw.onnx
+          python - "$TFL" <<'PY'
+          import sys, numpy as np, tensorflow as tf, onnxruntime as ort
+          it = tf.lite.Interpreter(model_path=sys.argv[1]); it.allocate_tensors()
+          s = ort.InferenceSession("gantman_nsfw.onnx", providers=["CPUExecutionProvider"])
+          x = np.random.rand(1, 224, 224, 3).astype(np.float32)
+          it.set_tensor(it.get_input_details()[0]["index"], x); it.invoke()
+          ref = it.get_tensor(it.get_output_details()[0]["index"])
+          got = s.run(None, {s.get_inputs()[0].name: x})[0]
+          d = float(np.abs(ref - got).max()); print("max diff vs TFLite:", d)
+          assert d < 1e-4 and s.get_inputs()[0].name == "input" and got.shape == (1, 5)
+          PY
+          sha256sum gantman_nsfw.onnx > gantman_nsfw.onnx.sha256
+          cat gantman_nsfw.onnx.sha256
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd work
+          printf '%s\n' "Content model used by FaceSort's recommended tags and Safe view (downloaded by the app; not an app release)." "" \
+            "gantman_nsfw.onnx: nsfw_model 1.2.0 (MobileNet v2 140 224) by GantMan (https://github.com/GantMan/nsfw_model), converted unchanged from the official TFLite model (release zip sha256 22c0892695929639c16ea302996b8f64df9c52e7a6c1d874c1de1047bfe109f7) to ONNX. Input 1x224x224x3 RGB in [0, 1]; output drawings, hentai, neutral, porn, sexy." "" \
+            "Licence: MIT - see GantMan-LICENSE.txt." > notes.md
+          gh release delete models-nsfw --cleanup-tag --yes || true
+          gh release create models-nsfw --target "${{ github.sha }}" --prerelease \
+            --title "Content model (GantMan nsfw_model 1.2.0)" --notes-file notes.md \
+            gantman_nsfw.onnx gantman_nsfw.onnx.sha256 GantMan-LICENSE.txt
