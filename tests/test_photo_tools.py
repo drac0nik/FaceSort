@@ -105,11 +105,27 @@ def test_smooth_shadows_smooths_dark_noise_and_keeps_black():
     assert abs(out[100:140, 220:260].astype(float).mean() - 200) < 6     # bright parts unchanged
 
 
+def landscape_bw():
+    """A black & white 'landscape' (smooth bright sky, textured grass, a tree) - the colouring
+    model needs a picture that looks like something; on random blocks it rightly guesses grey."""
+    rnd = np.random.default_rng(3)
+    img = np.zeros((240, 320), np.float32)
+    img[:110] = np.linspace(215, 170, 110)[:, None]
+    img[110:] = 110 + cv2.GaussianBlur(rnd.normal(0, 25, (130, 320)).astype(np.float32), (0, 0), 1.2)
+    cv2.circle(img, (80, 90), 45, 80.0, -1)
+    img[90:170, 74:86] = 60
+    return np.dstack([np.clip(img, 0, 255).astype(np.uint8)] * 3)
+
+
 @pytest.mark.skipif(not pt.color_ready(), reason="colorizing model not downloaded")
 def test_colorize_gives_colour():
-    gray = np.repeat(photo()[:, :, :1], 3, axis=2)
+    gray = landscape_bw()
     out = pt.colorize(gray)
     assert out.shape == gray.shape and not pt.is_monochrome(out)
+    lab = cv2.cvtColor(out, cv2.COLOR_RGB2LAB).astype(np.float32)
+    assert lab[150:, 150:, 2].mean() - lab[:100, 150:, 2].mean() > 10     # the grass comes out warmer than the sky
+    L_in = cv2.cvtColor(gray, cv2.COLOR_RGB2LAB)[:, :, 0].astype(np.float32).ravel()
+    assert np.corrcoef(L_in, lab[:, :, 0].ravel())[0, 1] > 0.98                # the detail is the original's
 
 
 def test_save_and_out_path(tmp_path):
