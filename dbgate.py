@@ -84,6 +84,57 @@ def _caller():
     return "?"
 
 
+# ---- across processes (1.45): FaceSort's helper processes write to the same library. One lock
+# shared by every process keeps it to one writer at a time across all of them; the window still
+# goes first (XUI counts the window's waiters - helpers hold back while it's waiting).
+XLOCK = None          # multiprocessing.Lock shared with the helpers (None: no helpers)
+XUI = None            # multiprocessing.Value('i'): the window is waiting to write
+XOWNER = None         # multiprocessing.Value('i'): the process id holding XLOCK (0: nobody)
+
+
+def share(lock, ui_flag, owner):
+    global XLOCK, XUI, XOWNER
+    XLOCK, XUI, XOWNER = lock, ui_flag, owner
+
+
+def _x_acquire(ui, deadline):
+    """Take the shared lock (after this process's own gate)."""
+    if XLOCK is None:
+        return
+    if ui:
+        with XUI.get_lock():
+            XUI.value += 1
+        try:
+            while not XLOCK.acquire(timeout=0.05):
+                if time.monotonic() > deadline:
+                    raise sqlite3.OperationalError("database is busy - a helper process has been writing too long")
+        finally:
+            with XUI.get_lock():
+                XUI.value -= 1
+    else:
+        held_back = time.monotonic()
+        while True:
+            # the window first - unless this has waited FAIR already (so it can't be starved)
+            if XUI.value > 0 and time.monotonic() - held_back < FAIR:
+                time.sleep(0.002)
+                continue
+            if XLOCK.acquire(timeout=0.05):
+                break
+            if time.monotonic() > deadline:
+                raise sqlite3.OperationalError("database is busy - another process has been writing too long")
+    XOWNER.value = os.getpid()
+
+
+def _x_release():
+    if XLOCK is None:
+        return
+    XOWNER.value = 0
+    try:
+        XLOCK.release()
+    except ValueError:            # (wasn't held - released for a helper that stopped, say)
+        pass
+
+
 class WriteGate:
     def __init__(self):
         self.cond = threading.Condition()
@@ -139,6 +190,16 @@ class WriteGate:
                 else:
                     self.bg_waits.pop(me, None)
                 self.cond.notify_all()
+        if XLOCK is not None:                       # then the lock shared with the helper processes
+            try:
+                _x_acquire(ui, end)
+            except BaseException:
+                with self.cond:
+                    self.owner = None
+                    self.cond.notify_all()
+                raise
+            with self.cond:
+                self.since = time.monotonic()
 
     def release(self, conn):
         with self.cond:
@@ -151,6 +212,7 @@ class WriteGate:
                 self.slow.append((round(held, 2), self.where))
                 del self.slow[:-50]
                 _log(f"slow database write: {held:.1f} s by {self.where}")
+            _x_release()
             self.owner = None
             self.cond.notify_all()
 

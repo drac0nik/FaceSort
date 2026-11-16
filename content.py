@@ -198,13 +198,16 @@ def read_missing(conn, progress=lambda d, t: None, cancelled=lambda: False):
     rows = conn.execute("""SELECT ph.id, ph.path FROM photos ph LEFT JOIN photo_content pc ON pc.photo_id=ph.id
                            WHERE pc.photo_id IS NULL AND ph.error IS NULL AND ph.is_video=0
                            AND COALESCE(ph.is_other, 0)=0""").fetchall()
+    import helpers
     done = 0
-    for n, (pid, path) in enumerate(rows, 1):
+    # (1.45) photos are decoded on several threads ahead of the models (decoding is most of the
+    # time - the graphics card would otherwise sit waiting for the next picture)
+    pictures = helpers.decoded(rows, lambda r: engine.load_image(r[1], max_side=960).bgr)
+    for n, ((pid, path), bgr) in enumerate(pictures, 1):
         if cancelled():
             break
         try:
-            bgr = engine.load_image(path, max_side=960).bgr
-            info = read_picture(bgr)
+            info = None if isinstance(bgr, Exception) else read_picture(bgr)
         except Exception:
             info = None
         conn.execute("INSERT OR REPLACE INTO photo_content(photo_id, info, level) VALUES(?, ?, ?)",

@@ -6,13 +6,15 @@ import companions
 import engine
 import jobs
 import known
+import helpers
+import jobfuncs
 import store
 from PySide6.QtCore import QPoint, Qt, QTimer
 from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import QAbstractItemView, QInputDialog, QMenu, QMessageBox, QStyle, QTreeWidgetItem
 from icons import app_icon
 from ui_common import (
-    copies_job, dup_check_job, dup_sets_job, FOLDER_BAR_MIN, generic_names, IDLE_REDRAW, key_of, log, misplaced_job,
+    bg_job, copies_job, dup_check_job, dup_sets_job, FOLDER_BAR_MIN, generic_names, IDLE_REDRAW, key_of, log, misplaced_job,
     NOFACES_WHERE, open_file, PEOPLE_LABEL, show_in_folder, std_icon, Worker)
 from gallery import FolderButton
 
@@ -556,7 +558,7 @@ class ActionsMixin:
         key = self.dup_key()
         if getattr(self, "_dup_key", None) == key:
             return
-        self.dup_worker = Worker(dup_sets_job)
+        self.dup_worker = bg_job(self.settings, dup_sets_job, priority=helpers.SOON)
         self.dup_worker.ok.connect(lambda res, key=key: self.dup_sets_done(key, res))
         self.dup_worker.failed.connect(lambda tb: log(tb))
         self.dup_worker.start()
@@ -684,7 +686,7 @@ class ActionsMixin:
         w = getattr(self, "copies_worker", None)
         if w and w.isRunning():       # (replacing a running thread makes Qt abort the program)
             return
-        self.copies_worker = Worker(copies_job)
+        self.copies_worker = bg_job(self.settings, copies_job, priority=helpers.SOON)
         self.copies_worker.ok.connect(lambda n: n and (log(f"named {n} faces on copies of group photos"),
                                                        self.after_change(),
                                                        self.statusBar().showMessage(
@@ -716,8 +718,8 @@ class ActionsMixin:
         if w and w.isRunning():
             QTimer.singleShot(3000, self.start_misplaced)
             return
-        self.mis_worker = Worker(misplaced_job, dest, out, bool(self.settings.get("tag_suggestions")),
-                                 bool(self.settings.get("export_ai_folder")))
+        self.mis_worker = bg_job(self.settings, misplaced_job, dest, out, bool(self.settings.get("tag_suggestions")),
+                                 bool(self.settings.get("export_ai_folder")), priority=helpers.SOON)
         self.mis_worker.ok.connect(self.misplaced_done)
         self.mis_worker.failed.connect(lambda tb: log(tb))
         self.mis_worker.start_background(self.settings)
@@ -1076,7 +1078,7 @@ class ActionsMixin:
                 self._refresh_destinations(now)          # changed again meanwhile: once more (after a pause)
             else:
                 self.refresh_timer.start()               # the folder counts catch up when you pause
-        self.dest_worker = Worker(lambda conn, progress=None, cancelled=None: store.photo_destinations(conn, "both"))
+        self.dest_worker = bg_job(self.settings, jobfuncs.destinations_job, priority=helpers.NOW)
         self.dest_worker.ok.connect(done)
         self.dest_worker.start_background(self.settings)
 

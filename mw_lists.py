@@ -314,17 +314,22 @@ class ListsMixin:
 
         groups, gdirs = {}, {}
         hints_on = self.settings.get("folder_hints", True)
-        dirs = self.photo_dirs() if hints_on else {}
-        for cl, fid, q, photo in c.execute(f"""SELECT cluster, id, {store.clear_order("")}, photo_id FROM faces
-                                              WHERE cluster IS NOT NULL AND person_id IS NULL AND ignored=0"""):
-            g = groups.setdefault(cl, [0, fid, -1])
-            g[0] += 1
-            if (q or 0) > g[2]:
-                g[1], g[2] = fid, q or 0
-            if hints_on:
-                d = gdirs.setdefault(cl, {})
-                pd = dirs.get(photo, "")
-                d[pd] = d.get(pd, 0) + 1
+        # (1.45: grouped by the database - the window doesn't walk every face)
+        for cl, n, fid in c.execute(f"""SELECT f.cluster, COUNT(*),
+                                          (SELECT b.id FROM faces b WHERE b.cluster=f.cluster AND b.person_id IS NULL
+                                           AND b.ignored=0 ORDER BY COALESCE({store.clear_order("b.")}, 0) DESC LIMIT 1)
+                                       FROM faces f WHERE f.cluster IS NOT NULL AND f.person_id IS NULL AND f.ignored=0
+                                       GROUP BY f.cluster"""):
+            groups[cl] = [n, fid, 0]
+        if hints_on:
+            dirs = self.photo_dirs()
+            for cl, photo, n in c.execute("""SELECT cluster, photo_id, COUNT(*) FROM faces
+                                             WHERE cluster IS NOT NULL AND person_id IS NULL AND ignored=0
+                                             GROUP BY cluster, photo_id"""):
+                if groups.get(cl, (0,))[0] >= 2:
+                    d = gdirs.setdefault(cl, {})
+                    pd = dirs.get(photo, "")
+                    d[pd] = d.get(pd, 0) + n
 
         unnamed = self.unnamed_counts() if hints_on else {}
 

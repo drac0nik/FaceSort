@@ -153,6 +153,25 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+Helper processes (1.45)
+- FaceSort's background work now runs in separate helper processes instead of background threads
+  inside the window. Python runs one thread's code at a time, so before, however gently the
+  background jobs ran, they took turns with the window - the pauses on big libraries. A helper has
+  its own Python, runs on its own core, and can't slow the window down.
+- One graphics card helper does everything that runs a model: what's in photos (Content), search
+  by description, face details and same-shoot matching. It keeps its models loaded between jobs
+  and decodes photos on several threads so the card is never waiting for the next picture. Search
+  by description now runs on the graphics card too (32 photos at a time on an RTX card).
+- CPU helpers do the rest - face clarity (split across all of them at once), duplicates, where
+  photos go, suggestions, saving who's who. Settings > Scanning / CPU / GPU > Helper processes: how many
+  (Automatic = half the CPU threads, up to 6), or switch them off to use threads as before.
+- What you just did goes first; housekeeping eases off while you're clicking.
+- Still one writer at a time across the window and every helper (the window first), so no
+  "database is locked". A helper that stops unexpectedly can't leave the library locked.
+- Helpers end with FaceSort (and on their own if FaceSort is gone). The release build now checks
+  that the packaged app's helpers start and work on Windows before it's published.
+- The side list's group and folder counts are worked out by the database (fewer pauses).
+
 Quicker on big libraries (1.44.2)
 - A person's gallery no longer works out where every photo in the library would be saved after
   each change - just that person's photos (this was most of the pauses at 30,000+ photos).

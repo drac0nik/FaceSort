@@ -847,14 +847,16 @@ def _leader_groups(E, order, threshold):
     return of
 
 
-def read_missing_clarity(conn, progress=lambda d, t: None, cancelled=lambda: False, batch=400):
+def read_missing_clarity(conn, progress=lambda d, t: None, cancelled=lambda: False, batch=400, shard=None):
     """Faces scanned before 1.36 get their clarity, read from their stored thumbnails (no photo
-    is opened). Carries on where it left off. Returns how many faces were read."""
+    is opened). Carries on where it left off. Returns how many faces were read.
+    shard (i, n): only faces with id % n == i (one helper process's share)."""
     import engine
-    total = conn.execute("SELECT COUNT(*) FROM faces WHERE clarity IS NULL AND manual<2").fetchone()[0]
+    part = f" AND id % {int(shard[1])} = {int(shard[0])}" if shard else ""
+    total = conn.execute(f"SELECT COUNT(*) FROM faces WHERE clarity IS NULL AND manual<2{part}").fetchone()[0]
     done = 0
     while not cancelled():
-        rows = conn.execute("SELECT id, thumb FROM faces WHERE clarity IS NULL AND manual<2 LIMIT ?",
+        rows = conn.execute(f"SELECT id, thumb FROM faces WHERE clarity IS NULL AND manual<2{part} LIMIT ?",
                             (batch,)).fetchall()
         if not rows:
             break

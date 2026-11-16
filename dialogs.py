@@ -316,6 +316,42 @@ class SettingsDialog(QDialog):
                     except RuntimeError:
                         pass                       # (Settings was closed meanwhile)
                 QTimer.singleShot(250, fill)
+        heading("Helper processes", lay)
+        import helpers
+        hn = QLabel("FaceSort's background work (what's in photos, descriptions, face details, duplicates, "
+                    "suggestions…) runs in separate helper processes, so it can use several cores at once and "
+                    "never slows the window down: one for the graphics card, and CPU helpers for the rest.")
+        hn.setWordWrap(True)
+        hn.setStyleSheet("color: gray;")
+        lay.addWidget(hn)
+        self.cb_helpers = QCheckBox("Run background work in helper processes (recommended)")
+        self.cb_helpers.setChecked(self.s.get("helpers", "on") != "off")
+        lay.addWidget(self.cb_helpers)
+        hr = QHBoxLayout()
+        hr.setContentsMargins(24, 0, 0, 0)
+        hr.addWidget(QLabel("CPU helpers:"))
+        self.helpers_box = QComboBox()
+        auto = helpers.default_cpu_helpers()
+        self.helpers_box.addItem(f"Automatic ({auto} on this PC)", 0)
+        for k in range(1, max(2, min(16, os.cpu_count() or 2)) + 1):
+            self.helpers_box.addItem(str(k), k)
+        i = self.helpers_box.findData(int(self.s.get("cpu_helpers", 0) or 0))
+        self.helpers_box.setCurrentIndex(max(0, i))
+        self.helpers_box.setToolTip("Each helper uses about 200-400 MB of memory and up to 2 CPU threads; the "
+                                    "graphics card helper also keeps its models loaded (about 1 GB).")
+        hr.addWidget(self.helpers_box)
+        hr.addStretch()
+        lay.addLayout(hr)
+        self.cb_helpers.toggled.connect(self.helpers_box.setEnabled)
+        self.helpers_box.setEnabled(self.cb_helpers.isChecked())
+        if helpers.has_pool():
+            running = helpers.pool().helpers
+            st = QLabel("Running now: " + (", ".join(sorted({f"{sum(1 for h in running if h.role == r)} {r.upper()}"
+                                                             for r in ("gpu", "cpu")
+                                                             if any(h.role == r for h in running)})) or "none (idle)"))
+            st.setStyleSheet("color: gray;")
+            st.setContentsMargins(24, 0, 0, 0)
+            lay.addWidget(st)
         scan = lay
 
         lay = general
@@ -563,6 +599,8 @@ class SettingsDialog(QDialog):
         s["min_face_px"] = self.minface.value()
         s["threads"] = self.threads.value()
         s["use_gpu"] = self.cb_gpu.isChecked()
+        s["helpers"] = "on" if self.cb_helpers.isChecked() else "off"
+        s["cpu_helpers"] = int(self.helpers_box.currentData() or 0)
         s["detect_threshold"] = self.det.value() / 100
         s["look_sideways"] = self.cb_side.isChecked()
         s["dark_second_look"] = self.cb_dark.isChecked()

@@ -1,7 +1,12 @@
 """FaceSort - sort and tag your photos by the people in them. Runs 100% on your PC."""
+import multiprocessing
 import os
 import sys
 import traceback
+if __name__ == "__main__":
+    # the packaged exe started as one of FaceSort's helper processes (helpers.py): it runs its
+    # jobs and ends here, before anything heavy (the window, Qt) is loaded
+    multiprocessing.freeze_support()
 import cpulimit
 cpulimit.APPLIED = cpulimit.apply()    # before numpy/OpenCV load: they read their thread counts once
 import engine
@@ -755,8 +760,49 @@ def apply_look(app):
     app.setStyleSheet("QTreeView::item { padding: 2px 0; } QToolTip { padding: 4px; }")
 
 
+def selftest_helpers(out_path):
+    """FaceSort.exe --selftest-helpers <file>: start the helper processes, run a check in a CPU
+    helper and in the graphics card helper (including a write each), and report to the file.
+    The release build runs this on Windows, so a packaged exe whose helpers can't start never
+    ships. Exit code 0 = all fine."""
+    import helpers
+    lines, ok = [], True
+    p = helpers.pool()
+    p.configure(2, True)
+    done = {}
+    try:
+        conn = store.connect()
+        conn.close()
+        for role_ in ("cpu", "gpu"):
+            p.submit("jobfuncs:ping_job", (), {"write": 3}, role_, helpers.NOW,
+                     cb=lambda kind, data, r=role_: done.__setitem__(r, (kind, data)) if kind != "progress" else None)
+        import time as _t
+        end = _t.monotonic() + 120
+        while len(done) < 2 and _t.monotonic() < end:
+            p.poll()
+            _t.sleep(0.01)
+        for role_ in ("cpu", "gpu"):
+            kind, data = done.get(role_, ("timeout", None))
+            good = kind == "ok" and data[1] == role_ and data[0] != os.getpid()
+            ok = ok and good
+            lines.append(f"{role_}: {kind} {data!r}")
+        import onnxruntime as ort
+        lines.append("onnxruntime providers: " + ", ".join(ort.get_available_providers()))
+    except Exception:
+        ok = False
+        lines.append(traceback.format_exc())
+    finally:
+        p.shutdown(5.0)
+    lines.append("OK" if ok else "FAILED")
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    return 0 if ok else 1
+
+
 def main():
     global _crash_file
+    if len(sys.argv) >= 3 and sys.argv[1] == "--selftest-helpers":
+        return selftest_helpers(sys.argv[2])
     sys.excepthook = excepthook
     try:
         import faulthandler
@@ -785,7 +831,11 @@ def main():
         return 1
     win = MainWindow()
     win.show()
-    return app.exec()
+    code = app.exec()
+    import helpers
+    if helpers.has_pool():
+        helpers.pool().shutdown(3.0)      # the helper processes end with FaceSort
+    return code
 
 
 

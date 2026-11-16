@@ -254,6 +254,12 @@ class SettingsMixin:
         store.save_settings(new)
         if new.get("use_gpu") != old.get("use_gpu"):
             engine.reset_gpu()
+        if any(new.get(k) != old.get(k) for k in ("use_gpu", "helpers", "cpu_helpers", "background_cpu")):
+            import helpers
+            if helpers.has_pool():           # helpers start again with the new settings when next needed
+                from ui_common import ProcessWorker
+                helpers.pool().shutdown(3.0)
+                ProcessWorker.abandon_all()
         if new.get("ai_detector") and not old.get("ai_detector"):
             self.enable_ai_detector()
         if new.get("library_root") and new.get("library_root") != old.get("library_root"):

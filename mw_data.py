@@ -344,6 +344,9 @@ class DataMixin:
     def eventFilter(self, obj, ev):
         if ev.type() in (QEvent.KeyPress, QEvent.MouseButtonPress, QEvent.Wheel):
             self._last_input = time.monotonic()
+            import helpers
+            if helpers.has_pool():
+                helpers.pool().touch()           # housekeeping in the helpers eases off while you work
         # Ctrl + mouse wheel resizes the thumbnails
         if ev.type() == QEvent.Wheel and getattr(self, "grid", None) is not None and obj is self.grid.viewport() \
                 and ev.modifiers() & Qt.ControlModifier:

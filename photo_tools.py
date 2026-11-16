@@ -97,13 +97,12 @@ def _session(path, cpu=False):
     with _LOCK:
         s = _SESS.get(path)
         if s is None:
-            so = ort.SessionOptions()
-            so.log_severity_level = 3
+            import helpers
             avail = ort.get_available_providers()
             provs = [p for p in ("DmlExecutionProvider", "CUDAExecutionProvider") if p in avail] + ["CPUExecutionProvider"]
-            if "DmlExecutionProvider" in provs:
-                so.enable_mem_pattern = False
-                so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+            if helpers.role() == "cpu":          # (1.45) a CPU helper never queues up on the graphics card
+                provs = ["CPUExecutionProvider"]
+            so = helpers.session_options(provs)
             try:
                 s = ort.InferenceSession(path, so, providers=provs)
             except Exception:

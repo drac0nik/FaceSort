@@ -8,7 +8,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QInputDialog, QMenu, QMessageBox
 from icons import app_icon
 from ui_common import (
-    clip_download_job, clip_index_job, collage_job, key_of, log, open_folder_window, ROLE_DROP,
+    bg_job, clip_download_job, clip_index_job, collage_job, key_of, log, open_folder_window, ROLE_DROP,
     scan_and_group, show_in_folder, Worker)
 
 
@@ -213,7 +213,7 @@ class AlbumsMixin:
         have, total = clip_search.index_counts(self.conn)
         if have >= total:
             return
-        self.clip_worker = Worker(clip_index_job)
+        self.clip_worker = bg_job(self.settings, clip_index_job, role="gpu")
         self.clip_worker.progress.connect(lambda d, t, m: self.statusBar().showMessage(m, 4000))
         self.clip_worker.ok.connect(lambda n: n and self.statusBar().showMessage(
             f"Search by description: {n:,} more photo{'s' if n != 1 else ''} ready.", 6000))

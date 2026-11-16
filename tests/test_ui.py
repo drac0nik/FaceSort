@@ -525,15 +525,13 @@ def test_folder_counts_worked_out_in_the_background(window, qapp, monkeypatch):
     monkeypatch.setattr(store, "photo_destinations", lambda *a, **k: (calls.append(1), real(*a, **k))[1])
     w.conn.execute("UPDATE photos SET category_id=category_id")
     w.conn.commit()
+    key = (w.conn.total_changes, w._data_gen, id(w.conn))
     w.places(stale_ok=True)                            # out of date: the last copy now...
-    end = time.time() + 10
-    while not calls and time.time() < end:
+    assert not calls                                   # (not worked out under your click)
+    end = time.time() + 15                             # ... and a fresh one in the background (thread or helper)
+    while w._dest_cache[0] != key and time.time() < end:
         pump(qapp, 0.05)
-    assert calls                                       # ... and a fresh one in the background
-    end = time.time() + 10
-    while w.dest_worker.isRunning() and time.time() < end:
-        pump(qapp, 0.05)
-    pump(qapp, 0.1)
+    assert w._dest_cache[0] == key
     n = len(calls)
     w.places(stale_ok=True)
     w.destinations()

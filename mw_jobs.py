@@ -8,13 +8,15 @@ import jobs
 import known
 import bodies
 import content
+import helpers
+import jobfuncs
 import face_attrs
 import updater
 import store
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QDialog, QMessageBox
 from ui_common import (APP_VERSION, bodies_job, clarity_job, log, log_path, open_file, regroup_job, remember_job,
-                       scan_and_group, stats_job, Worker)
+                       scan_and_group, stats_job, Worker, bg_job)
 from dialogs import ExportDialog, ScanDialog
 
 LOOK_ONLY_JOBS = {"discardlook", "colordl", "facedl", "contentdl"}   # jobs that only read or download (no redraw after)
@@ -156,7 +158,8 @@ class JobsMixin:
             return
         if not self.conn.execute("SELECT 1 FROM faces WHERE clarity IS NULL AND manual<2 LIMIT 1").fetchone():
             return
-        self.clarity_worker = Worker(clarity_job)
+        self.clarity_worker = bg_job(self.settings, clarity_job, shards=helpers.cpu_helpers(self.settings),
+                                     shard_fn=jobfuncs.clarity_shard_job)
         self.clarity_worker.progress.connect(lambda d, t, m: self.statusBar().showMessage(m, 4000))
         self.clarity_worker.ok.connect(lambda n: n and self.schedule_regroup())
         self.clarity_worker.failed.connect(lambda tb: log(tb))
@@ -172,8 +175,7 @@ class JobsMixin:
             return
         if not self.conn.execute("SELECT 1 FROM faces WHERE male IS NULL AND thumb IS NOT NULL LIMIT 1").fetchone():
             return
-        self.attrs_worker = Worker(lambda conn, progress, cancelled: face_attrs.read_missing(
-            conn, lambda d, t: progress(d, t, f"Reading face details… {d:,} / {t:,}"), cancelled))
+        self.attrs_worker = bg_job(self.settings, jobfuncs.attrs_job, role="gpu")
         self.attrs_worker.progress.connect(lambda d, t, m: self.statusBar().showMessage(m, 4000))
         self.attrs_worker.ok.connect(lambda n: n and (self.schedule_regroup(), self.start_sex_learning()))
         self.attrs_worker.failed.connect(lambda tb: log(tb))
@@ -190,8 +192,7 @@ class JobsMixin:
                                     WHERE pc.photo_id IS NULL AND ph.error IS NULL AND ph.is_video=0
                                     AND COALESCE(ph.is_other, 0)=0 LIMIT 1""").fetchone():
             return
-        self.content_worker = Worker(lambda conn, progress, cancelled: content.read_missing(
-            conn, lambda d, t: progress(d, t, f"Reading what's in photos… {d:,} / {t:,}"), cancelled))
+        self.content_worker = bg_job(self.settings, jobfuncs.content_job, role="gpu")
         self.content_worker.progress.connect(lambda d, t, m: self.statusBar().showMessage(m, 4000))
         self.content_worker.ok.connect(lambda n: n and (self.refresh_timer.start(), self.safe_view_changed()))
         self.content_worker.failed.connect(lambda tb: log(tb))
@@ -204,7 +205,7 @@ class JobsMixin:
         w = getattr(self, "subjects_worker", None)
         if w and w.isRunning():
             return
-        self.subjects_worker = Worker(lambda conn, progress, cancelled: content.update_subjects(conn))
+        self.subjects_worker = bg_job(self.settings, jobfuncs.subjects_job, priority=helpers.SOON)
         self.subjects_worker.ok.connect(lambda n: n and self.refresh_timer.start())
         self.subjects_worker.failed.connect(lambda tb: log(tb))
         self.subjects_worker.start_background(self.settings)
@@ -215,7 +216,7 @@ class JobsMixin:
         if w and w.isRunning():
             self.content_timer.start()
             return
-        self.content_learn_worker = Worker(lambda conn, progress, cancelled: content.learn_levels(conn, cancelled))
+        self.content_learn_worker = bg_job(self.settings, jobfuncs.content_learn_job, priority=helpers.SOON)
         self.content_learn_worker.ok.connect(lambda n: n and (self.refresh_timer.start(), self.safe_view_changed()))
         self.content_learn_worker.failed.connect(lambda tb: log(tb))
         self.content_learn_worker.start_background(self.settings)
@@ -230,8 +231,8 @@ class JobsMixin:
             self.sex_timer.start()                  # once more when this one's done
             return
         model = self.settings.get("engine", "sface")
-        self.sex_worker = Worker(lambda conn, progress, cancelled: face_attrs.learn(
-            conn, model, store.threshold(self.settings, model), lambda d, t: None, cancelled))
+        self.sex_worker = bg_job(self.settings, jobfuncs.sex_learn_job, model, store.threshold(self.settings, model),
+                                 priority=helpers.SOON)
         self.sex_worker.ok.connect(lambda res: res and self.refresh_timer.start())
         self.sex_worker.failed.connect(lambda tb: log(tb))
         self.sex_worker.start_background(self.settings)
@@ -247,7 +248,7 @@ class JobsMixin:
         if not self.conn.execute("""SELECT 1 FROM photos WHERE COALESCE(body_done, 0)=0 AND is_video=0
                                     AND error IS NULL AND COALESCE(sort_later, 0)<>2 LIMIT 1""").fetchone():
             return
-        self.bodies_worker = Worker(bodies_job)
+        self.bodies_worker = bg_job(self.settings, bodies_job, role="gpu")
         self.bodies_worker.progress.connect(lambda d, t, m: self.statusBar().showMessage(m, 4000))
 
         def done(n):
@@ -262,7 +263,7 @@ class JobsMixin:
         w = getattr(self, "stats_worker", None)
         if w and w.isRunning():
             return
-        self.stats_worker = Worker(stats_job)
+        self.stats_worker = bg_job(self.settings, stats_job, priority=helpers.SOON)
         self.stats_worker.start()
 
     def set_busy(self, on, text=""):
@@ -541,7 +542,7 @@ class JobsMixin:
             self.remember_timer.start(3000)
             return
         self._remember_dirty = False
-        self.remember_worker = Worker(remember_job)
+        self.remember_worker = bg_job(self.settings, remember_job, priority=helpers.SOON)
         self.remember_worker.failed.connect(lambda tb: log(tb))
         self.remember_worker.start_background(self.settings)
 
@@ -587,8 +588,8 @@ class JobsMixin:
             self.regroup_timer.start(int(wait * 1000) + 50)
             return
         self.regroup_pending = False
-        self.regroup_worker = Worker(regroup_job, store.threshold(self.settings),
-                                     same_shoot=bool(self.settings.get("same_shoot")))
+        self.regroup_worker = bg_job(self.settings, regroup_job, store.threshold(self.settings),
+                                     same_shoot=bool(self.settings.get("same_shoot")), priority=helpers.SOON)
         self.regroup_worker.ok.connect(self.regroup_done)
         self.regroup_worker.failed.connect(lambda tb: log(tb))
         self.statusBar().showMessage("Updating suggestions…")
@@ -724,6 +725,9 @@ class JobsMixin:
             if w.isRunning():
                 w.wait(15000)
         still = [w for w in workers if w.isRunning()]
+        from ui_common import ProcessWorker
+        ProcessWorker.abandon_all()          # (helpers' results still on their way: nothing left to show them)
+        still = [w for w in still if not isinstance(w, ProcessWorker)]
         if self._remember_dirty:
             try:
                 known.sync_from_library(self.conn)

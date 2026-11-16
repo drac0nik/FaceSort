@@ -13,7 +13,7 @@ import engine
 import jobs
 import known
 import store
-from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QObject, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QLabel, QMenu, QSizePolicy, QStyle, QToolButton, QTreeWidget)
@@ -29,7 +29,7 @@ try:                                     # video playback (Qt's own player, FFmp
 except Exception:
     MEDIA_OK = False
 SPEEDS = (0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 4.0)
-APP_VERSION = "1.44.2"
+APP_VERSION = "1.45.0"
 IDLE_REDRAW = 1.2       # seconds without a key / click before the sidebar and lists are fully redrawn
 DETECTOR_VERSION = 3   # bump when detection improves, so photos with no faces get re-checked
 SUGGEST = QColor(232, 160, 32)
@@ -527,109 +527,154 @@ class Worker(QThread):
                 pass
 
 
-def dup_sets_job(conn, progress, cancelled):
-    sets = store.duplicate_sets(conn, check_new=False)
-    return sets, store.DUP_UNCHECKED[0]
+class ProcessWorker(QObject):
+    """A background job run by one of FaceSort's helper processes (helpers.py) - to the rest of
+    FaceSort it looks just like Worker (the same signals, isRunning, stop, wait). shards=n splits
+    a job into n parts, each run by its own helper, at the same time (the job gets shard=(i, n));
+    the parts' results are added up (numbers) or listed."""
+    progress = Signal(int, int, str)
+    ok = Signal(object)
+    failed = Signal(str)
+    _alive = set()
+    _timer = None
+
+    def __init__(self, func, *args, role="cpu", priority=None, shards=0, **kw):
+        super().__init__()
+        import helpers
+        self.func, self.args, self.kw = func, args, kw
+        self.role = role
+        self.priority = helpers.IDLE if priority is None else priority
+        self.shards = int(shards or 0)
+        self.tids, self.parts, self.prog = [], {}, {}
+        self.result, self.error = None, None
+        self._running = False
+
+    def start(self, *_):
+        import helpers
+        p = helpers.pool()
+        ProcessWorker._alive.add(self)
+        self._running = True
+        n = self.shards or 1
+        for i in range(n):
+            kw = dict(self.kw)
+            if self.shards:
+                kw["shard"] = (i, n)
+            tid = p.submit(self.func, self.args, kw, self.role, self.priority,
+                           cb=lambda kind, data, i=i: self._msg(i, kind, data))
+            self.tids.append(tid)
+        ProcessWorker._ensure_timer()
+
+    def start_background(self, settings=None):
+        self.start()
+
+    def isRunning(self):
+        return self._running
+
+    def stop(self):
+        import helpers
+        if helpers.has_pool():
+            for tid in self.tids:
+                helpers.pool().cancel(tid)
+
+    def wait(self, ms=None):
+        """Wait (pumping the helpers' messages) until done - True if it finished."""
+        import helpers
+        end = time.monotonic() + (ms / 1000 if ms is not None else 1e9)
+        while self._running and time.monotonic() < end and helpers.has_pool():
+            helpers.pool().poll()
+            time.sleep(0.005)
+        return not self._running
+
+    def _msg(self, i, kind, data):
+        if kind == "progress":
+            self.prog[i] = data
+            if self.shards:
+                d = sum(v[0] for v in self.prog.values())
+                t = sum(v[1] for v in self.prog.values())
+                self.progress.emit(d, t, data[2])
+            else:
+                self.progress.emit(*data)
+            return
+        if kind == "cancelled":
+            self._cancelled = True
+        elif kind == "failed" and self.error is None:
+            self.error = data
+        self.parts[i] = data if kind == "ok" else None
+        if len(self.parts) < (self.shards or 1):
+            return
+        self._running = False
+        if self.error is None:
+            vals = [self.parts[k] for k in sorted(self.parts)]
+            if not self.shards:
+                self.result = vals[0]
+            elif all(isinstance(v, (int, float)) for v in vals):
+                self.result = sum(vals)
+            else:
+                self.result = vals
+        else:
+            log(self.error)
+        if getattr(self, "_cancelled", False) and self.error is None:
+            self._abandoned = True           # stopped before it ran: nothing to deliver
+        # delivered from the event loop, like Worker's (never in the middle of wait() or poll())
+        QTimer.singleShot(0, self._deliver)
+
+    @classmethod
+    def abandon_all(cls):
+        """The window is closing: results still on their way are dropped (nothing to show them in)."""
+        for w in list(cls._alive):
+            w._abandoned = True
+
+    def _deliver(self):
+        if getattr(self, "_abandoned", False):
+            ProcessWorker._alive.discard(self)
+            return
+        try:
+            if self.error is not None:
+                self.failed.emit(self.error)
+            else:
+                self.ok.emit(self.result)
+        finally:
+            ProcessWorker._alive.discard(self)
+
+    @classmethod
+    def _ensure_timer(cls):
+        if cls._timer is None:
+            cls._timer = QTimer()
+            cls._timer.setInterval(30)
+            cls._timer.timeout.connect(cls._tick)
+        if not cls._timer.isActive():
+            cls._timer.start()
+
+    @classmethod
+    def _tick(cls):
+        import helpers
+        if not helpers.has_pool():
+            cls._timer.stop()
+            return
+        p = helpers.pool()
+        p.poll()
+        if not p.busy():
+            cls._timer.stop()
 
 
-def misplaced_job(conn, dest, out, inc, ai, progress=None, cancelled=None):
-    """(photos not where they belong, how many photos the next Sort into folders would move)"""
-    return jobs.misplaced(conn, dest, inc, ai) if dest else [], jobs.pending_moves(conn, out, inc, ai)
+def bg_job(settings, fn, *args, role="cpu", priority=None, shards=0, shard_fn=None, **kw):
+    """A background job: in a helper process when they're on (Settings > Scanning / CPU / GPU) - else on
+    a background thread, as before. fn must be one of the jobs in jobfuncs.py to go to a helper.
+    shard_fn: the version of the job that takes shard=(i, n) (used with shards)."""
+    import helpers
+    if helpers.enabled(settings) and getattr(fn, "__module__", "") == "jobfuncs":
+        p = helpers.pool()
+        p.configure(helpers.cpu_helpers(settings), (settings or {}).get("use_gpu", True))
+        p.log = log
+        if shards and shard_fn is not None:
+            return ProcessWorker(f"jobfuncs:{shard_fn.__name__}", *args, role=role, priority=priority,
+                                 shards=shards, **kw)
+        return ProcessWorker(f"jobfuncs:{fn.__name__}", *args, role=role, priority=priority, **kw)
+    return Worker(fn, *args, **kw)
 
 
-def clip_index_job(conn, progress=lambda d, t, m: None, cancelled=lambda: False):
-    return clip_search.index_photos(conn, progress, cancelled)
-
-
-def clip_download_job(conn, progress=lambda d, t, m: None, cancelled=lambda: False):
-    return clip_search.download(progress, cancelled)
-
-
-def copies_job(conn, progress=None, cancelled=None):
-    return store.names_from_copies(conn)
-
-
-def bodies_job(conn, progress=lambda d, t, m: None, cancelled=lambda: False):
-    """Find the people in photos not looked at yet, then work out the same-shoot suggestions."""
-    n = bodies.analyze_photos(conn, progress, cancelled)
-    if not cancelled():
-        progress(0, 0, "Working out same-shoot suggestions…")
-        bodies.suggest(conn, cancelled=cancelled)
-    return n
-
-
-def bodies_download_job(conn, progress=lambda d, t, m: None, cancelled=lambda: False):
-    return bodies.download(progress, cancelled)
-
-
-def find_dark_job(conn, progress=lambda d, t, m: None, cancelled=lambda: False):
-    return jobs.find_dark_photos(conn, progress, cancelled)
-
-
-def clarity_job(conn, progress=lambda d, t, m: None, cancelled=lambda: False):
-    return store.read_missing_clarity(conn, lambda d, t: progress(d, t, f"Reading face clarity… {d:,} / {t:,}"),
-                                      cancelled)
-
-
-def stats_job(conn, progress=None, cancelled=lambda: False):
-    return store.refresh_stats(conn)
-
-
-def collage_job(conn, path, strength=0, t0=None, t1=None, progress=None, cancelled=lambda: False):
-    return engine.video_collage(path, cancelled=cancelled, strength=strength, t0=t0, t1=t1)
-
-
-def dup_check_job(conn, progress, cancelled):
-    progress(0, 0, "Checking possible duplicates closely…")
-    try:
-        store.duplicate_sets(conn, progress=lambda d, t: progress(d, t, "Checking possible duplicates closely…"),
-                             cancelled=cancelled)
-    except Exception:
-        log(traceback.format_exc())
-
-
-def scan_and_group(conn, settings, progress, cancelled, videos_only=False, check_only=False, only=None, opts=None):
-    o = opts or {}
-    if o.get("mode", "both") != "new" and only is None and not check_only:
-        # "look again" choices of the Scan window: those photos count as changed for this scan
-        if o.get("nofaces_again"):
-            conn.execute("UPDATE photos SET mtime=NULL WHERE error IS NULL AND nfaces=0 AND COALESCE(is_other, 0)=0")
-            conn.commit()
-        if o.get("dark_again"):
-            jobs.find_dark_photos(conn, progress, cancelled)
-    stats = jobs.scan_library(conn, settings, progress, cancelled, videos_only=videos_only, check_only=check_only,
-                              only=only, opts=opts)
-    if not cancelled() and (stats.get("scanned") or stats.get("removed") or not check_only):
-        progress(0, 0, "Grouping faces…")
-        store.regroup(conn, store.threshold(settings), progress=lambda d, t: progress(d, t, "Grouping faces…"),
-                      cancelled=cancelled)
-    stats["cancelled"] = cancelled()
-    return stats
-
-
-SUGGESTION_SIG = """SELECT COUNT(*), TOTAL(person_id), TOTAL(cluster), TOTAL(later_cluster)
-                    FROM faces WHERE ignored IN (0, 5) AND confirmed=0"""
-
-
-SHOOT_SIG = "SELECT COUNT(*), TOTAL(body_id), TOTAL(person_id) FROM body_suggestions"
-
-
-def regroup_job(conn, threshold, progress, cancelled, same_shoot=True):
-    """Returns True when the suggestions / groups came out different."""
-    before = conn.execute(SUGGESTION_SIG).fetchone()
-    conn.commit()
-    store.regroup(conn, threshold, progress=lambda d, t: progress(d, t, "Updating suggestions…"), cancelled=cancelled,
-                  sync=False)
-    shoot_before = conn.execute(SHOOT_SIG).fetchone()
-    if same_shoot and not cancelled() and conn.execute("SELECT 1 FROM bodies LIMIT 1").fetchone():
-        bodies.suggest(conn, cancelled=cancelled)          # who's confirmed decides the same-shoot suggestions
-    return (conn.execute(SUGGESTION_SIG).fetchone() != before or
-            conn.execute(SHOOT_SIG).fetchone() != shoot_before)
-
-
-def remember_job(conn, progress, cancelled):
-    """Save who's who to the known-people file (and the Photos library's reference file)."""
-    known.sync_from_library(conn)
+# (the jobs themselves are in jobfuncs.py - no Qt there, so FaceSort's helper processes can run them)
+from jobfuncs import *  # noqa: E402,F401,F403
 
 
 # =========================================================================== face grid

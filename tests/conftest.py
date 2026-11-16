@@ -22,6 +22,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ["FACESORT_NO_PROMPT"] = "1"
 os.environ["FACESORT_NO_UPDATE_CHECK"] = "1"
 os.environ["FACESORT_NO_STALLWATCH"] = "1"
+os.environ.setdefault("FACESORT_NO_HELPERS", "1")      # (tests/test_helpers.py turns them on)
 
 from PIL import Image  # noqa: E402
 

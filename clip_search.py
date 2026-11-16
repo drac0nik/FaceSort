@@ -139,13 +139,35 @@ class Tokenizer:
 
 
 # ------------------------------------------------------------------ the model
+def _use_gpu():
+    try:
+        import store
+        return bool(store.load_settings().get("use_gpu", True))
+    except Exception:
+        return True
+
+
 class Clip:
     def __init__(self):
         import onnxruntime as ort
+        import helpers
         so = ort.SessionOptions()
         so.log_severity_level = 3
         so.intra_op_num_threads = max(1, (os.cpu_count() or 2) // 2)    # leaves the rest of the PC responsive
-        self.vision = ort.InferenceSession(model_path("vision"), so, providers=["CPUExecutionProvider"])
+        self.gpu = False
+        self.vision = None
+        if helpers.role() == "gpu":
+            # (1.45) in the graphics card helper: on the card (RTX: many photos per batch)
+            provs = helpers.onnx_providers(_use_gpu())
+            if provs[0] != "CPUExecutionProvider":
+                try:
+                    self.vision = ort.InferenceSession(model_path("vision"), helpers.session_options(provs),
+                                                       providers=provs)
+                    self.gpu = self.vision.get_providers()[0] != "CPUExecutionProvider"
+                except Exception:
+                    self.vision = None
+        if self.vision is None:
+            self.vision = ort.InferenceSession(model_path("vision"), so, providers=["CPUExecutionProvider"])
         self.text = None
         self.tok = None
         self._so = so
@@ -172,7 +194,11 @@ class Clip:
 
     def images(self, rgbs):
         """[RGB arrays] -> (n, 512) unit vectors."""
-        x = np.stack([self.prepare(r) for r in rgbs]).astype(np.float32)
+        return self.embed([self.prepare(r) for r in rgbs])
+
+    def embed(self, prepared):
+        """[prepare()d pictures] -> (n, 512) unit vectors."""
+        x = np.stack(prepared).astype(np.float32)
         names = [o.name for o in self.vision.get_outputs()]
         inp = self.vision.get_inputs()[0].name
         out = self.vision.run(None, {inp: x})
@@ -218,21 +244,30 @@ def index_photos(conn, progress=lambda d, t, m: None, cancelled=lambda: False, b
                            ORDER BY ph.id""").fetchall()
     if not todo:
         return 0
+    import helpers
     m = model()
+    if m.gpu:
+        batch = max(batch, 32)          # (1.45) the graphics card takes many photos at once
+
+    def load(row):
+        pid, path, is_video, cover = row
+        li = engine.load_image(path, max_side=448, t=cover if is_video else None)
+        return Clip.prepare(np.ascontiguousarray(li.bgr[:, :, ::-1]))     # (resized on the decoding threads too)
+    pictures = helpers.decoded(todo, load)          # decoded on several threads ahead of the model
     done, last = 0, _t.monotonic()
     for i in range(0, len(todo), batch):
         if cancelled():
             break
         chunk = todo[i:i + batch]
         pics, ids, failed = [], [], []
-        for pid, path, is_video, cover in chunk:
-            try:
-                li = engine.load_image(path, max_side=448, t=cover if is_video else None)
-                pics.append(np.ascontiguousarray(li.bgr[:, :, ::-1]))
-                ids.append(pid)
-            except Exception:
-                failed.append(pid)                     # (marked below, so it isn't tried again)
-        vecs = m.images(pics).astype(np.float16) if pics else []
+        for _row in chunk:
+            row, got = next(pictures)
+            if isinstance(got, Exception):
+                failed.append(row[0])                  # (marked below, so it isn't tried again)
+            else:
+                pics.append(got)
+                ids.append(row[0])
+        vecs = m.embed(pics).astype(np.float16) if pics else []
         # all the slow work (loading, the model) is done with the library untouched; then one
         # quick write, saved at once. (A file that couldn't be read used to be written down
         # straight away - which kept the library locked while the rest of the batch loaded and
