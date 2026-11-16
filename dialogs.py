@@ -342,6 +342,21 @@ class SettingsDialog(QDialog):
         hr.addWidget(self.helpers_box)
         hr.addStretch()
         lay.addLayout(hr)
+        self.cb_fp16 = QCheckBox("Faster FP16 models on the graphics card (each checked against the full model first)")
+        self.cb_fp16.setChecked(bool(self.s.get("fp16", True)))
+        try:
+            import fp16
+            st = fp16.status()
+        except Exception:
+            st = []
+        tip = ("RTX and other recent graphics cards run half-precision (FP16) maths on their tensor cores much "
+               "faster. Each model is converted once and, the first time it runs, its answers are compared with "
+               "the full-precision model's; it's only used if they match.")
+        if st:
+            tip += "\n\n" + "\n".join(f"{name} ({prov}): {'FP16' if ok else 'full precision'} - {detail}"
+                                       for name, prov, ok, detail in st)
+        self.cb_fp16.setToolTip(tip)
+        lay.addWidget(self.cb_fp16)
         self.cb_helpers.toggled.connect(self.helpers_box.setEnabled)
         self.helpers_box.setEnabled(self.cb_helpers.isChecked())
         if helpers.has_pool():
@@ -601,6 +616,7 @@ class SettingsDialog(QDialog):
         s["use_gpu"] = self.cb_gpu.isChecked()
         s["helpers"] = "on" if self.cb_helpers.isChecked() else "off"
         s["cpu_helpers"] = int(self.helpers_box.currentData() or 0)
+        s["fp16"] = self.cb_fp16.isChecked()
         s["detect_threshold"] = self.det.value() / 100
         s["look_sideways"] = self.cb_side.isChecked()
         s["dark_second_look"] = self.cb_dark.isChecked()

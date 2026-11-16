@@ -788,6 +788,21 @@ def selftest_helpers(out_path):
             lines.append(f"{role_}: {kind} {data!r}")
         import onnxruntime as ort
         lines.append("onnxruntime providers: " + ", ".join(ort.get_available_providers()))
+        # FP16 conversion is packaged and works (the face finder, converted and run once)
+        import fp16
+        import engine
+        import tempfile
+        tmp = os.path.join(tempfile.mkdtemp(), "det16.onnx")
+        fp16.convert(engine.DET_MODEL, tmp)
+        so = ort.SessionOptions()
+        so.log_severity_level = 3
+        import numpy as np
+        s16 = ort.InferenceSession(tmp, so, providers=["CPUExecutionProvider"])
+        s32 = ort.InferenceSession(engine.DET_MODEL, so, providers=["CPUExecutionProvider"])
+        feed = {"input": (np.random.default_rng(1).random((1, 3, 320, 320)) * 255).astype(np.float32)}
+        same, detail = fp16.compare(s32.run(None, feed), s16.run(None, feed))
+        lines.append(f"fp16: {'ok' if same else 'MISMATCH'} ({detail[:120]})")
+        ok = ok and same
     except Exception:
         ok = False
         lines.append(traceback.format_exc())

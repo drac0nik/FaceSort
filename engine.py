@@ -929,12 +929,14 @@ class GpuBackend:
                     so.enable_mem_pattern = False                       # required by DirectML
                     so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL  # required by DirectML
                     provs = [(prov, opts), "CPUExecutionProvider"] if prov != "CPUExecutionProvider" else [prov]
-                    det = ort.InferenceSession(DET_MODEL, so, providers=provs)
-                    rec = ort.InferenceSession(REC_MODEL, so, providers=provs)
+                    import fp16                    # (1.45.2) FP16 on the card once it's checked
+                    det = fp16.session(DET_MODEL, so, provs, "face finder")
+                    rec = fp16.session(REC_MODEL, so, provs, "face fingerprint")
                     if det.get_providers()[0] != prov or rec.get_providers()[0] != prov:
                         raise RuntimeError(f"{label} could not run the models")
-                    det.run(None, {"input": np.zeros((1, 3, 640, 640), np.float32)})   # warm-up / sanity
-                    rec.run(None, {"data": np.zeros((1, 3, 112, 112), np.float32)})
+                    for sess, feed in ((det, {"input": np.zeros((1, 3, 640, 640), np.float32)}),   # warm-up / sanity
+                                       (rec, {"data": np.zeros((1, 3, 112, 112), np.float32)})):
+                        (sess.cur if hasattr(sess, "cur") else sess).run(None, feed)    # (not the FP16 check: zeros)
                     self.det, self.rec, self.label, self.provider = det, rec, label, prov
                     self.det_outputs = [o.name for o in det.get_outputs()]
                     self.lock = threading.Lock()

@@ -90,8 +90,9 @@ class _Sessions:
                                  "CPUExecutionProvider"], "GPU (DirectML)"
         elif use_gpu and "CUDAExecutionProvider" in avail:
             provs, self.label = ["CUDAExecutionProvider", "CPUExecutionProvider"], "GPU (CUDA)"
-        self.det = ort.InferenceSession(os.path.join(d, DET_FILE), so, providers=provs)
-        self.rec = ort.InferenceSession(os.path.join(d, RECOGNIZERS[model]["file"]), so, providers=provs)
+        import fp16                                  # (1.45.2) FP16 on the card once it's checked
+        self.det = fp16.session(os.path.join(d, DET_FILE), so, provs, "high accuracy face finder")
+        self.rec = fp16.session(os.path.join(d, RECOGNIZERS[model]["file"]), so, provs, f"{model} fingerprint")
         if provs[0] != "CPUExecutionProvider" and self.det.get_providers()[0] == "CPUExecutionProvider":
             self.label = "CPU"
         self.det_in = self.det.get_inputs()[0].name

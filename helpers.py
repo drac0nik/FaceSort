@@ -364,6 +364,23 @@ class Pool:
             h.task_q.put((tid, func, args, kw, pri, data_dir))
         for item in skipped:
             heapq.heappush(self.waiting, item)
+        # something you're waiting for (a scan, say) and its helper is busy with housekeeping: the
+        # housekeeping job is asked to stop (it carries on another time) so yours starts now
+        for pri, _seq, tid in skipped:
+            if pri != NOW:
+                continue
+            role_ = self.tasks[tid]["msg"][4]
+            mine = [h for h in self.helpers if h.role == role_]
+            limit = 1 if role_ == "gpu" else self.n_cpu
+            if len(mine) < limit or any(h.tid is not None and self.tasks.get(h.tid, {}).get("preempted")
+                                        for h in mine):
+                continue
+            busy = [h for h in mine if h.tid is not None and self.tasks.get(h.tid) and
+                    self.tasks[h.tid]["msg"][3] > NOW]
+            if busy:
+                victim = max(busy, key=lambda h: self.tasks[h.tid]["msg"][3])
+                self.tasks[victim.tid]["preempted"] = True
+                victim.cancel.value = 1
 
     def _idle_helper(self, role_):
         mine = [h for h in self.helpers if h.role == role_]

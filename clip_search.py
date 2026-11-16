@@ -161,8 +161,9 @@ class Clip:
             provs = helpers.onnx_providers(_use_gpu())
             if provs[0] != "CPUExecutionProvider":
                 try:
-                    self.vision = ort.InferenceSession(model_path("vision"), helpers.session_options(provs),
-                                                       providers=provs)
+                    import fp16              # (1.45.2) FP16 on the card once it's checked
+                    self.vision = fp16.session(model_path("vision"), helpers.session_options(provs), provs,
+                                               "photo descriptions")
                     self.gpu = self.vision.get_providers()[0] != "CPUExecutionProvider"
                 except Exception:
                     self.vision = None

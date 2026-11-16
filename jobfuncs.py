@@ -12,7 +12,7 @@ import jobs
 import known
 import store
 
-__all__ = ['dup_sets_job', 'misplaced_job', 'clip_index_job', 'clip_download_job', 'copies_job', 'bodies_job', 'bodies_download_job', 'find_dark_job', 'clarity_job', 'stats_job', 'collage_job', 'dup_check_job', 'scan_and_group', 'regroup_job', 'remember_job', 'attrs_job', 'content_job', 'subjects_job', 'content_learn_job', 'sex_learn_job', 'destinations_job', 'clarity_shard_job', 'ping_job', 'sleep_job', 'SUGGESTION_SIG', 'SHOOT_SIG']
+__all__ = ['dup_sets_job', 'misplaced_job', 'clip_index_job', 'clip_download_job', 'copies_job', 'bodies_job', 'bodies_download_job', 'find_dark_job', 'clarity_job', 'stats_job', 'collage_job', 'dup_check_job', 'scan_and_group', 'regroup_job', 'remember_job', 'attrs_job', 'content_job', 'subjects_job', 'content_learn_job', 'sex_learn_job', 'destinations_job', 'clarity_shard_job', 'scan_job', 'ping_job', 'sleep_job', 'SUGGESTION_SIG', 'SHOOT_SIG']
 
 def log(msg):
     try:
@@ -186,3 +186,28 @@ def sleep_job(conn, seconds, progress=lambda d, t, m: None, cancelled=lambda: Fa
     while time.monotonic() < end and not cancelled():
         time.sleep(0.02)
     return not cancelled()
+
+
+ENGINE_MSG = "\x01engine:"            # (a progress message that carries the face engine's status)
+
+
+def scan_job(conn, settings, progress=lambda d, t, m: None, cancelled=lambda: False, sync_known=False, **kw):
+    """The scan, run by the graphics card helper (1.45.2): it keeps the face models loaded from one
+    scan to the next. Who's who is saved first if the window asked; the face engine's status
+    (graphics card or not) is passed back for the window's label."""
+    if sync_known:
+        try:
+            known.sync_from_library(conn)
+        except Exception as ex:
+            log(f"saving known people: {ex}")
+    last = [None]
+
+    def prog(d, t, m=""):
+        st = engine.gpu_status()
+        if st != last[0]:
+            last[0] = st
+            progress(0, 0, ENGINE_MSG + ("1" if st[0] else "0") + st[1])
+        progress(d, t, m)
+    stats = scan_and_group(conn, settings, prog, cancelled, **kw)
+    stats["engine_status"] = engine.gpu_status()
+    return stats

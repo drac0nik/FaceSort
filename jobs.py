@@ -383,6 +383,13 @@ def scan_library(conn, settings, progress=lambda done, total, msg: None, cancell
 
     min_face = int(settings.get("min_face_px", 32))
     threads = 1 if o["light"] else max(1, int(settings.get("threads", 2)))
+    try:
+        import helpers
+        if helpers.role() == "gpu" and settings.get("use_gpu", True) and not o["light"]:
+            # (1.45.2) in the graphics card helper: enough photos decoding at once to keep the card busy
+            threads = max(threads, helpers.decode_threads())
+    except Exception:
+        pass
     use_gpu = bool(settings.get("use_gpu", True))
     det_thr = float(settings.get("detect_threshold", engine.SCORE_THRESHOLD))
     sideways = bool(settings.get("look_sideways", True))

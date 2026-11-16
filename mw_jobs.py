@@ -16,7 +16,7 @@ import store
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QDialog, QMessageBox
 from ui_common import (APP_VERSION, bodies_job, clarity_job, log, log_path, open_file, regroup_job, remember_job,
-                       scan_and_group, stats_job, Worker, bg_job)
+                       scan_and_group, stats_job, Worker, bg_job, ProcessWorker)
 from dialogs import ExportDialog, ScanDialog
 
 LOOK_ONLY_JOBS = {"discardlook", "colordl", "facedl", "contentdl"}   # jobs that only read or download (no redraw after)
@@ -296,8 +296,17 @@ class JobsMixin:
                 except Exception as ex:
                     log(f"saving known people: {ex}")
                 return _job(conn, *a, **k)
+            fn._scan = job is scan_and_group          # (the helper's scan saves who's who itself)
         self._job = name
-        self.worker = Worker(fn, *args, **kw)
+        if name == "scan" and fn is scan_and_group or getattr(fn, "_scan", False):
+            # (1.45.2) the scan runs in the graphics card helper (thread if helpers are off)
+            sync = getattr(fn, "_scan", False)
+            self.worker = bg_job(self.settings, jobfuncs.scan_job, *args, role="gpu", priority=helpers.NOW,
+                                 sync_known=sync, **kw)
+            if not isinstance(self.worker, ProcessWorker):
+                self.worker = Worker(fn, *args, **kw)
+        else:
+            self.worker = Worker(fn, *args, **kw)
         self.worker.progress.connect(self.on_progress)
         self.worker.ok.connect(lambda res: self.job_done(name, res, on_done))
         self.worker.failed.connect(lambda tb: self.job_failed(name, tb))
@@ -307,6 +316,11 @@ class JobsMixin:
         return True
 
     def on_progress(self, done, total, msg):
+        if msg.startswith(jobfuncs.ENGINE_MSG):             # the helper's face engine status
+            st = msg[len(jobfuncs.ENGINE_MSG):]
+            self._engine_status = (st[:1] == "1", st[1:])
+            self.update_engine_label()
+            return
         if total <= 0:
             self.prog.setRange(0, 0)
             self.prog_label.setText(msg)
@@ -329,6 +343,8 @@ class JobsMixin:
 
     def update_engine_label(self):
         active, text = engine.gpu_status()
+        if text == "not started yet" and getattr(self, "_engine_status", None):
+            active, text = self._engine_status            # (the scan ran in the graphics card helper)
         if text != "not started yet":
             short = text if (active or text.startswith("High accuracy")) else "Standard · CPU"
             if text.startswith("GPU"):
@@ -337,6 +353,8 @@ class JobsMixin:
             self.engine_label.setToolTip(text)
 
     def job_done(self, name, res, on_done):
+        if isinstance(res, dict) and res.get("engine_status"):
+            self._engine_status = tuple(res["engine_status"])
         self.update_engine_label()
         self.set_busy(False)
         self.worker = None

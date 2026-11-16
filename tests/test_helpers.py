@@ -154,3 +154,48 @@ def test_window_with_helpers(data_dir, qapp, helpers_on):
     finally:
         w.close()
         pump(qapp, 0.2)
+
+
+def test_scan_runs_in_the_graphics_card_helper(data_dir, qapp, helpers_on):
+    """1.45.2: the scan is a graphics card helper job (the face models stay loaded there)."""
+    import shutil
+    from conftest import build_library
+    from ui_common import ProcessWorker
+    lib = build_library(data_dir)
+    src = lib.conn.execute("SELECT path FROM photos WHERE is_video=0 LIMIT 1").fetchone()[0]
+    lib.conn.close()
+    new = os.path.join(os.path.dirname(src), "copy_for_scan.jpg")
+    shutil.copy(src, new)
+    import facesort
+    w = facesort.MainWindow()
+    w.show()
+    try:
+        pump(qapp, 0.3)
+        w.start_scan(opts={"mode": "new"})
+        assert isinstance(w.worker, ProcessWorker) and w.worker.role == "gpu"
+        end = time.time() + 120
+        while w.busy() and time.time() < end:
+            pump(qapp, 0.05)
+        assert not w.busy()
+        assert w.conn.execute("SELECT 1 FROM photos WHERE path=?", (new,)).fetchone()
+        assert w._engine_status is not None                   # (the helper's engine status came back)
+    finally:
+        w.close()
+        pump(qapp, 0.2)
+
+
+def test_your_job_goes_ahead_of_housekeeping(library, qapp, helpers_on):
+    """A job you're waiting for (priority NOW) stops a housekeeping job on the same helper."""
+    from ui_common import bg_job
+    slow = bg_job({}, jobfuncs.sleep_job, 60, role="gpu", priority=helpers.IDLE)
+    got = {}
+    slow.ok.connect(lambda r: got.setdefault("slow", r))
+    slow.start()
+    pump(qapp, 1.0)
+    t = time.time()
+    fast = run(bg_job({}, jobfuncs.ping_job, role="gpu", priority=helpers.NOW), qapp, timeout=30)
+    assert fast.get("ok") and time.time() - t < 10
+    end = time.time() + 10
+    while "slow" not in got and time.time() < end:
+        pump(qapp, 0.05)
+    assert got.get("slow") is False                           # it was asked to stop (carries on another time)

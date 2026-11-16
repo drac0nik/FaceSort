@@ -104,7 +104,8 @@ def _session(path, cpu=False):
                 provs = ["CPUExecutionProvider"]
             so = helpers.session_options(provs)
             try:
-                s = ort.InferenceSession(path, so, providers=provs)
+                import fp16                      # (1.45.2) FP16 on the card once it's checked
+                s = fp16.session(path, so, provs, os.path.basename(path))
             except Exception:
                 s = ort.InferenceSession(path, so, providers=["CPUExecutionProvider"])
             _SESS[path] = s

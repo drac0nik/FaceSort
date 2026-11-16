@@ -254,7 +254,7 @@ class SettingsMixin:
         store.save_settings(new)
         if new.get("use_gpu") != old.get("use_gpu"):
             engine.reset_gpu()
-        if any(new.get(k) != old.get(k) for k in ("use_gpu", "helpers", "cpu_helpers", "background_cpu")):
+        if any(new.get(k) != old.get(k) for k in ("use_gpu", "helpers", "cpu_helpers", "background_cpu", "fp16")):
             import helpers
             if helpers.has_pool():           # helpers start again with the new settings when next needed
                 from ui_common import ProcessWorker

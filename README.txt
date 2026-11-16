@@ -153,6 +153,20 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+Scanning on the graphics card helper, FP16 models (1.45.2)
+- Scans now run in the graphics card helper: the face models stay loaded from one scan to the
+  next, more photos are decoded at once to keep the card busy, and the window stays smooth while
+  it scans. A scan you start goes ahead of housekeeping (that job stops and carries on later).
+- FP16 models on the graphics card: RTX cards do half-precision maths on their tensor cores much
+  faster. Each model is converted once and checked the first time it runs - the same input
+  through both, and only if the answers match closely is FP16 used (otherwise that model stays
+  in full precision). The verdicts are remembered, and Settings > Scanning / CPU / GPU shows them
+  (hover "Faster FP16 models") and can turn FP16 off.
+- Checked on real photos: the high-accuracy engines (ArcFace, AdaFace) found the same faces with
+  fingerprints matching to 0.9998; the standard engine's small fingerprint model drifts a little
+  more in FP16 and normally stays full precision.
+- The release build checks the packaged app's FP16 conversion as well as its helpers.
+
 Fix for long freezes (1.45.1)
 - 1.45 could freeze for almost a minute after every change on some big libraries: the side list
   asked the database for each group's best face in a way SQLite sometimes ran as a scan of every
