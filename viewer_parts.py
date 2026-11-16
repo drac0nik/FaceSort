@@ -389,6 +389,7 @@ class PhotoCanvas(QWidget):
 
     def actual_size(self):
         """1:1 pixels (or as close as the loaded picture allows)."""
+        self.viewer.ensure_picture()
         img = self.viewer.image
         if img is None:
             return

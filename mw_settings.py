@@ -226,7 +226,9 @@ class SettingsMixin:
         self.start_scan()
 
     def open_settings(self):
-        self.remember_now()
+        # (who's who is saved in the background now - opening Settings used to wait for it, seconds
+        # on a big library; Export known people saves it first itself)
+        self.start_remember()
         dlg = SettingsDialog(self, self.settings)
         if dlg.exec() != QDialog.Accepted:
             return
@@ -255,6 +257,7 @@ class SettingsMixin:
         if new.get("ai_detector") and not old.get("ai_detector"):
             self.enable_ai_detector()
         if new.get("library_root") and new.get("library_root") != old.get("library_root"):
+            self.remember_now()
             n = known.import_root(new["library_root"])       # what it remembers comes straight back
             if n:
                 self.statusBar().showMessage(f"Photos library: remembered details for {n:,} photos loaded", 10000)

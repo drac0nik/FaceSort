@@ -582,3 +582,22 @@ def test_drop_scans_only_the_dropped_paths(window, qapp, tmp_path, monkeypatch):
     w._after_job("other")
     pump(qapp, 0.4)
     assert got[-1]["opts"] == {"roots": [str(d)]}
+
+
+def test_viewer_decodes_in_background_and_reads_ahead(window, qapp):
+    """1.44.2: the picture is decoded off the window; the photos either side are read ahead."""
+    w = window
+    person = next(k for k in all_keys(w, w.tree) if k[0] == "person")
+    w.view = person
+    w.refresh_grid()
+    i = next(i for i, r in enumerate(w.model.rows) if r[0])
+    w.open_viewer(w.model.index(i))
+    v = w.viewer
+    v.ensure_picture()
+    assert v.image is not None and not v.image.isNull()
+    pump(qapp, 1.0)                                   # the read-ahead lands in the cache
+    if len(v.items) > 1 and v.pos + 1 < len(v.items):
+        nxt = v.items[v.pos + 1][1]
+        assert any(k[0] == nxt for k in v._img_cache)
+        v.go(1)
+        assert v.image is not None and not getattr(v, "_loading", False)     # instant: already decoded

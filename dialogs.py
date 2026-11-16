@@ -474,6 +474,9 @@ class SettingsDialog(QDialog):
         if not dest:
             return
         try:
+            win = self.parent()
+            if hasattr(win, "remember_now"):
+                win.remember_now()               # (everyone up to date first)
             known.export_to(dest)
             QMessageBox.information(self, "Exported", f"Saved to:\n{dest}\n\nKeep it private: it can recognize these people.")
         except Exception as e:

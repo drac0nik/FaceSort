@@ -1047,6 +1047,20 @@ class ActionsMixin:
         return sugg if include_suggestions else conf
 
     def _refresh_destinations(self, key):
+        # (1.44.2) worked out once you pause for a moment, not after every click: while it runs it
+        # competes with the window for Python, so a burst of tagging used to redo it each time
+        t = getattr(self, "_dest_timer", None)
+        if t is None:
+            from PySide6.QtCore import QTimer as _QT
+            t = self._dest_timer = _QT(self)
+            t.setSingleShot(True)
+            t.timeout.connect(lambda: self._refresh_destinations_now(
+                (self.conn.total_changes, self._data_gen, id(self.conn))))
+        t.start(1500)
+
+    def _refresh_destinations_now(self, key):
+        if getattr(self, "_closing", False):
+            return
         w = getattr(self, "dest_worker", None)
         if w is not None and w.isRunning():
             self._dest_again = True
@@ -1059,7 +1073,7 @@ class ActionsMixin:
             now = (self.conn.total_changes, self._data_gen, id(self.conn))
             self._dest_cache = (key, res[0], res[1])
             if now != key or self._dest_again:
-                self._refresh_destinations(now)          # changed again meanwhile: once more
+                self._refresh_destinations(now)          # changed again meanwhile: once more (after a pause)
             else:
                 self.refresh_timer.start()               # the folder counts catch up when you pause
         self.dest_worker = Worker(lambda conn, progress=None, cancelled=None: store.photo_destinations(conn, "both"))
@@ -1232,12 +1246,7 @@ class ActionsMixin:
         paths = store.category_paths(c)
         tree = store.folder_tree(c)
         mine = {k: store.PATH_SEP.join(paths.get(k, [])) for k, v in tree.items() if v[2] == person_id}
-        sub = {}
-        for pid, dests in self.destinations(True).items():
-            for base, person, inner in dests:
-                if person == person_id and inner:
-                    sub[pid] = inner
-        if not sub and not mine:
+        if not mine:                     # (no folders of their own: nothing to split by)
             return rows
         face_photo = {}
         fids = [r[0] for r in rows if r[0] > 0]
@@ -1245,6 +1254,12 @@ class ActionsMixin:
             chunk = fids[i:i + 900]
             face_photo.update(c.execute(f"SELECT id, photo_id FROM faces WHERE id IN ({','.join('?' * len(chunk))})",
                                         chunk).fetchall())
+        shown = set(face_photo.values()) | {-r[0] for r in rows if r[0] < 0}
+        sub = {}                         # (only this person's photos are worked out - not the whole library)
+        for pid, dests in store.photo_destinations(c, True, photo_ids=shown).items():
+            for base, person, inner in dests:
+                if person == person_id and inner:
+                    sub[pid] = inner
         groups = {k: [] for k in mine}
         groups[None] = []
         for r in rows:

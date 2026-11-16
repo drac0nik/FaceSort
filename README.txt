@@ -153,6 +153,15 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+Quicker on big libraries (1.44.2)
+- A person's gallery no longer works out where every photo in the library would be saved after
+  each change - just that person's photos (this was most of the pauses at 30,000+ photos).
+- The side list counts people's faces in the database instead of one by one.
+- "Where photos go" for the folder counts is worked out once you pause, not after every click.
+- Opening Settings no longer waits while who's who is saved (it's saved in the background).
+- The viewer decodes photos in the background and reads the ones either side ahead, so going to
+  the next photo is instant; a big JPEG shows a quick preview while the full picture loads.
+
 Ignore the rest of a group photo (1.44.1)
 - Smart Groups > Partially tagged: right-click one or more photos > "Ignore the other untagged
   faces on this photo" (or "these N photos"). Every face box nobody is confirmed on is set aside;

@@ -6,7 +6,9 @@ import numpy as np
 import photo_tools
 import engine
 import store
-from PySide6.QtCore import QEvent, QSize, Qt, QTimer, QUrl
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
+from PySide6.QtCore import QEvent, QObject, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QFont, QImage, QKeySequence, QMovie, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton, QSlider,
@@ -19,6 +21,35 @@ from viewer_parts import (
     chip, CompareView, EnhancedView, Filmstrip, frame_planes, LowLightWorker, MarkSlider, PhotoCanvas,
     qimage_to_rgb, rgb_to_qimage, TagEdit, ToolWorker)
 from dialogs import EnhanceCopyDialog
+
+
+_DECODE = ThreadPoolExecutor(max_workers=2, thread_name_prefix="picture")    # (1.44.2) pictures decode off the window
+PICTURE_CACHE = 6                        # decoded pictures kept (the ones next to you are read ahead)
+QUICK_PREVIEW_BYTES = 3 << 20            # a JPEG bigger than this shows a quick preview while it decodes
+
+
+def _file_sig(path):
+    try:
+        st = os.stat(path)
+        return (st.st_mtime, st.st_size)
+    except OSError:
+        return None
+
+
+def decode_picture(path, frame_t, low_light, is_video, boxes, max_side=4096):
+    """-> (QImage, full width, full height). Runs on a decoding thread (QImage is fine there)."""
+    li = engine.load_image(path, max_side=max_side, t=frame_t)
+    rgb = li.bgr[:, :, ::-1].copy()
+    if is_video and low_light:
+        rgb = engine.low_light(rgb, low_light)
+    if boxes is not None and not is_video:
+        rgb = np.ascontiguousarray(blur_regions(rgb, boxes))
+    h, w = rgb.shape[:2]
+    return QImage(rgb.data, w, h, 3 * w, QImage.Format_RGB888).copy(), li.width, li.height
+
+
+class _Decoded(QObject):
+    done = Signal(object, object, object)          # key, (QImage, w, h) or None, error text
 
 
 class PhotoViewer(QWidget):
@@ -832,6 +863,7 @@ class PhotoViewer(QWidget):
     def run_tool(self, kind, arg=None):
         if self.is_video or self.is_anim or not self.path or self.tool.busy:
             return
+        self.ensure_picture()
         if kind == "colorize" and not photo_tools.color_ready():
             if QMessageBox.question(self, "Colourize", f"Colourizing uses a model of about {photo_tools.COLOR_MB} MB "
                                     "(DeOldify), downloaded once from GitHub. After that it works on this PC only - "
@@ -899,6 +931,7 @@ class PhotoViewer(QWidget):
         """The touch-up brush on this photo (or on the preview, if tools were already used)."""
         if self.is_video or self.is_anim or not self.path or self.tool.busy:
             return
+        self.ensure_picture()
         from touchup import TouchUpDialog
         path = self.path
         exif = None
@@ -1459,6 +1492,90 @@ class PhotoViewer(QWidget):
             self.compare_b.setChecked(on)
             self.compare_b.blockSignals(False)
 
+    # ---- the picture: decoded on a background thread, the photos next to you read ahead (1.44.2)
+    def _picture_key(self, path, frame_t, is_video, photo_id):
+        boxes = None if is_video else self.win.safe_boxes(photo_id)              # Safe view
+        return (path, frame_t, _file_sig(path), self.low_light if is_video else 0,
+                None if boxes is None else tuple(map(tuple, boxes))), boxes
+
+    def _decoder(self):
+        d = getattr(self, "_dec", None)
+        if d is None:
+            self._dec = d = _Decoded(self)
+            d.done.connect(self._picture_ready)
+            self._img_cache, self._img_futures = OrderedDict(), {}
+        return d
+
+    def _submit_decode(self, key, boxes, is_video):
+        d = self._decoder()
+        if key in self._img_cache or key in self._img_futures:
+            return self._img_futures.get(key)
+        path, frame_t, _sig, low, _b = key
+        fut = _DECODE.submit(decode_picture, path, frame_t, low, is_video, boxes)
+        self._img_futures[key] = fut
+
+        def finished(f, key=key, d=d):
+            try:
+                res, err = f.result(), None
+            except Exception as e:
+                res, err = None, str(e)
+            try:
+                d.done.emit(key, res, err)
+            except RuntimeError:              # (the viewer was closed meanwhile)
+                pass
+        fut.add_done_callback(finished)
+        return fut
+
+    def _picture_ready(self, key, res, err):
+        self._img_futures.pop(key, None)
+        self._img_cache[key] = (res, err)
+        self._img_cache.move_to_end(key)
+        while len(self._img_cache) > PICTURE_CACHE:
+            self._img_cache.popitem(last=False)
+        if key == getattr(self, "_want_key", None):
+            self._apply_picture(res, err)
+            self.canvas.update()
+            self.zoom_changed()
+
+    def _apply_picture(self, res, err):
+        self._loading = False
+        if res is None:
+            self.image = None
+            self.error = f"Couldn't open this {'video' if self.is_video else 'photo'}:\n{err}"
+            return
+        self.image, self._full_w, self._full_h = res      # (_full_w: the zoom %, 100% = real pixels)
+        self.error = None
+
+    def ensure_picture(self):
+        """Wait for the full picture (before anything edits or measures it)."""
+        fut = getattr(self, "_img_futures", {}).get(getattr(self, "_want_key", None))
+        if getattr(self, "_loading", False) and fut is not None:
+            try:
+                res, err = fut.result(), None
+            except Exception as e:
+                res, err = None, str(e)
+            self._apply_picture(res, err)
+
+    def read_ahead(self):
+        """Decode the photos either side of this one in the background, so going on is instant."""
+        if not getattr(self, "items", None):
+            return
+        for step in (1, -1, 2):
+            n = self.pos + step
+            if 0 <= n < len(self.items):
+                fid, path = self.items[n]
+                if engine.is_video(path) or os.path.splitext(path)[1].lower() == ".gif":
+                    continue
+                pid = self._photo_id_of(fid, path)
+                key, boxes = self._picture_key(path, None, False, pid)
+                self._submit_decode(key, boxes, False)
+
+    def _photo_id_of(self, fid, path):
+        if fid and fid < 0:
+            return -fid
+        r = self.win.conn.execute("SELECT id FROM photos WHERE path=?", (path,)).fetchone()
+        return r[0] if r else None
+
     def load_picture(self):
         """The photo - or, for a video, the frame being looked at."""
         want = (self.path, self.frame_t)
@@ -1467,22 +1584,26 @@ class PhotoViewer(QWidget):
         QTimer.singleShot(0, self.align_legend)
         self._shown = want
         self.image, self.error = None, None
+        self._decoder()
+        key, boxes = self._picture_key(self.path, self.frame_t, self.is_video, self.photo_id()[0])
+        self._want_key = key
+        got = self._img_cache.get(key)
+        if got is not None:
+            self._img_cache.move_to_end(key)
+            self._apply_picture(*got)
+            return
+        self._loading = True
+        self._submit_decode(key, boxes, self.is_video)
+        # meanwhile: a big JPEG shows a quick small preview (decoded at 1/8 size - a few milliseconds)
         try:
-            li = engine.load_image(self.path, max_side=4096, t=self.frame_t)
-            img = li.bgr
-            self._full_w = li.width          # for the zoom % (100% = the photo's real pixels)
-            self._full_h = li.height
-            rgb = img[:, :, ::-1].copy()
-            if self.is_video and self.low_light:
-                rgb = engine.low_light(rgb, self.low_light)
-            if not self.is_video:
-                boxes = self.win.safe_boxes(self.photo_id()[0])          # Safe view
-                if boxes is not None:
-                    rgb = np.ascontiguousarray(blur_regions(rgb, boxes))
-            h, w = rgb.shape[:2]
-            self.image = QImage(rgb.data, w, h, 3 * w, QImage.Format_RGB888).copy()
-        except Exception as e:
-            self.error = f"Couldn't open this {'video' if self.is_video else 'photo'}:\n{e}"
+            if (not self.is_video and os.path.splitext(self.path)[1].lower() in (".jpg", ".jpeg")
+                    and os.path.getsize(self.path) > QUICK_PREVIEW_BYTES):
+                img, w, h = decode_picture(self.path, None, 0, False, boxes, max_side=640)
+                if getattr(self, "_loading", False):
+                    self.image, self._full_w, self._full_h = img, w, h
+        except Exception:
+            pass
+        QTimer.singleShot(150, self.read_ahead)
 
     def show_frame(self, t):
         if self.player and self.media.currentIndex() in (1, 2):

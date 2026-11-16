@@ -114,17 +114,17 @@ class ListsMixin:
             icon_wait.append((it, face_id))
 
         # people, with counts (done as a few grouped queries: quick on big libraries)
+        # (1.44.2: counted by the database, not row by row in Python - several times quicker, and
+        # the window isn't held up while it reads)
         nface, nsugg, best = {}, {}, {}
-        for person, fid, conf, q, turned in c.execute(
-                f"""SELECT person_id, id, confirmed, {store.clear_order("")},
-                           ABS(COALESCE(yaw, 0)) > 30 OR ABS(COALESCE(pitch, 0)) > 25 FROM faces
-                    WHERE ignored=0 AND person_id IS NOT NULL"""):
-            nface[person] = nface.get(person, 0) + 1
-            if not conf:
-                nsugg[person] = nsugg.get(person, 0) + 1
-            key = (conf, not turned, q or 0)      # the icon: a confirmed, front-on, clear face
-            if person not in best or key > best[person][0]:
-                best[person] = (key, fid)
+        for person, n, ns, fid in c.execute(
+                f"""SELECT f.person_id, COUNT(*), SUM(f.confirmed=0),
+                           (SELECT b.id FROM faces b WHERE b.person_id=f.person_id AND b.ignored=0
+                            ORDER BY b.confirmed DESC,            -- the icon: a confirmed, front-on, clear face
+                                     (ABS(COALESCE(b.yaw, 0)) > 30 OR ABS(COALESCE(b.pitch, 0)) > 25) ASC,
+                                     COALESCE({store.clear_order("b.")}, 0) DESC LIMIT 1)
+                    FROM faces f WHERE f.ignored=0 AND f.person_id IS NOT NULL GROUP BY f.person_id"""):
+            nface[person], nsugg[person], best[person] = n, ns or 0, (None, fid)
         ntag = dict(c.execute("""SELECT pp.person_id, COUNT(*) FROM photo_people pp JOIN photos x ON x.id=pp.photo_id
                                  WHERE x.sort_later=0 AND NOT EXISTS (SELECT 1 FROM faces f WHERE f.photo_id=pp.photo_id
                                  AND f.person_id=pp.person_id AND f.ignored=0) GROUP BY pp.person_id"""))

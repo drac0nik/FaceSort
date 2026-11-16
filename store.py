@@ -2278,33 +2278,45 @@ def photo_destinations(conn, include_suggestions=False, photo_ids=None):
     - a person placed in a folder always goes there; otherwise the photo's normal folder;
       otherwise ~Uncategorized (folder None)
     - each of the person's own folders the photo is in -> one destination each
-    - nobody on it: (its folder, None, None)"""
+    - nobody on it: (its folder, None, None)
+    photo_ids: only those photos (read just for them - quick for one person's view)."""
     tree = folder_tree(conn)
     placed = dict(conn.execute("SELECT id, category_id FROM persons WHERE category_id IS NOT NULL"))
     photo_cat, people, pf = {}, {}, {}
+
+    def rows(sql, col, params=()):
+        """The rows of sql (with {only} where "AND <col> IN (...)" goes), for the chosen photos."""
+        if photo_ids is None:
+            yield from conn.execute(sql.format(only=""), params)
+            return
+        ids = sorted(photo_ids)
+        for k in range(0, len(ids), 900):
+            chunk = ids[k:k + 900]
+            yield from conn.execute(sql.format(only=f"AND {col} IN ({','.join('?' * len(chunk))})"),
+                                    tuple(params) + tuple(chunk))
     q = ("SELECT id, category_id FROM photos WHERE error IS NULL AND sort_later=0 AND discarded=0 "
-         "AND id NOT IN (SELECT photo_id FROM faces WHERE ignored=2)")
-    for pid, cid in conn.execute(q):
-        if photo_ids is None or pid in photo_ids:
-            photo_cat[pid] = cid
+         "AND id NOT IN (SELECT photo_id FROM faces WHERE ignored=2) {only}")
+    for pid, cid in rows(q, "id"):
+        photo_cat[pid] = cid
     both = include_suggestions == "both"      # -> (confirmed only, with suggestions), in one go
     cond = "" if include_suggestions else "AND confirmed=1"
     people_all = {}
-    for pid, person, conf in conn.execute(f"""SELECT photo_id, person_id, MAX(confirmed) FROM faces WHERE ignored=0 {cond}
-                                              AND person_id IS NOT NULL GROUP BY photo_id, person_id
-                                              ORDER BY photo_id, MAX(w*h) DESC"""):
+    for pid, person, conf in rows(f"""SELECT photo_id, person_id, MAX(confirmed) FROM faces WHERE ignored=0 {cond}
+                                      AND person_id IS NOT NULL {{only}} GROUP BY photo_id, person_id
+                                      ORDER BY photo_id, MAX(w*h) DESC""", "photo_id"):
         if pid in photo_cat:
             if both:
                 people_all.setdefault(pid, []).append(person)
             if conf or not both:
                 people.setdefault(pid, []).append(person)
-    for pid, person in conn.execute("""SELECT pp.photo_id, pp.person_id FROM photo_people pp
-                                       JOIN persons p ON p.id=pp.person_id ORDER BY pp.photo_id, p.name"""):
+    for pid, person in rows("""SELECT pp.photo_id, pp.person_id FROM photo_people pp
+                               JOIN persons p ON p.id=pp.person_id WHERE 1 {only} ORDER BY pp.photo_id, p.name""",
+                            "pp.photo_id"):
         if pid in photo_cat:
             for d in ((people, people_all) if both else (people,)):
                 if person not in d.setdefault(pid, []):
                     d[pid].append(person)
-    for pid, fid in conn.execute("SELECT photo_id, folder_id FROM photo_folders"):
+    for pid, fid in rows("SELECT photo_id, folder_id FROM photo_folders WHERE 1 {only}", "photo_id"):
         if pid in photo_cat and fid in tree and tree[fid][2] is not None:
             pf.setdefault(pid, {}).setdefault(tree[fid][2], []).append(fid)
     if both:
