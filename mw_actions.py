@@ -19,6 +19,8 @@ from ui_common import (
 from gallery import FolderButton
 
 
+MAX_BAR_BUTTONS = 300       # (1.45.4) more sections than this: no folder bar (too many to be of use)
+
 class ActionsMixin:
     """Part of MainWindow (see facesort.py): actions on faces and photos (name, confirm, discard, duplicates…)."""
 
@@ -857,6 +859,7 @@ class ActionsMixin:
             self.after_change(regroup=False)
 
     def build_folder_bar(self):
+        """The bar of buttons above the gallery: one per folder section (jump to it, drop onto it)."""
         while self.folder_bar.count():
             w = self.folder_bar.takeAt(0).widget()
             if w:
@@ -865,7 +868,9 @@ class ActionsMixin:
                 w.deleteLater()
         heads = [(i, r) for i, r in enumerate(self.model.rows) if r[0] == 0]
         self._bar_heads = []
-        if not heads:
+        # (1.45.4) not for the duplicate sets ("Set 1".."Set 5400" aren't places to jump to or drop
+        # on) and never thousands of buttons - 5,400 of them froze the window for a minute and a half
+        if not heads or self.view[0] == "dupes" or len(heads) > MAX_BAR_BUTTONS:
             self.folder_bar_area.hide()
             return
         skipped = store.dup_skipped_folders(self.conn)

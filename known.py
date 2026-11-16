@@ -121,10 +121,28 @@ def ehash(blob):
     return hashlib.sha1(bytes(blob)).hexdigest()
 
 
+_COUNTS = {}
+
+
 def counts():
-    with _db() as k:
-        return (k.execute("SELECT COUNT(*) FROM people").fetchone()[0],
-                k.execute("SELECT COUNT(*) FROM samples").fetchone()[0])
+    """(people, samples) remembered - for Settings. (1.45.4) Read-only and kept half a minute: the
+    helpers save who's who in the background, and opening it for writing waited for them."""
+    if _COUNTS.get("v") is not None and time.monotonic() - _COUNTS.get("at", 0) < 30:
+        return _COUNTS["v"]
+    p = path()
+    if not os.path.exists(p):
+        return (0, 0)
+    try:
+        k = sqlite3.connect(f"file:{p}?mode=ro", uri=True, timeout=2)
+        try:
+            v = (k.execute("SELECT COUNT(*) FROM people").fetchone()[0],
+                 k.execute("SELECT COUNT(*) FROM samples").fetchone()[0])
+        finally:
+            k.close()
+    except sqlite3.Error:
+        return _COUNTS.get("v", (0, 0))
+    _COUNTS.update(v=v, at=time.monotonic())
+    return v
 
 
 def references(model="sface"):

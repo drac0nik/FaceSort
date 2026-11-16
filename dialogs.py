@@ -543,6 +543,7 @@ class SettingsDialog(QDialog):
             QMessageBox.warning(self, "Import failed", f"Couldn't read that file:\n{e}")
             return
         self.imported = True
+        known._COUNTS.clear()
         self.set_known_label(*known.counts())
         QMessageBox.information(self, "Imported", f"Imported {n} people. Matching faces will show up as suggestions.")
 

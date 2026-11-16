@@ -153,6 +153,13 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+Duplicates with thousands of sets (1.45.4)
+- The Duplicates group froze for up to a minute and a half with thousands of sets: the bar above
+  the gallery made a button for every set ("Set 1" ... "Set 5400"). The duplicate sets don't get
+  that bar any more, and no view makes more than 300 of those buttons.
+- Opening Settings no longer waits while a helper is saving who's who (the remembered people
+  count is read without locking the file).
+
 Smoother tagging, update from inside (1.45.3)
 - The lists catch up after 2.5 seconds without a click or key (was 1.2), so a run of tagging or
   sorting isn't interrupted by redraws.

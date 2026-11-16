@@ -601,3 +601,18 @@ def test_viewer_decodes_in_background_and_reads_ahead(window, qapp):
         assert any(k[0] == nxt for k in v._img_cache)
         v.go(1)
         assert v.image is not None and not getattr(v, "_loading", False)     # instant: already decoded
+
+
+def test_no_folder_bar_for_duplicate_sets_or_thousands_of_sections(window, monkeypatch):
+    """1.45.4: 5,400 duplicate sets made 5,400 folder bar buttons (a minute and a half frozen)."""
+    import mw_actions
+    w = window
+    w.view = ("dupes", None)
+    w.model.set_rows([(0, f"Set {i}", ("dup", i), 1) for i in range(5)])
+    w.build_folder_bar()
+    assert not w._bar_heads and not w.folder_bar_area.isVisible()
+    monkeypatch.setattr(mw_actions, "MAX_BAR_BUTTONS", 3)
+    w.view = ("category", None)
+    w.model.set_rows([(0, f"Folder {i}", None, 1) for i in range(5)])
+    w.build_folder_bar()
+    assert not w._bar_heads
