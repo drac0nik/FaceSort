@@ -153,6 +153,21 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+Smoother tagging, update from inside (1.45.3)
+- The lists catch up after 2.5 seconds without a click or key (was 1.2), so a run of tagging or
+  sorting isn't interrupted by redraws.
+- The side list's face counts always read the small summary index, never the face rows (which
+  hold fingerprints and thumbnails).
+- Every couple of minutes, when you've paused, a helper folds the database's write-ahead log back
+  into the library if it has grown big (the helpers write a lot; a long log slows every read).
+- Remembered names (right-click, name boxes) are re-read at most every 30 seconds, not each time
+  the helpers save who's who.
+- Any read on the window's thread that takes over 0.3 s is written to facesort.log with how the
+  database ran it - send facesort.log with speed.log if anything still stutters.
+- "Update to x.y.z" downloads and installs again for a FaceSort.exe built with Setup.bat: the
+  update installs FaceSort in its usual place (same library and settings) and the desktop
+  shortcut starts the installed one; later updates then install by themselves.
+
 Scanning on the graphics card helper, FP16 models (1.45.2)
 - Scans now run in the graphics card helper: the face models stay loaded from one scan to the
   next, more photos are decoded at once to keep the card busy, and the window stays smooth while

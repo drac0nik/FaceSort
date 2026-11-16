@@ -88,6 +88,9 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         self.refresh_timer.timeout.connect(self._deferred_refresh)
         self.content_timer = QTimer(self, singleShot=True, interval=5000)     # learn Safe / Suggestive / Explicit
         self.content_timer.timeout.connect(lambda: self.start_content_learning())
+        self.ckpt_timer = QTimer(self, interval=120000)     # (1.45.3) keep the write-ahead log short
+        self.ckpt_timer.timeout.connect(lambda: self.start_checkpoint())
+        self.ckpt_timer.start()
         self.sex_timer = QTimer(self, singleShot=True, interval=5000)         # learn from corrections, once you pause
         self.sex_timer.timeout.connect(lambda: self.start_sex_learning())
         self.pending_timer = QTimer(self, singleShot=True, interval=6000)     # Sort into folders (N)

@@ -120,7 +120,7 @@ class ListsMixin:
         nface, nsugg, best = {}, {}, {}
         for person, fid, conf, q, turned in c.execute(
                 f"""SELECT person_id, id, confirmed, {store.clear_order("")},
-                           ABS(COALESCE(yaw, 0)) > 30 OR ABS(COALESCE(pitch, 0)) > 25 FROM faces
+                           ABS(COALESCE(yaw, 0)) > 30 OR ABS(COALESCE(pitch, 0)) > 25 FROM faces INDEXED BY faces_cover
                     WHERE ignored=0 AND person_id IS NOT NULL"""):
             nface[person] = nface.get(person, 0) + 1
             if not conf:
@@ -319,8 +319,8 @@ class ListsMixin:
         hints_on = self.settings.get("folder_hints", True)
         # (1.45.1: one plain read again - see the people above)
         dirs = self.photo_dirs() if hints_on else {}
-        for cl, fid, q, photo in c.execute(f"""SELECT cluster, id, {store.clear_order("")}, photo_id FROM faces
-                                              WHERE cluster IS NOT NULL AND person_id IS NULL AND ignored=0"""):
+        for cl, fid, q, photo in c.execute(f"""SELECT cluster, id, {store.clear_order("")}, photo_id
+                                              FROM faces INDEXED BY faces_cover WHERE cluster IS NOT NULL AND person_id IS NULL AND ignored=0"""):
             g = groups.setdefault(cl, [0, fid, -1])
             g[0] += 1
             if (q or 0) > g[2]:

@@ -9,6 +9,7 @@ cover different angles, ages and lighting.
 """
 import hashlib
 import os
+import time
 import sqlite3
 from contextlib import contextmanager
 
@@ -506,10 +507,15 @@ def names():
         sig = None
     if sig is not None and _NAMES.get("sig") == sig:
         return list(_NAMES["names"])
+    # (1.45.3) the helpers save who's who often, which used to mean reading every name again (a second
+    # on a big file) at the next right-click: a list under half a minute old is still used - the
+    # library's own people are always current anyway, this only adds people remembered from before
+    if _NAMES.get("names") is not None and time.monotonic() - _NAMES.get("at", 0) < 30:
+        return list(_NAMES["names"])
     with _db() as k:
         got = [r[0] for r in k.execute("SELECT name FROM people ORDER BY name COLLATE NOCASE")]
     if sig is not None:
-        _NAMES.update(sig=sig, names=got)
+        _NAMES.update(sig=sig, names=got, at=time.monotonic())
     return list(got)
 
 

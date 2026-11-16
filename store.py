@@ -1566,8 +1566,8 @@ def unnamed_per_folder(conn, dirs=None):
     """{folder path: number of faces there that nobody has named yet}"""
     dirs = dirs if dirs is not None else photo_dirs(conn)
     out = {}
-    for pid, n in conn.execute("""SELECT photo_id, COUNT(*) FROM faces WHERE person_id IS NULL AND ignored=0
-                                  GROUP BY photo_id"""):
+    for pid, n in conn.execute("""SELECT photo_id, COUNT(*) FROM faces INDEXED BY faces_cover
+                                  WHERE person_id IS NULL AND ignored=0 GROUP BY photo_id"""):
         d = dirs.get(pid, "")
         out[d] = out.get(d, 0) + n
     return out

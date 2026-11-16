@@ -135,6 +135,31 @@ def _x_release():
         pass
 
 
+SLOW_READ = 0.3                 # a read on the window's thread slower than this is written to the log
+_slow_seen = {}
+
+
+def _slow_read(conn, sql, params, dt):
+    """(1.45.3) A slow read on the window's thread: log it once per query, with how SQLite ran it
+    and how big the write-ahead log is - so a slow library can be diagnosed from facesort.log."""
+    key = " ".join(sql.split())[:300]
+    n = _slow_seen.get(key, 0)
+    _slow_seen[key] = n + 1
+    if n not in (0, 10, 100):
+        return
+    try:
+        plan = "; ".join(r[3] for r in sqlite3.Connection.execute(conn, "EXPLAIN QUERY PLAN " + sql, params))
+    except Exception as e:
+        plan = f"(no plan: {e})"
+    wal = ""
+    try:
+        db = sqlite3.Connection.execute(conn, "PRAGMA database_list").fetchone()[2]
+        wal = f", wal {os.path.getsize(db + '-wal') / 1e6:.0f} MB" if os.path.exists(db + "-wal") else ""
+    except Exception:
+        pass
+    _log(f"slow read {dt:.2f} s (x{n + 1}{wal}): {key[:200]} | plan: {plan[:400]}")
+
+
 class WriteGate:
     def __init__(self):
         self.cond = threading.Condition()
@@ -245,7 +270,14 @@ class GatedConnection(sqlite3.Connection):
     # -- statements
     def execute(self, sql, params=()):
         if not is_write(sql):
-            return super().execute(sql, params)
+            if not self.ui:
+                return super().execute(sql, params)
+            t0 = time.monotonic()
+            cur = super().execute(sql, params)
+            dt = time.monotonic() - t0
+            if dt > SLOW_READ:
+                _slow_read(self, sql, params, dt)
+            return cur
         self._enter()
         try:
             return super().execute(sql, params)

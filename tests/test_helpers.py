@@ -199,3 +199,17 @@ def test_your_job_goes_ahead_of_housekeeping(library, qapp, helpers_on):
     while "slow" not in got and time.time() < end:
         pump(qapp, 0.05)
     assert got.get("slow") is False                           # it was asked to stop (carries on another time)
+
+
+def test_slow_reads_are_logged_and_wal_checkpoint(library, monkeypatch):
+    """1.45.3: a slow read on the window's thread goes to the log with its plan; a big write-ahead
+    log is folded back by a helper job."""
+    import dbgate
+    logged = []
+    monkeypatch.setattr(dbgate, "SLOW_READ", -1)
+    monkeypatch.setattr(dbgate, "_log", logged.append)
+    dbgate._slow_seen.clear()
+    library.conn.execute("SELECT COUNT(*) FROM faces WHERE ignored=0").fetchone()
+    assert logged and "slow read" in logged[0] and "plan:" in logged[0]
+    r = jobfuncs.checkpoint_job(library.conn)
+    assert r is not None and "wal_mb" in r

@@ -41,7 +41,7 @@ class JobsMixin:
         if self.busy():
             return True
         for name in ("regroup_worker", "remember_worker", "dup_worker", "copies_worker", "mis_worker",
-                     "clip_worker", "subjects_worker", "stats_worker", "clarity_worker", "bodies_worker", "attrs_worker", "sex_worker",
+                     "clip_worker", "subjects_worker", "ckpt_worker", "stats_worker", "clarity_worker", "bodies_worker", "attrs_worker", "sex_worker",
                      "content_worker"):
             wk = getattr(self, name, None)
             if wk is not None and wk.isRunning():
@@ -124,13 +124,23 @@ class JobsMixin:
         notes = info.get("notes", "").strip()
         box.setInformativeText(("What's new:\n\n" + notes[:1500] + ("…" if len(notes) > 1500 else "")) if notes else "")
         installed = updater.is_installed()
-        go = box.addButton("Download and install" if installed else "Open the download page", QMessageBox.AcceptRole)
+        built = getattr(sys, "frozen", False) and not installed      # a FaceSort.exe made by Setup.bat
+        if built:
+            # (1.45.3) a Setup.bat build updates from inside too: the installer puts the new version in
+            # FaceSort's usual place and the desktop shortcut points there; the library and settings
+            # are shared, so nothing else changes - and from then on updates install by themselves
+            notes_extra = ("\n\nThis copy of FaceSort was built with Setup.bat. The update installs FaceSort in its "
+                           "usual place (your library and settings stay exactly as they are) and the desktop "
+                           "shortcut will start the installed one - later updates then install by themselves.")
+            box.setInformativeText(box.informativeText() + notes_extra)
+        go = box.addButton("Download and install" if (installed or built) else "Open the download page",
+                           QMessageBox.AcceptRole)
         box.addButton("Later", QMessageBox.RejectRole)
         box.exec()
         if box.clickedButton() is not go:
             return
-        if not installed:
-            # (running from source / a Setup.bat build: the installer would make a second copy)
+        if not (installed or built):
+            # (running from the source files with Python: nothing to install over)
             open_file(info["page"])
             return
 
@@ -197,6 +207,18 @@ class JobsMixin:
         self.content_worker.ok.connect(lambda n: n and (self.refresh_timer.start(), self.safe_view_changed()))
         self.content_worker.failed.connect(lambda tb: log(tb))
         self.content_worker.start_background(self.settings)
+
+    def start_checkpoint(self):
+        """Every couple of minutes, when you've paused: fold a big write-ahead log back into the library."""
+        if getattr(self, "_closing", False) or time.monotonic() - getattr(self, "_last_input", 0) < 5:
+            return
+        w = getattr(self, "ckpt_worker", None)
+        if w and w.isRunning():
+            return
+        self.ckpt_worker = bg_job(self.settings, jobfuncs.checkpoint_job)
+        self.ckpt_worker.ok.connect(lambda r: r and r.get("frames") and log(f"write-ahead log: {r}"))
+        self.ckpt_worker.failed.connect(lambda tb: log(tb))
+        self.ckpt_worker.start_background(self.settings)
 
     def start_subjects(self):
         """No people's sub-groups (food, landscapes…) again, once more photos have a CLIP description."""
@@ -733,7 +755,7 @@ class JobsMixin:
                                getattr(self, "clarity_worker", None), getattr(self, "bodies_worker", None),
                                getattr(self, "dest_worker", None), getattr(self, "attrs_worker", None),
                                getattr(self, "sex_worker", None), getattr(self, "content_worker", None),
-                               getattr(self, "subjects_worker", None),
+                               getattr(self, "subjects_worker", None), getattr(self, "ckpt_worker", None),
                                getattr(self, "content_learn_worker", None))
                    if w is not None]
         for w in workers:
