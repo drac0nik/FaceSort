@@ -397,13 +397,16 @@ class ActionsMixin:
 
     def photo_meta(self):
         """{path: (size, date taken, date downloaded/created)} for sorting (one read per change)."""
-        key = (self._data_gen, id(self.conn), self.conn.total_changes)
+        # (1.45.1) re-read only when the photos themselves changed - not after every tag or name
+        if self.settings.get("grid_sort") == "downloaded":
+            store.fill_created(self.conn)
+        sig = tuple(self.conn.execute("""SELECT COUNT(*), MAX(id), TOTAL(size), TOTAL(taken), TOTAL(created),
+                                         TOTAL(width), TOTAL(height), TOTAL(LENGTH(path)) FROM photos""").fetchone())
+        key = (self._data_gen, id(self.conn)) + sig
         if getattr(self, "_meta_key", None) != key:
-            if self.settings.get("grid_sort") == "downloaded":
-                store.fill_created(self.conn)
             self._meta = {p: (sz or 0, tk, cr, w or 0, h or 0) for p, sz, tk, cr, w, h in
                           self.conn.execute("SELECT path, size, taken, created, width, height FROM photos")}
-            self._meta_key = (self._data_gen, id(self.conn), self.conn.total_changes)
+            self._meta_key = key
         return self._meta
 
     def smart_kinds(self):

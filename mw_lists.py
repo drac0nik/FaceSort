@@ -114,17 +114,20 @@ class ListsMixin:
             icon_wait.append((it, face_id))
 
         # people, with counts (done as a few grouped queries: quick on big libraries)
-        # (1.44.2: counted by the database, not row by row in Python - several times quicker, and
-        # the window isn't held up while it reads)
+        # (1.45.1: back to one plain read, counted here. Asking the database for each person's best
+        # face in the same query was quick on a test library, but on some libraries SQLite planned it
+        # as a scan of every face per person - almost a minute. A plain read is always quick.)
         nface, nsugg, best = {}, {}, {}
-        for person, n, ns, fid in c.execute(
-                f"""SELECT f.person_id, COUNT(*), SUM(f.confirmed=0),
-                           (SELECT b.id FROM faces b WHERE b.person_id=f.person_id AND b.ignored=0
-                            ORDER BY b.confirmed DESC,            -- the icon: a confirmed, front-on, clear face
-                                     (ABS(COALESCE(b.yaw, 0)) > 30 OR ABS(COALESCE(b.pitch, 0)) > 25) ASC,
-                                     COALESCE({store.clear_order("b.")}, 0) DESC LIMIT 1)
-                    FROM faces f WHERE f.ignored=0 AND f.person_id IS NOT NULL GROUP BY f.person_id"""):
-            nface[person], nsugg[person], best[person] = n, ns or 0, (None, fid)
+        for person, fid, conf, q, turned in c.execute(
+                f"""SELECT person_id, id, confirmed, {store.clear_order("")},
+                           ABS(COALESCE(yaw, 0)) > 30 OR ABS(COALESCE(pitch, 0)) > 25 FROM faces
+                    WHERE ignored=0 AND person_id IS NOT NULL"""):
+            nface[person] = nface.get(person, 0) + 1
+            if not conf:
+                nsugg[person] = nsugg.get(person, 0) + 1
+            key = (conf, not turned, q or 0)      # the icon: a confirmed, front-on, clear face
+            if person not in best or key > best[person][0]:
+                best[person] = (key, fid)
         ntag = dict(c.execute("""SELECT pp.person_id, COUNT(*) FROM photo_people pp JOIN photos x ON x.id=pp.photo_id
                                  WHERE x.sort_later=0 AND NOT EXISTS (SELECT 1 FROM faces f WHERE f.photo_id=pp.photo_id
                                  AND f.person_id=pp.person_id AND f.ignored=0) GROUP BY pp.person_id"""))
@@ -314,22 +317,18 @@ class ListsMixin:
 
         groups, gdirs = {}, {}
         hints_on = self.settings.get("folder_hints", True)
-        # (1.45: grouped by the database - the window doesn't walk every face)
-        for cl, n, fid in c.execute(f"""SELECT f.cluster, COUNT(*),
-                                          (SELECT b.id FROM faces b WHERE b.cluster=f.cluster AND b.person_id IS NULL
-                                           AND b.ignored=0 ORDER BY COALESCE({store.clear_order("b.")}, 0) DESC LIMIT 1)
-                                       FROM faces f WHERE f.cluster IS NOT NULL AND f.person_id IS NULL AND f.ignored=0
-                                       GROUP BY f.cluster"""):
-            groups[cl] = [n, fid, 0]
-        if hints_on:
-            dirs = self.photo_dirs()
-            for cl, photo, n in c.execute("""SELECT cluster, photo_id, COUNT(*) FROM faces
-                                             WHERE cluster IS NOT NULL AND person_id IS NULL AND ignored=0
-                                             GROUP BY cluster, photo_id"""):
-                if groups.get(cl, (0,))[0] >= 2:
-                    d = gdirs.setdefault(cl, {})
-                    pd = dirs.get(photo, "")
-                    d[pd] = d.get(pd, 0) + n
+        # (1.45.1: one plain read again - see the people above)
+        dirs = self.photo_dirs() if hints_on else {}
+        for cl, fid, q, photo in c.execute(f"""SELECT cluster, id, {store.clear_order("")}, photo_id FROM faces
+                                              WHERE cluster IS NOT NULL AND person_id IS NULL AND ignored=0"""):
+            g = groups.setdefault(cl, [0, fid, -1])
+            g[0] += 1
+            if (q or 0) > g[2]:
+                g[1], g[2] = fid, q or 0
+            if hints_on:
+                d = gdirs.setdefault(cl, {})
+                pd = dirs.get(photo, "")
+                d[pd] = d.get(pd, 0) + 1
 
         unnamed = self.unnamed_counts() if hints_on else {}
 

@@ -2436,6 +2436,8 @@ def file_created(path):
 def fill_created(conn):
     """Look up 'date created' for photos scanned before it was recorded."""
     rows = conn.execute("SELECT id, path FROM photos WHERE created IS NULL AND error IS NULL").fetchall()
+    if not rows:
+        return
     conn.executemany("UPDATE photos SET created=? WHERE id=?", [(file_created(p) or 0, i) for i, p in rows])
     conn.commit()
 

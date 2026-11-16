@@ -153,6 +153,14 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+Fix for long freezes (1.45.1)
+- 1.45 could freeze for almost a minute after every change on some big libraries: the side list
+  asked the database for each group's best face in a way SQLite sometimes ran as a scan of every
+  face, once per group. It's back to one plain read (always quick). The people list too.
+- Photo details for sorting are re-read only when the photos themselves change, not after every
+  tag or name.
+- Closing FaceSort on Windows no longer occasionally logs a crash on the way out.
+
 Helper processes (1.45)
 - FaceSort's background work now runs in separate helper processes instead of background threads
   inside the window. Python runs one thread's code at a time, so before, however gently the

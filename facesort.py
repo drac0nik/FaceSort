@@ -857,4 +857,15 @@ if __name__ == "__main__":
             f.flush()
         except Exception:
             pass
+    if sys.platform == "win32":
+        # (1.45.1) Windows: end the process outright. os._exit still lets every loaded library
+        # (Qt, ONNX Runtime, OpenCV) run its unload code while background threads exist, and one of
+        # them occasionally crashed on the way out ("access violation" / "Aborted" in the log after
+        # a normal close). Everything is saved by now.
+        try:
+            import ctypes
+            k = ctypes.windll.kernel32
+            k.TerminateProcess(k.GetCurrentProcess(), int(code or 0))
+        except Exception:
+            pass
     os._exit(code or 0)
