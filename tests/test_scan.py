@@ -93,6 +93,30 @@ def test_tagged_file_leaves_unassociated_and_moves_with_the_photos(lib, tmp_path
     assert open(moved, "rb").read() == b"x" * 100 and not os.path.exists(os.path.splitext(moved)[0] + ".xmp")
 
 
+def test_other_files_go_with_a_folders_photos_however_it_was_added(lib, tmp_path):
+    """(1.50.4) A folder added in Settings (scanned without "other files"): once all its photos are
+    tagged and moved, its notes, documents and archives go with them - like a drop's do. A folder
+    with a photo staying behind keeps its other files."""
+    conn, L = lib
+    jobs.scan_library(conn, store.load_settings())                  # (other files not recorded)
+    alice = store.get_or_create_person(conn, "Alice")
+    trip = [r[0] for r in conn.execute("SELECT id FROM photos WHERE path LIKE '%Trip%'")]
+    store.tag_photos(conn, trip, alice)
+    conn.commit()
+    dest = str(tmp_path / "Sorted")
+    stats = jobs.export_folders(conn, dest, move=True, cleanup=False)
+    alice_dir = os.path.join(dest, "~Uncategorized", "Alice")
+    got = {os.path.relpath(os.path.join(r, f), alice_dir) for r, _d, fs in os.walk(alice_dir) for f in fs}
+    assert os.path.join("~files", "itinerary.pdf") in got and os.path.join("~files", "song.mp3") in got
+    assert os.path.join("~archives", "backup.zip") in got, got
+    assert not os.path.exists(os.path.join(L, "Trip", "itinerary.pdf"))
+    assert os.path.exists(os.path.join(L, "Trip", "desktop.ini"))           # system files stay
+    assert os.path.exists(os.path.join(L, "Trip", ".hidden-notes.txt"))     # (hidden ones too, as with a drop)
+    assert os.path.exists(os.path.join(L, "Old backups", "c.pdf"))          # c.jpg isn't tagged: stays
+    assert stats.get("extra_files") == 3
+    assert not store.drop_files(conn)
+
+
 def test_new_only_and_verify_only(lib):
     conn, L = lib
     jobs.scan_library(conn, store.load_settings())

@@ -153,6 +153,14 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.50.4
+- Other files (notes, links, documents, archives…) now go with a folder's photos however the
+  folder was added - in Settings, with Add folder…, by dropping it, or added to it later - not only
+  with a drop. When Sort into folders moves ALL the photos out of a folder, its other files go with
+  them (into ~files / ~links / ~archives in the person's folder, like a drop's). A folder with a
+  photo staying behind keeps its other files. A photo's own .xmp / Takeout .json / .aae / .thm
+  travel with it as before; system and hidden files stay.
+
 1.50.3
 - Tagging without waiting: while you work in the gallery, the side lists' numbers are read in the
   background about every half second, and the lists are swapped in at your next short pause

@@ -1113,9 +1113,23 @@ def export_folders(conn, dest, include_suggestions=False, move=False,
             for f in fl:
                 if f not in lst:
                     lst.append(f)
+    # (1.50.4) other files (notes, links, documents…) in a folder all of whose photos are being moved
+    # out - however the folder was added (Settings, Add folder…, a drop, or added to later) - go with
+    # them, like the files that come with a drop
+    other_err = None
+    if move and only is None:
+        try:
+            found = discover_other_files(conn, plan, dest, dir_dests)
+            if found:
+                store.add_drop_files(conn, None, found)
+                conn.commit()
+        except Exception as e:
+            other_err = ("other files", str(e))
     total = sum(len(v[1]) for v in plan.values())
     stats = {"copied": 0, "moved": 0, "skipped": 0, "errors": [], "total": total,
              "discarded": len(discarded), "log": None, "webp": 0, "folders_cleaned": 0}
+    if other_err:
+        stats["errors"].append(other_err)
     log_rows = []
     done = 0
     for pid, (src, folders) in sorted(plan.items(), key=lambda kv: kv[1][0]):
@@ -1228,6 +1242,48 @@ def export_folders(conn, dest, include_suggestions=False, move=False,
         except OSError:
             pass
     return stats
+
+
+def discover_other_files(conn, plan, dest, dir_dests):
+    """[(path, kind, None)]: the non-photo files in the folders whose photos are ALL leaving
+    (none stays behind), outside the destination, not recorded yet. A photo's own extra files
+    (.xmp, Takeout .json, .aae, .thm), system files and hidden files aren't included."""
+    dest_n = os.path.normcase(os.path.abspath(dest)).rstrip("\\/")
+    planned, real = {}, {}
+    for path, _fl in plan.values():
+        d = os.path.dirname(path)
+        k = os.path.normcase(d)
+        planned[k] = planned.get(k, 0) + 1
+        real.setdefault(k, d)
+    have = {}
+    for (path,) in conn.execute("SELECT path FROM photos WHERE error IS NULL AND COALESCE(is_other, 0)=0"):
+        k = os.path.normcase(os.path.dirname(path))
+        if k in dir_dests:
+            have[k] = have.get(k, 0) + 1
+    known = {os.path.normcase(p) for (p,) in conn.execute("SELECT path FROM drop_files")}
+    out = []
+    for k in dir_dests:
+        if k == dest_n or k.startswith(dest_n + os.sep) or planned.get(k, 0) < have.get(k, 0):
+            continue
+        d = real.get(k, k)
+        try:
+            names = os.listdir(d)
+        except OSError:
+            continue
+        def media(n):
+            ext = os.path.splitext(n)[1].lower()
+            return ext in engine.IMAGE_EXTS or ext in engine.VIDEO_EXTS
+        media_lower = [n.lower() for n in names if media(n)]
+        for n in names:
+            p = os.path.join(d, n)
+            if media(n) or n.lower() in companions.JUNK or n.startswith((".", "~")) or not os.path.isfile(p):
+                continue
+            if n.lower().endswith(".xmp") or companions.is_companion(p, media_lower):
+                continue
+            if os.path.normcase(p) in known:
+                continue
+            out.append((p, companions.kind_of(p), None))
+    return out
 
 
 def drop_file_folders(path, root, dir_dests):
