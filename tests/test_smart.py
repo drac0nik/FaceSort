@@ -329,3 +329,32 @@ def test_location_buckets_only_unsorted_and_ctrl_a(window, qapp):
     assert len(t.selectedItems()) <= 1
     n = sum(1 for r in w.model.rows if r[0])
     assert len({i.row() for i in w.grid.selectionModel().selectedIndexes()}) >= n
+
+
+def test_search_narrows_smart_groups_by_file_name(window, qapp):
+    """(1.50.5) Typing in the search box: people and folders are filtered as before; in Smart Groups
+    the groups stay listed and the gallery shows only pictures whose file / folder name matches."""
+    import os
+    from conftest import pump
+    from ui_common import key_of
+    w, c = window, window.conn
+    w.view = ("unknown", None)
+    w.refresh_grid()
+    rows = [r for r in w.model.rows if r[0]]
+    assert len(rows) >= 2
+    target = os.path.basename(rows[0][1])
+    word = os.path.splitext(target)[0].lower()
+    expect = {r[0] for r in rows if word in w.match_name(r[1])}
+    w.search.setText(word.upper())
+    pump(qapp, 0.5)
+    got = {r[0] for r in w.model.rows if r[0]}
+    assert got == expect and len(got) < len(rows)
+    assert "Showing" in w.subtitle.text()
+    hidden2 = [it for it in w.iter_items() if it.treeWidget() is w.tree2 and it.isHidden()]
+    assert not [it for it in hidden2 if key_of(it)]                 # Smart Groups stay listed
+    people = [it for it in w.iter_items() if it.treeWidget() is w.tree and key_of(it)
+              and key_of(it)[0] == "person"]
+    assert any(it.isHidden() for it in people)                    # people are filtered as before
+    w.search.setText("")
+    pump(qapp, 0.5)
+    assert len([r for r in w.model.rows if r[0]]) == len(rows)

@@ -474,18 +474,73 @@ class GalleryMixin:
     def filter_tree(self, text):
         t = text.strip().lower()
 
-        def walk(it):
+        def walk(it, keep):
             shown = False
             for j in range(it.childCount()):
                 ch = it.child(j)
-                sub = walk(ch)
+                sub = walk(ch, keep)
                 name = ch.data(0, Qt.UserRole + 1)
-                vis = (not t or sub or (name is not None and t in name)) and not ch.data(0, Qt.UserRole + 11)
+                vis = (not t or keep or sub or (name is not None and t in name)) and not ch.data(0, Qt.UserRole + 11)
                 ch.setHidden(not vis)
                 shown = shown or vis
             return shown
         for top in self.top_items():
-            walk(top)
+            # (1.50.5) the Smart Groups stay listed: there, what you type narrows the gallery to the
+            # photos whose file or folder name matches (see search_filter_rows)
+            walk(top, top.treeWidget() is self.tree2)
+
+    def search_changed(self, text):
+        self.filter_tree(text)
+        if self.view and self.view[0] in self.search_filter_kinds():
+            if getattr(self, "_search_timer", None) is None:
+                from PySide6.QtCore import QTimer
+                self._search_timer = QTimer(self, singleShot=True, interval=250)
+                self._search_timer.timeout.connect(lambda: self.refresh_grid(keep_selection=True))
+            self._search_timer.start()
+
+    def search_filter_kinds(self):
+        """(1.50.5) Galleries the search box narrows by file / folder name: the Smart Groups'."""
+        return self.smart_kinds() - {"dupes", "same", "errors"}
+
+    def search_words(self):
+        return [w for w in self.search.text().lower().split() if w]
+
+    def match_name(self, path):
+        """The part of a photo's path the search looks at: its folders inside the library folder
+        it's in, and its file name."""
+        p = os.path.normcase(path)
+        best = ""
+        for root in list(self.settings.get("folders") or []) + list(self.settings.get("imported") or []) + \
+                [self.settings.get("library_root") or ""]:
+            if not root:
+                continue
+            r = os.path.normcase(root).rstrip("\\/") + os.sep
+            if p.startswith(r) and len(r) > len(best):
+                best = r
+        return p[len(best):].lower() if best else p.lower()
+
+    def search_filter_rows(self, rows):
+        """Only the pictures whose file or folder name has every word you typed (headings kept
+        when something under them is)."""
+        words = self.search_words()
+        if not words:
+            self._search_shown = None
+            return rows
+        out, head, total, shown = [], None, 0, 0
+        for r in rows:
+            if not r[0]:
+                head = r
+                continue
+            total += 1
+            name = self.match_name(r[1] or "")
+            if all(w in name for w in words):
+                if head is not None:
+                    out.append(head)
+                    head = None
+                out.append(r)
+                shown += 1
+        self._search_shown = (shown, total)
+        return out
 
     def leave_viewer_for_list(self):
         """You picked something else on the left while a photo was open: back to the gallery
@@ -1065,6 +1120,13 @@ class GalleryMixin:
         else:
             self.extra_box.hide()
         self.zoom_row.setVisible(kind != "errors")
+        self._search_shown = None
+        if kind in self.search_filter_kinds() and self.search_words():
+            rows = self.search_filter_rows(rows)    # (1.50.5) narrowed by what's typed in the search box
+            if self._search_shown:
+                shown, total = self._search_shown
+                self.subtitle.setText(f"Showing {shown:,} of {total:,} whose file or folder name has "
+                                      f"“{self.search.text().strip()}”  ·  " + self.subtitle.text())
         if kind in self.smart_kinds() and kind not in ("dupes", "errors", "shoot", "same"):
             rows = self.split_by_folder(rows)  # Smart Groups: one section per folder path
         if kind in ("smart", "smart_sugg", "smart_preview", "same"):

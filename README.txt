@@ -153,6 +153,13 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.50.5
+- The search box at the top of the side panel: People and Folders are filtered by name as before;
+  in Smart Groups the groups stay listed, and the gallery shows only the pictures whose file name
+  or folder names (inside the library folder they're in) have every word you typed - "alice" finds
+  alice_beach_03.jpg and anything in a folder called Alice. The heading says how many of how many
+  are shown. Clear the box to see them all again.
+
 1.50.4
 - Other files (notes, links, documents, archives…) now go with a folder's photos however the
   folder was added - in Settings, with Add folder…, by dropping it, or added to it later - not only
