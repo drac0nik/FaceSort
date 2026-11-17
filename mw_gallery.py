@@ -292,7 +292,7 @@ class GalleryMixin:
 
     def add_buckets(self, section, mode):
         """Lower list sorted by date taken / date created / original location instead of by face."""
-        buckets = store.photo_buckets(self.conn, mode)
+        buckets = store.photo_buckets(self.conn, mode, self.sorted_photo_sql())
         title = {"taken": "To sort by date taken", "created": "To sort by date created",
                  "location": "To sort by original location"}[mode]
         sec = section(f"{title} ({len(buckets)})", tree=self.tree2)
@@ -965,7 +965,7 @@ class GalleryMixin:
             self.set_buttons([("Keep the best of every set…", self.keep_best_all, True)] if sets else [])
         elif kind == "bucket":
             mode, _, key = ident.partition("|")
-            b = store.photo_buckets(c, mode).get(key, ["", 0, []])
+            b = store.photo_buckets(c, mode, self.sorted_photo_sql()).get(key, ["", 0, []])
             pids = b[2]
             rows = []
             for i in range(0, len(pids), 900):
@@ -977,7 +977,7 @@ class GalleryMixin:
             rows.sort(key=lambda r: r[1])
             self.title.setText(b[0] or "?")
             self.subtitle.setText(f"{len(pids):,} photo{'s' if len(pids) != 1 else ''} still to sort"
-                                  + (f" · {key}" if mode == "location" else ""))
+                                  + (f" · {key} · nobody tagged, no folder yet" if mode == "location" else ""))
             self.set_buttons([])
         elif kind in ("later_person", "later_group", "later_other", "later_nofaces"):
             lf = self.LATER_FACE

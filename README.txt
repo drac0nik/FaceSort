@@ -153,6 +153,12 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.50.1
+- Smart Groups sorted by Original location: only photos still to sort - nobody tagged on them, no
+  folder, not in your sorted library. (A group photo with one person named no longer shows up
+  there.) Date taken / Date created are as before.
+- Ctrl+A in a side list selects everything in the gallery, not every row of the list.
+
 Quicker side lists (1.50)
 - After a change, the numbers the left-hand lists need (each person's faces, the unnamed groups,
   the Smart Groups counts…) are read on a background thread first; the window keeps responding,

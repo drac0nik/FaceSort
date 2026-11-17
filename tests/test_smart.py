@@ -295,3 +295,37 @@ def test_view_moves_to_next_not_a_group(window, qapp):
     w.done_checking(b1)
     assert w.view[0] not in ("group",), w.view
     assert key_of(w.current_item()) == tuple(w.view)
+
+
+def test_location_buckets_only_unsorted_and_ctrl_a(window, qapp):
+    """(1.50.1) By original location: only photos nobody is tagged on and with no folder.
+    Ctrl+A in a side list selects the gallery, not the list."""
+    import os
+    import numpy as np
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QKeyEvent
+    from PySide6.QtCore import QEvent
+    from conftest import add_photo, unit
+    w, c = window, window.conn
+    d = os.path.join(str(w.lib.dd.lib), "Loc")
+    rng = np.random.default_rng(81)
+    loose = add_photo(c, os.path.join(d, "loose.jpg"), [unit(rng.normal(size=128))], seed=8101)
+    tagged = add_photo(c, os.path.join(d, "tagged.jpg"), [unit(rng.normal(size=128)), unit(rng.normal(size=128))],
+                       seed=8102)
+    alice = c.execute("SELECT id FROM persons WHERE name='Alice'").fetchone()[0]
+    f1 = c.execute("SELECT id FROM faces WHERE photo_id=? ORDER BY id", (tagged,)).fetchone()[0]
+    c.execute("UPDATE faces SET person_id=?, confirmed=1 WHERE id=?", (alice, f1))   # one face named, one not
+    c.commit()
+    b = store.photo_buckets(c, "location", w.sorted_photo_sql())
+    ids = {p for _l, _o, pids in b.values() for p in pids}
+    assert loose in ids and tagged not in ids
+    assert tagged in {p for _l, _o, pids in store.photo_buckets(c, "taken").values() for p in pids}
+    # Ctrl+A on a side list
+    w.view = ("person", alice)
+    w.refresh_grid()
+    t = w.tree
+    t.setFocus()
+    t.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_A, Qt.ControlModifier))
+    assert len(t.selectedItems()) <= 1
+    n = sum(1 for r in w.model.rows if r[0])
+    assert len({i.row() for i in w.grid.selectionModel().selectedIndexes()}) >= n

@@ -2535,15 +2535,18 @@ def fill_created(conn):
     conn.commit()
 
 
-def photo_buckets(conn, mode):
+def photo_buckets(conn, mode, sorted_sql=None):
     """Photos still to sort, grouped for the lower list: {key: (label, sort key, [photo ids])}.
-    mode: 'taken' / 'created' (by month) or 'location' (by folder)."""
+    mode: 'taken' / 'created' (by month) or 'location' (by folder). sorted_sql: a condition for
+    "already sorted" (someone confirmed or tagged on it, a folder, in the library) - (1.50.1) by
+    original location, those photos are left out altogether, not just their tagged faces."""
     import datetime
     if mode == "created":
         fill_created(conn)
     col = {"taken": "ph.taken", "created": "ph.created", "location": "ph.path"}[mode]
+    where = UNSORTED_SQL + (f" AND NOT {sorted_sql}" if sorted_sql and mode == "location" else "")
     out = {}
-    for pid, v in conn.execute(f"SELECT ph.id, {col} FROM photos ph WHERE {UNSORTED_SQL}"):
+    for pid, v in conn.execute(f"SELECT ph.id, {col} FROM photos ph WHERE {where}"):
         if mode == "location":
             key = os.path.dirname(v)
             label, order = (os.sep.join(key.split(os.sep)[-2:]) or key), key.casefold()

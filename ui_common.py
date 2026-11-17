@@ -14,7 +14,7 @@ import jobs
 import known
 import store
 from PySide6.QtCore import QObject, QSize, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPixmap
+from PySide6.QtGui import QColor, QKeySequence, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QLabel, QMenu, QSizePolicy, QStyle, QToolButton, QTreeWidget)
 from icons import app_icon
@@ -29,7 +29,7 @@ try:                                     # video playback (Qt's own player, FFmp
 except Exception:
     MEDIA_OK = False
 SPEEDS = (0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 4.0)
-APP_VERSION = "1.50.0"
+APP_VERSION = "1.50.1"
 IDLE_REDRAW = 2.5       # seconds without a key / click before the sidebar and lists are fully redrawn (1.45.3: was 1.2)
 DETECTOR_VERSION = 3   # bump when detection improves, so photos with no faces get re-checked
 SUGGEST = QColor(232, 160, 32)
@@ -265,6 +265,18 @@ class SideTree(QTreeWidget):
         self.setDragDropMode(QAbstractItemView.DragDrop if drag else QAbstractItemView.NoDragDrop)
         self.setDefaultDropAction(Qt.MoveAction)
         self._drag = None
+
+    def keyPressEvent(self, e):
+        # (1.50.1) Ctrl+A never selects the whole side list: it selects everything in the gallery
+        if e.matches(QKeySequence.SelectAll):
+            win = self.window()
+            grid = getattr(win, "grid", None)
+            if grid is not None:
+                grid.setFocus()
+                grid.selectAll()
+            e.accept()
+            return
+        super().keyPressEvent(e)
 
     def mousePressEvent(self, e):
         # pressing on a row that isn't selected yet and dragging = drag a box over several rows;
