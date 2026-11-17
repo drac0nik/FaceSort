@@ -71,7 +71,8 @@ class EngineMixin:
         self._bg_queue = [self.start_stats, self.start_clarity, self.start_copies_check, self.start_misplaced,
                           self.start_clip_index, self.start_bodies, self.offer_folder_cleanup, self.start_update_check,
                           self.offer_dark_look, self.offer_face_details, self.start_face_details,
-                          self.start_sex_learning, self.offer_content, self.start_content]
+                          self.start_sex_learning, self.offer_content, self.start_content, self.offer_pose,
+                          self.start_pose]
         self._bg_timer = QTimer(self)
         self._bg_timer.timeout.connect(self.bg_tick)
         QTimer.singleShot(2500, lambda: None if getattr(self, "_closing", False) else self._bg_timer.start(1200))
@@ -438,6 +439,40 @@ class EngineMixin:
         if not self.run_job("contentdl", lambda conn, progress, cancelled: content.download(progress, cancelled),
                             on_done=got):
             QTimer.singleShot(30000, self.get_content_models)
+
+    def offer_pose(self):
+        """Once (1.46): offer pose reading (RTMPose) - poses as tags, in rules and smart albums."""
+        import pose
+        if self.settings.get("pose_on") is not None:
+            return
+        if pose.ready():
+            self.settings["pose_on"] = True
+            store.save_settings(self.settings)
+            return
+        if os.environ.get("FACESORT_NO_PROMPT"):
+            return
+        yes = QMessageBox.question(
+            self, "Poses",
+            "New: FaceSort can read how the people in your photos are posed - Standing, Sitting, Lying down, "
+            "Kneeling, Arms raised, Facing away, Full body, Close-up. They're offered as tags beside each photo, "
+            "and rules and searches can use them.\n\n"
+            f"This needs a pose model (RTMPose by OpenMMLab, Apache licence, about {pose.DOWNLOAD_MB} MB) and the "
+            "person finder same-shoot uses (about 36 MB, if you haven't got it), once. They work on this PC only.\n\n"
+            "Download them now? (Later: Settings > Scanning > Content.)") == QMessageBox.Yes
+        self.settings["pose_on"] = yes
+        store.save_settings(self.settings)
+        if yes:
+            self.get_pose_models()
+
+    def get_pose_models(self):
+        import pose
+
+        def got(ok):
+            if ok and pose.ready():
+                self.start_pose()
+        if not self.run_job("posedl", lambda conn, progress, cancelled: pose.download(progress, cancelled),
+                            on_done=got):
+            QTimer.singleShot(30000, self.get_pose_models)
 
     def offer_face_details(self):
         """Once (1.42): offer the two small face-detail models (Men / Unsure groups, head angle)."""

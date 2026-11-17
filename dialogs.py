@@ -255,6 +255,12 @@ class SettingsDialog(QDialog):
         self.cb_content.setToolTip("NudeNet (AGPL) and an NSFW classifier (MIT) read each photo once on this PC: how "
                                    "explicit it is, what tags fit it, and whether anyone's in it.")
         lay.addWidget(self.cb_content)
+        import pose as _pose
+        self.cb_pose = QCheckBox(f"Poses: Standing, Sitting, Lying down… as tags (RTMPose, about {_pose.DOWNLOAD_MB + 36} MB once)")
+        self.cb_pose.setChecked(bool(self.s.get("pose_on")))
+        self.cb_pose.setToolTip("A pose model (RTMPose by OpenMMLab, Apache licence) marks 17 points on each person, on "
+                                "this PC; FaceSort works out the poses from them. Offered as tags, and rules can use them.")
+        lay.addWidget(self.cb_pose)
         rr = QHBoxLayout()
         dark_again = QPushButton("Look again in dark photos")
         dark_again.setToolTip("Find the dark photos scanned before this existed and look at them again.\n"
@@ -454,6 +460,19 @@ class SettingsDialog(QDialog):
         lay.addWidget(self.cb_safe_sugg)
         self.tags_edit = TagListEditor(tag_list(self.s))
         lay.addWidget(self.tags_edit)
+        heading("Rules for new photos", lay)
+        from rules_ui import RulesEditor
+        win = self.parent()
+        try:
+            person_names = win.people_by_recent()
+            folder_names = [" › ".join(store.category_paths(win.conn).get(k, [])) or v[0]
+                       for k, v in store.folder_tree(win.conn).items() if v[2] is None]
+            tag_names = [r[0] for r in win.conn.execute("SELECT name FROM albums ORDER BY tag DESC, name")]
+        except Exception:
+            person_names, folder_names, tag_names = [], [], []
+        self.rules_edit = RulesEditor(win.conn, self.s, person_names, sorted(set(f for f in folder_names if f)),
+                                      tag_names)
+        lay.addWidget(self.rules_edit)
         lay = scan
         heading("Videos", lay)
         vl = QLabel("Faces are looked for in 7 moments spread through each video; each person is kept once. "
@@ -624,6 +643,7 @@ class SettingsDialog(QDialog):
         s["same_shoot"] = self.cb_shoot.isChecked()
         s["face_details"] = self.cb_details.isChecked()
         s["content_on"] = self.cb_content.isChecked()
+        s["pose_on"] = self.cb_pose.isChecked()
         s["background_cpu"] = "gentle" if self.cb_gentle.isChecked() else "full"
         s["tattoo_min_inliers"] = self.tat.value()
         s["keywords_all_people"] = self.cb_kw.isChecked()
@@ -644,6 +664,7 @@ class SettingsDialog(QDialog):
         s["keep_modified_date"] = self.cb_mtime.isChecked()
         s["generic_names"] = self.generic.result_list()
         s["tag_list"] = self.tags_edit.result_list()
+        self.rules_edit.save_to(s)
         s["tag_column"] = self.cb_tagcol.isChecked()
         s["safe_suggestive"] = self.cb_safe_sugg.isChecked()
         s["settings_tab"] = self.tabs.currentIndex()       # opens on the same tab next time
@@ -846,7 +867,8 @@ class TagListEditor(GenericNamesEditor):
     @property
     def DEFAULTS(self):
         import content
-        return content.CONTENT_TAGS + content.SCENE_TAGS
+        import pose
+        return content.CONTENT_TAGS + content.SCENE_TAGS + pose.POSES
 
 
 class GenericNamesDialog(QDialog):
@@ -1094,226 +1116,6 @@ class EnhanceCopyDialog(QDialog):
         if change and o["fps"] < self.src_fps - 0.005:
             lines.append("<span style='color:gray'>A lower frame rate than the video's drops frames.</span>")
         self.note.setText("<br>".join(lines))
-
-
-class DropDialog(QDialog):
-    """Asked right away when photos, videos or folders are dropped on the window: who's in
-    them / which category - applied to every photo as it is scanned."""
-
-    def __init__(self, win, dirs, files, already):
-        super().__init__(win)
-        self.setWindowTitle("Add and tag")
-        self.setMinimumWidth(560)
-        lay = QVBoxLayout(self)
-        nvid = sum(1 for f in files if engine.is_video(f))
-        parts = []
-        if dirs:
-            parts.append(f"{len(dirs)} folder{'s' if len(dirs) != 1 else ''}")
-        if len(files) - nvid:
-            parts.append(f"{len(files) - nvid:,} photo{'s' if len(files) - nvid != 1 else ''}")
-        if nvid:
-            parts.append(f"{nvid:,} video{'s' if nvid != 1 else ''}")
-        head = QLabel(f"<b>Adding {' + '.join(parts)}</b>")
-        lay.addWidget(head)
-        names = [os.path.basename(p.rstrip("\\/")) or p for p in dirs + files]
-        sub = ElidedLabel(", ".join(names[:12]) + ("…" if len(names) > 12 else ""))
-        sub.setStyleSheet("color: gray;")
-        lay.addWidget(sub)
-        if already:
-            al = QLabel(f"{already:,} of these {'is' if already == 1 else 'are'} already in your library - "
-                        "they get the tags right away.")
-            al.setStyleSheet("color: gray;")
-            lay.addWidget(al)
-        lay.addSpacing(6)
-        form = QFormLayout()
-        people = win.people_by_recent()
-        self.people = QLineEdit()
-        self.people.setPlaceholderText("Who's in them? Separate names with commas - leave empty if mixed")
-        comp = QCompleter(people, self.people)
-        comp.setCaseSensitivity(Qt.CaseInsensitive)
-        comp.setFilterMode(Qt.MatchContains)
-        self.people.setCompleter(comp)
-        # completer works on the name after the last comma
-        comp.activated[str].connect(lambda t: self.people.setText(
-            ", ".join([x.strip() for x in self.people.text().split(",")[:-1] if x.strip()] + [t])))
-        self.people.textEdited.connect(lambda t: comp.setCompletionPrefix(t.split(",")[-1].strip()))
-        form.addRow("People:", self.people)
-        self.category = QComboBox()
-        self.category.setEditable(True)
-        sugg = []
-        if len(dirs) == 1 and not files:
-            sugg.append(os.path.basename(dirs[0].rstrip("\\/")))
-        for c in win.categories_by_use():
-            if c.casefold() not in {x.casefold() for x in sugg}:
-                sugg.append(c)
-        self.category.addItems([""] + sugg)
-        self.category.lineEdit().setPlaceholderText("Folder (an event or group) - optional")
-        form.addRow("Folder:", self.category)
-        lay.addLayout(form)
-        # a folder named like someone you know: offer them
-        if len(dirs) == 1 and not files:
-            fname = os.path.basename(dirs[0].rstrip("\\/"))
-            match = next((n for n in people if n.casefold() == fname.casefold()), None)
-            if match:
-                self.people.setText(match)
-            elif not store.is_generic_folder(fname):
-                use = QPushButton(f"Use the folder name “{fname}” as the person")
-                use.setFlat(True)
-                use.setStyleSheet("text-align: left; color: palette(link);")
-                use.setCursor(Qt.PointingHandCursor)
-                use.clicked.connect(lambda: (self.people.setText(fname), self.people.setFocus()))
-                form.addRow("", use)
-        # ---- folder trees: use the folder names (which level is the person?)
-        self.structure_group = None
-        self.levels = self.folder_levels(dirs) if dirs else []
-        if self.levels and (len(self.levels) > 1 or any(len(n) for n in self.levels)):
-            lay.addSpacing(6)
-            lay.addWidget(QLabel("<b>Use the folder names?</b>"))
-            self.structure_group = QButtonGroup(self)
-            has_subs = len(self.levels) > 1
-            top_name = os.path.basename(dirs[0].rstrip("\\/")) if dirs else "the folder"
-            opts = [(-2, f"Remember “{top_name}” for whoever gets tagged - now or later "
-                         f"(saved as Person\\{top_name}" + ("\\…" if has_subs else "") + ")")] + \
-                ([(-1, "Keep the sub-folders - inside the folder of each person named above")] if has_subs else []) + [
-                (None, "No - just tag them as above" + (" (sub-folders aren't kept)" if has_subs else "")),
-                (0, "Keep the folder structure (folders become folders, no person)")]
-            for i, names in enumerate(self.levels, 1):
-                shown = ", ".join(names[:4]) + (f"  (+{len(names) - 4} more)" if len(names) > 4 else "")
-                opts.append((i, f"Level {i} is the person:  {shown}"))
-            for j, (val, text) in enumerate(opts):
-                rb = QRadioButton(text)
-                rb.setProperty("level", -9 if val is None else val)
-                self.structure_group.addButton(rb, j)
-                lay.addWidget(rb)
-                if j == 0:
-                    rb.setChecked(True)
-                rb.toggled.connect(self.update_preview)
-            self.preview = QLabel()
-            self.preview.setWordWrap(True)
-            self.preview.setStyleSheet("color: gray;")
-            self.preview.setTextFormat(Qt.RichText)
-            lay.addWidget(self.preview)
-            self.example = self.example_file(dirs)
-            self.update_preview()
-            self.people.textChanged.connect(self.update_preview)
-        self.later = QCheckBox("Put them in Sort Later (out of the way until you're ready)")
-        lay.addWidget(self.later)
-        note = QLabel("People are tagged on every photo and video (a photo with one face gets that face named). "
-                      "Faces are still found and grouped as usual.")
-        note.setWordWrap(True)
-        note.setStyleSheet("color: gray;")
-        lay.addWidget(note)
-        bb = QDialogButtonBox()
-        self.ok = bb.addButton("Tag and scan", QDialogButtonBox.AcceptRole)
-        self.plain = bb.addButton("Just scan", QDialogButtonBox.AcceptRole)
-        bb.addButton(QDialogButtonBox.Cancel)
-        self.ok.setDefault(True)
-        self.choice = None
-        self.ok.clicked.connect(lambda: self._done("tag"))
-        self.plain.clicked.connect(lambda: self._done("plain"))
-        bb.rejected.connect(self.reject)
-        lay.addWidget(bb)
-        self.people.setFocus()
-
-    @staticmethod
-    def folder_levels(dirs, max_levels=6, max_dirs=20000):
-        """Folder names at each depth of the dropped folders (level 1 = the folders themselves)."""
-        levels, seen = [], 0
-        todo = [(d, 1) for d in dirs]
-        while todo and seen < max_dirs:
-            d, lvl = todo.pop(0)
-            seen += 1
-            if lvl > max_levels:
-                continue
-            while len(levels) < lvl:
-                levels.append([])
-            name = os.path.basename(d.rstrip("\\/"))
-            if name not in levels[lvl - 1]:
-                levels[lvl - 1].append(name)
-            try:
-                subs = sorted(e.path for e in os.scandir(d) if e.is_dir() and not e.name.startswith((".", "$")))
-            except OSError:
-                subs = []
-            todo += [(x, lvl + 1) for x in subs]
-        return levels
-
-    @staticmethod
-    def example_file(dirs):
-        """The deepest photo/video found (for the preview)."""
-        best = None
-        for d in dirs:
-            for p in jobs.iter_photos(d):
-                depth = p.count(os.sep)
-                if best is None or depth > best[0]:
-                    best = (depth, p, d)
-                if depth - d.count(os.sep) >= 6:
-                    break
-        return best
-
-    def level(self):
-        if not self.structure_group:
-            return None
-        b = self.structure_group.checkedButton()
-        v = b.property("level") if b else -9
-        return None if v is None or v == -9 else int(v)
-
-    def update_preview(self, *_):
-        lvl = self.level()
-        self.category.setEnabled(lvl is None or lvl in (-1, -2))
-        if not self.example:
-            self.preview.setText("")
-            return
-        _, path, d = self.example
-        rel = os.path.relpath(path, os.path.dirname(d.rstrip("\\/")))
-        if lvl is None:
-            self.preview.setText(f"e.g. {html.escape(rel)}")
-            return
-        if lvl == -2:
-            _, top, below = store.structure_of(d, path, 1)
-            names = [n for n in (" ".join(x.split()) for x in self.people.text().split(",")) if n]
-            who = html.escape(names[0]) if names else "<i>each person tagged</i>"
-            parts = [f"<b>{who}</b>"] + [html.escape(x) for x in [top] + below if x]
-            self.preview.setText(f"e.g. {html.escape(rel)}<br>→ saved as  "
-                                 + "\\".join(parts + [html.escape(os.path.basename(path))])
-                                 + "<br>Nobody named yet? The folder name is kept with the photos until "
-                                   "someone is tagged on them.")
-            return
-        if lvl == -1:
-            _, top, below = store.structure_of(d, path, 1)
-            names = [n for n in (" ".join(x.split()) for x in self.people.text().split(",")) if n]
-            who = names[0] if names else None
-            parts = ([f"<b>{html.escape(who)}</b> (person)"] if who else [html.escape(top or "")]) + \
-                [html.escape(x) for x in below]
-            self.preview.setText(f"e.g. {html.escape(rel)}<br>→ saved as  "
-                                 + "\\".join(parts + [html.escape(os.path.basename(path))])
-                                 + ("" if who else "  (type a name above to put them inside that person)"))
-            return
-        above, person, below = store.structure_of(d, path, lvl)
-        parts = [html.escape(x) for x in above]
-        if person:
-            parts.append(f"<b>{html.escape(person)}</b> (person)")
-        parts += [html.escape(x) for x in below]
-        dest = "\\".join(parts + [html.escape(os.path.basename(path))])
-        self.preview.setText(f"e.g. {html.escape(rel)}<br>→ saved as  {dest}"
-                             + ("" if person else "  (not deep enough for a person - folders only)"
-                                if lvl else ""))
-
-    def _done(self, how):
-        self.choice = how
-        self.accept()
-
-    def result_tags(self):
-        if self.choice != "tag":
-            return [], None, False, None
-        seen, names = set(), []
-        for n in self.people.text().split(","):
-            n = " ".join(n.split())
-            if n and n.casefold() not in seen:
-                seen.add(n.casefold())
-                names.append(n)
-        lvl = self.level()
-        cat = (" ".join(self.category.currentText().split()) or None) if lvl is None or lvl == -1 else None
-        return names, cat, self.later.isChecked(), lvl
 
 
 # =========================================================================== scan

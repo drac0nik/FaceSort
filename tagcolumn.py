@@ -11,7 +11,9 @@ import content
 import store
 
 MAX_TAGS = 10
-DEFAULT_TAGS = [{"name": t, "menu": True} for t in content.CONTENT_TAGS + content.SCENE_TAGS]
+import pose  # noqa: E402
+
+DEFAULT_TAGS = [{"name": t, "menu": True} for t in content.CONTENT_TAGS + content.SCENE_TAGS + pose.POSES]
 ON_STYLE = ("QPushButton { background: #2563eb; color: white; border: 1px solid #1d4ed8; border-radius: 12px;"
             " padding: 4px 10px; font-weight: bold; text-align: left; }"
             "QPushButton:hover { background: #1d4ed8; }")
@@ -26,6 +28,11 @@ def tag_list(settings):
     raw = settings.get("tag_list")
     if not isinstance(raw, list):
         return [dict(t) for t in DEFAULT_TAGS]
+    if not settings.get("pose_tags_added"):
+        # (1.46) the pose tags join a list you've already edited - once (delete them and they stay gone)
+        have = {(t.get("name") if isinstance(t, dict) else str(t)).casefold() for t in raw}
+        raw.extend({"name": p, "menu": True} for p in pose.POSES if p.casefold() not in have)
+        settings["pose_tags_added"] = True
     return generic_names({"generic_names": raw})
 
 

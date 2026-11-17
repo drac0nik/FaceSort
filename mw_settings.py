@@ -9,7 +9,7 @@ import store
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QDialog, QFileDialog, QInputDialog, QMessageBox
 from ui_common import APP_VERSION, bodies_download_job, HELP
-from dialogs import DropDialog, SettingsDialog
+from dialogs import SettingsDialog
 
 
 class SettingsMixin:
@@ -42,13 +42,14 @@ class SettingsMixin:
             e.acceptProposedAction()
             QTimer.singleShot(0, lambda: self.handle_drop(paths))   # don't block Explorer while the dialog is open
 
-    def handle_drop(self, paths, ask=True, answers=None):
-        """Photos, videos and folders dropped on the window: ask how to tag them, add them,
-        and scan. answers=(people, category, sort_later, how) skips the dialog (tests)."""
-        dirs = [p for p in paths if os.path.isdir(p)]
-        files = [p for p in paths if os.path.isfile(p)
+    def handle_drop(self, paths, ask=True, answers=None, watch=False):
+        """Photos, videos and folders dropped on the window (or chosen with Add folder): the Add
+        photos window (importer.py) asks how to tag them; they're added and scanned.
+        answers: skips the window (tests) - a dict like ImportDialog.choices(), or the older
+        (people, category, sort_later[, structure]) tuple."""
+        dirs = [store.norm_path(p) for p in paths if os.path.isdir(p)]
+        files = [store.norm_path(p) for p in paths if os.path.isfile(p)
                  and (os.path.splitext(p)[1].lower() in engine.IMAGE_EXTS or engine.is_video(p))]
-        skipped = len(paths) - len(dirs) - len(files)
         if not dirs and not files:
             self.statusBar().showMessage("Nothing to add - drop photos, videos or folders.", 8000)
             return False
@@ -56,18 +57,37 @@ class SettingsMixin:
         prefixes = tuple(d.rstrip("\\/") + os.sep for d in dirs)
         inside = {p for p in known_paths if prefixes and p.startswith(prefixes)} | {f for f in files if f in known_paths}
         if answers is None:
-            dlg = DropDialog(self, dirs, files, len(inside))
+            from importer import ImportDialog
+            dlg = ImportDialog(self, dirs, files, len(inside), watch=watch)
             if dlg.exec() != QDialog.Accepted:
                 return False
-            people, cat, later, structure = dlg.result_tags()
+            ch = dlg.choices()
+        elif isinstance(answers, dict):
+            ch = {"how": "tag", "watch": watch, "people": [], "category": None, "later": False, "folders": []}
+            ch.update(answers)
         else:
             people, cat, later, structure = (tuple(answers) + (None,))[:4]
-        # add to what FaceSort scans: folders, or single files outside your folders
+            ch = {"how": "tag", "watch": watch, "people": list(people or []), "category": cat, "later": later,
+                  "folders": [(d, "their", os.path.basename(d.rstrip("\\/"))) for d in dirs] if structure == -2 else []}
+        people, cat, later = ch["people"], ch["category"], ch["later"]
+        uses = {store.norm_path(p): (u, n) for p, u, n in ch["folders"]}
+        skip = [p for p, (u, n) in uses.items() if u == "skip"]
+        # where they live from now on: watched (a library folder) or imported once (forgotten -
+        # just these photos are kept; the folder isn't looked at again)
         folders = self.settings["folders"]
         covered = lambda p: any(p == f or p.startswith(f.rstrip("\\/") + os.sep) for f in folders)
+        imported = self.settings.setdefault("imported", [])
         for d in dirs:
-            if not covered(d):
+            if covered(d):
+                continue
+            if ch["watch"]:
                 folders[:] = [f for f in folders if not f.startswith(d.rstrip("\\/") + os.sep)] + [d]
+                imported[:] = [f for f in imported if f != d]
+                if skip:
+                    ex = self.settings.setdefault("exclude", [])
+                    ex += [p for p in skip if p.startswith(d.rstrip("\\/") + os.sep) and p not in ex]
+            elif d not in imported:
+                imported.append(d)
         extra = self.settings.setdefault("files", [])
         for f in files:
             if not covered(f) and f not in extra:
@@ -79,8 +99,30 @@ class SettingsMixin:
         names = [os.path.basename(p.rstrip("\\/")) for p in dirs + files]
         label = names[0] + (f" + {len(names) - 1} more" if len(names) > 1 else "")
         batch = store.new_drop_batch(self.conn, label)
-        for p in dirs + files:
-            store.add_drop_rule(self.conn, p, p in dirs, people, cat, later, structure if p in dirs else None, batch)
+        if ch["how"] == "tag":
+            for p in dirs + files:
+                u, n = uses.get(p, ("", None))
+                store.add_drop_rule(self.conn, p, p in dirs, people + ([n] if u == "person" else []),
+                                    cat if u not in ("folder",) else None, later,
+                                    -2 if u == "their" else None, batch, album=n if u == "album" else None,
+                                    skip=u == "skip")
+                if u == "folder":
+                    store.add_drop_rule(self.conn, p, True, [], store.CHAIN + n, False, None, batch)
+            for p, (u, n) in uses.items():
+                if p in dirs:
+                    continue
+                if u == "folder":
+                    chain = self._folder_chain(p, uses, dirs)
+                    store.add_drop_rule(self.conn, p, True, [], store.CHAIN + store.PATH_SEP.join(chain), False,
+                                        None, batch)
+                else:
+                    store.add_drop_rule(self.conn, p, True, [n] if u == "person" else [], None, False,
+                                        -2 if u == "their" else None, batch, album=n if u == "album" else None,
+                                        skip=u == "skip")
+            store.remember_import_choices(self.conn, [(p, u, n) for p, (u, n) in uses.items()])
+        else:
+            for p in dirs + files:
+                store.add_drop_rule(self.conn, p, p in dirs, [], None, False, None, batch)
         # everything else that came along (notes, links, documents, archives...): kept with the photos
         others = self.collect_other_files(dirs, [p for p in paths if os.path.isfile(p) and p not in files])
         if others:
@@ -96,27 +138,44 @@ class SettingsMixin:
         msg = "Added " + ", ".join(x for x in (
             f"{len(dirs)} folder{'s' if len(dirs) != 1 else ''}" if dirs else "",
             f"{len(files)} file{'s' if len(files) != 1 else ''}" if files else "") if x)
+        msg += " · watching for new photos" if ch["watch"] and dirs else (" · imported once" if dirs else "")
         if people:
             msg += " · tagged " + ", ".join(people)
         if cat:
             msg += f" · folder “{cat}”"
         if later:
             msg += " · Sort Later"
-        if structure is not None:
-            msg += (" · folder name kept for whoever is tagged" if structure == -2 else
-                    " · keeping the sub-folders" if structure == -1 else
-                    " · keeping the folder structure" + (f" (level {structure} = person)" if structure else ""))
+        if skip:
+            msg += f" · {len(skip)} folder{'s' if len(skip) != 1 else ''} left out"
         if others:
             msg += f" · {len(others)} other file{'s' if len(others) != 1 else ''} kept with them (~links / ~archives / ~files)"
         self.statusBar().showMessage(msg, 12000)
         self.refresh_all()
         # only what you dropped is scanned (not the rest of your folders - that's for the next Scan)
-        drop = {"roots": dirs + files, "mode": "both", "shoot_after": True}
+        drop = {"roots": dirs + files, "mode": "both", "shoot_after": True, "exclude": skip}
         if self.busy():
             self._scan_after = drop          # scans as soon as the current job ends
         else:
             self.start_scan(videos_only=False, opts=drop)
         return True
+
+    @staticmethod
+    def _folder_chain(path, uses, dirs):
+        """A folder row's chain: the folder rows above it (inside what was dropped) and itself."""
+        chain = []
+        p = path.rstrip("\\/")
+        tops = {d.rstrip("\\/") for d in dirs}
+        while True:
+            u, n = uses.get(p, ("", None))
+            if u == "folder":
+                chain.append(n)
+            if p in tops:
+                break
+            q = os.path.dirname(p)
+            if q == p:
+                break
+            p = q
+        return list(reversed(chain))
 
     @staticmethod
     def collect_other_files(dirs, loose, limit=50000):
@@ -215,15 +274,12 @@ class SettingsMixin:
         return new
 
     def add_folder(self):
+        """Add folder…: the same Add photos window as a drop, with Keep watching ticked (it's
+        how you add a library folder)."""
         d = QFileDialog.getExistingDirectory(self, "Choose a folder with photos")
         if not d:
             return
-        d = store.norm_path(d)
-        if d not in self.settings["folders"]:
-            self.settings["folders"].append(d)
-            store.save_settings(self.settings)
-        self.refresh_all()
-        self.start_scan()
+        self.handle_drop([store.norm_path(d)], watch=True)
 
     def open_settings(self):
         # (who's who is saved in the background now - opening Settings used to wait for it, seconds
@@ -271,6 +327,9 @@ class SettingsMixin:
         if new.get("content_on") and not old.get("content_on"):
             import content
             QTimer.singleShot(400, self.get_content_models if not content.ready() else self.start_content)
+        if new.get("pose_on") and not old.get("pose_on"):
+            import pose
+            QTimer.singleShot(600, self.get_pose_models if not pose.ready() else self.start_pose)
         if bool(new.get("tag_column", True)) != bool(old.get("tag_column", True)) or \
                 new.get("safe_suggestive") != old.get("safe_suggestive"):
             self.safe_view_changed()

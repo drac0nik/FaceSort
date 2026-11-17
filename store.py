@@ -447,6 +447,34 @@ def connect(path=None):
     if "sex" not in {r[1] for r in conn.execute("PRAGMA table_info(persons)")}:
         conn.execute("ALTER TABLE persons ADD COLUMN sex INTEGER")      # 1.43: Man (1) / Woman (0), if you set it
         conn.commit()
+    if "pose_done" not in {r[1] for r in conn.execute("PRAGMA table_info(photos)")}:
+        conn.execute("ALTER TABLE photos ADD COLUMN pose_done INTEGER DEFAULT 0")     # 1.46: poses read
+        conn.commit()
+    if "sugg_conf" not in fc:          # 1.46: how strongly a suggestion matches (50-100, the rules use it)
+        conn.execute("ALTER TABLE faces ADD COLUMN sugg_conf REAL")
+        conn.commit()
+    dc = {r[1] for r in conn.execute("PRAGMA table_info(drop_rules)")}
+    if "album" not in dc:              # 1.46: the import panel - a sub-folder as an album, or left out
+        conn.execute("ALTER TABLE drop_rules ADD COLUMN album TEXT")
+        conn.execute("ALTER TABLE drop_rules ADD COLUMN skip INTEGER DEFAULT 0")
+        conn.commit()
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS rules(            -- 1.46: rules for incoming photos (rules.py)
+            id INTEGER PRIMARY KEY, name TEXT, enabled INTEGER DEFAULT 1, ord INTEGER DEFAULT 0,
+            cond TEXT, action TEXT, created REAL, existing INTEGER DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS rule_applied(rule_id INTEGER, photo_id INTEGER, at REAL,
+            PRIMARY KEY(rule_id, photo_id));
+        CREATE TABLE IF NOT EXISTS import_choices(    -- 1.46: what you picked for a folder in Add photos
+            path TEXT PRIMARY KEY, use TEXT, name TEXT, at REAL);
+        CREATE TABLE IF NOT EXISTS photo_pose(photo_id INTEGER, pose TEXT, PRIMARY KEY(photo_id, pose));   -- 1.46
+        CREATE INDEX IF NOT EXISTS photo_pose_pose ON photo_pose(pose);
+        CREATE TABLE IF NOT EXISTS photo_points(photo_id INTEGER PRIMARY KEY, info TEXT);  -- 1.46: body points
+        CREATE TRIGGER IF NOT EXISTS photos_gone_pose AFTER DELETE ON photos BEGIN
+            DELETE FROM photo_pose WHERE photo_id=OLD.id;
+            DELETE FROM photo_points WHERE photo_id=OLD.id;
+            DELETE FROM rule_applied WHERE photo_id=OLD.id;
+        END;
+    """)
     conn.execute("CREATE INDEX IF NOT EXISTS photos_category ON photos(category_id)")
     # covering index: lists and counts read this instead of the face rows (which hold fingerprints
     # and thumbnails), so big libraries stay quick
@@ -974,21 +1002,40 @@ def settle_photo_tags(conn):
 
 
 # ----------------------------------------------------------------- drag & drop tags
-def add_drop_rule(conn, path, is_dir, people, category, sort_later, structure=None, batch=None):
+CHAIN = "\x1e"          # (1.46) a drop rule's folder given as a chain of folders (Trips > Beach)
+
+
+def add_drop_rule(conn, path, is_dir, people, category, sort_later, structure=None, batch=None, album=None,
+                  skip=False):
     """structure (folders only): None = folder names not used; -1 = keep the sub-folders (inside
     each person named, or as folders); 0 = keep the folder structure as
     folders; k >= 1 = the folder k levels down (1 = the dropped folder itself) is the person:
     folders above it hold the person, folders below it go inside the person's folder."""
-    conn.execute("""INSERT INTO drop_rules(path, is_dir, people, category, sort_later, structure, batch)
-                    VALUES(?,?,?,?,?,?,?)""",
+    conn.execute("""INSERT INTO drop_rules(path, is_dir, people, category, sort_later, structure, batch, album, skip)
+                    VALUES(?,?,?,?,?,?,?,?,?)""",
                  (norm_path(path), int(bool(is_dir)), json.dumps(list(people or [])), category or None,
-                  int(bool(sort_later)), structure, batch))
+                  int(bool(sort_later)), structure, batch, album or None, int(bool(skip))))
     conn.commit()
 
 
 def drop_rules(conn):
-    return [(path, bool(d), json.loads(p or "[]"), c, bool(sl), st, b) for path, d, p, c, sl, st, b in conn.execute(
-        "SELECT path, is_dir, people, category, sort_later, structure, batch FROM drop_rules")]
+    """[(path, is_dir, people, category, sort_later, structure, batch, album, skip)]"""
+    return [(path, bool(d), json.loads(p or "[]"), c, bool(sl), st, b, al, bool(sk))
+            for path, d, p, c, sl, st, b, al, sk in conn.execute(
+                "SELECT path, is_dir, people, category, sort_later, structure, batch, album, skip FROM drop_rules")]
+
+
+def remember_import_choices(conn, choices):
+    """[(folder, use, name)] picked in Add photos - offered again next time that folder comes in."""
+    now = time.time()
+    conn.executemany("INSERT OR REPLACE INTO import_choices(path, use, name, at) VALUES(?,?,?,?)",
+                     [(norm_path(p), u, n, now) for p, u, n in choices])
+    conn.commit()
+
+
+def import_choices(conn, paths):
+    want = {norm_path(p) for p in paths}
+    return {p: (u, n) for p, u, n in conn.execute("SELECT path, use, name FROM import_choices") if p in want}
 
 
 def rules_matching(rules, path):
@@ -1017,11 +1064,23 @@ def apply_drop_rules(conn, photo_id, path, rules):
     hit = rules_matching(rules, path)
     if not hit:
         return False
-    folder_id, later, names, person_folders, batch = None, False, [], [], None
-    for rpath, is_dir, people, cat, sl, structure, b in hit:
+    if any(r[8] for r in hit):
+        return False                      # (1.46) in a folder you chose to leave out
+    folder_id, later, names, person_folders, batch, albums_ = None, False, [], [], None, []
+    for rpath, is_dir, people, cat, sl, structure, b, album, _skip in hit:
         batch = b or batch
         names += people
-        if cat:
+        if album:
+            albums_.append(album)
+        if cat and cat.startswith(CHAIN):
+            # (1.46) a folder chosen in Add photos: inside the folder of whoever is named above it
+            chain = [x for x in cat[len(CHAIN):].split(PATH_SEP) if x]
+            if names:
+                for n in dict.fromkeys(names):
+                    person_folders.append(folder_chain(conn, chain, owner=get_or_create_person(conn, n)))
+            else:
+                folder_id = folder_chain(conn, chain)
+        elif cat:
             folder_id = get_or_create_category(conn, cat, [get_or_create_person(conn, n) for n in people])
         if is_dir and structure == -2:
             # remember the folder names: whoever is tagged on the photo - now or later - gets
@@ -1067,6 +1126,11 @@ def apply_drop_rules(conn, photo_id, path, rules):
         set_photo_folder(conn, [photo_id], f)
     if later:
         _hide_for_later(conn, [photo_id])
+    for name in dict.fromkeys(albums_):
+        r = conn.execute("SELECT id FROM albums WHERE name=?", (name,)).fetchone()
+        aid = r[0] if r else create_album(conn, name)
+        conn.execute("INSERT OR IGNORE INTO album_photos(album_id, photo_id, added) VALUES(?,?,?)",
+                     (aid, photo_id, time.time()))
     if batch:
         conn.execute("UPDATE photos SET dropped=? WHERE id=?", (batch, photo_id))   # shown in Recently dropped
     apply_drop_folders(conn, [photo_id])
@@ -1612,6 +1676,9 @@ def _write_flagged(conn, flagged):
                          "AND ignored IN (0, 4)", flagged)
 
 
+SUGG_SPAN = 0.10      # (1.46) match strength: this far past the line (and ahead of the next) = 100%
+
+
 def regroup(conn, threshold=0.42, progress=None, cancelled=lambda: False, sync=True):
     """1) Suggest a name for unknown faces that clearly match someone you've named.
        2) Cluster the rest into unnamed groups of look-alike faces."""
@@ -1678,8 +1745,8 @@ def regroup(conn, threshold=0.42, progress=None, cancelled=lambda: False, sync=T
     cand = conn.execute("""SELECT id, emb, px, score, face_ok, quality, clarity, yaw, pitch FROM faces WHERE confirmed=0
                            AND ignored IN (0, 4) AND model=?""", (model,)).fetchall()
     # what each face has now: only the faces whose suggestion or group changes are written
-    before = {fid: (p, c) for fid, p, c in conn.execute(
-        "SELECT id, person_id, cluster FROM faces WHERE confirmed=0 AND ignored=0 AND model=?", (model,))}
+    before = {fid: (p, c, sc) for fid, p, c, sc in conn.execute(
+        "SELECT id, person_id, cluster, sugg_conf FROM faces WHERE confirmed=0 AND ignored=0 AND model=?", (model,))}
     conn.commit()                         # end the read, so nothing is held while working
     if cand and (notface or model == "arcface"):
         NF = np.stack(notface).astype(np.float32) if notface else None
@@ -1735,6 +1802,7 @@ def regroup(conn, threshold=0.42, progress=None, cancelled=lambda: False, sync=T
     weights = (0.25 + 0.75 * clar).astype(np.float32)
 
     suggestion = np.zeros(len(ids), dtype=np.int64)   # 0 = no suggestion (real ids start at 1)
+    strength = np.zeros(len(ids), dtype=np.float32)   # (1.46) how clearly it matches: 50 (just) .. 100
     if ref_embs:
         order_r = np.argsort(np.array(ref_pids), kind="stable")      # each person's references side by side
         R = np.stack([ref_embs[i] for i in order_r]).astype(np.float32)
@@ -1802,6 +1870,11 @@ def regroup(conn, threshold=0.42, progress=None, cancelled=lambda: False, sync=T
             ex = extra_thr[s:s + sims.shape[0]]
             hit = (best >= match_thr + ex) & (best - second >= margin + ex / 2)
             suggestion[s:s + sims.shape[0]] = np.where(hit, persons[arg], 0)
+            # match strength: how far above the match line, and how clearly ahead of anyone else -
+            # whichever is less sure; 50% = just a suggestion, 95% = well clear on both
+            c1 = np.clip((best - match_thr - ex) / SUGG_SPAN, 0, 1)
+            c2 = np.clip((best - second - margin - ex / 2) / SUGG_SPAN, 0, 1)
+            strength[s:s + sims.shape[0]] = np.where(hit, 50 + 50 * np.minimum(c1, c2), 0)
             if progress:
                 progress(min(len(E), s + 2048), len(E) * 2)
             time.sleep(0)
@@ -1911,11 +1984,13 @@ def regroup(conn, threshold=0.42, progress=None, cancelled=lambda: False, sync=T
     for i, fid in enumerate(ids):
         p = int(suggestion[i]) if suggestion[i] > 0 else None
         c = int(cluster_of[i]) + 1 if cluster_of[i] >= 0 else None
+        sc = round(float(strength[i]), 1) if p is not None and strength[i] > 0 else None
         fid = int(fid)
-        if fid in before and before[fid] == (p, c):
+        if fid in before and before[fid] == (p, c, sc):
             continue                                       # unchanged: nothing to write
-        data.append((p, c, fid))
-    conn.executemany("UPDATE faces SET person_id=?, cluster=? WHERE id=? AND confirmed=0 AND ignored=0", data)
+        data.append((p, c, sc, fid))
+    conn.executemany("UPDATE faces SET person_id=?, cluster=?, sugg_conf=? WHERE id=? AND confirmed=0 AND ignored=0",
+                     data)
     conn.execute("UPDATE faces SET cluster=NULL WHERE (confirmed=1 OR ignored>0) AND cluster IS NOT NULL")
     conn.commit()
     settle_photo_tags(conn)

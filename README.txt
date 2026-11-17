@@ -153,7 +153,27 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
-The gallery stays where you are; the folders list (1.45.5)
+Add photos, rules and poses (1.46)
+- Add photos: one window for dropping files or folders and for Add folder…. By default a dropped
+  folder is imported once - what's there now is added and the folder is forgotten (not watched,
+  not in your library folders). Tick "Keep watching" to make it a library folder (Add folder…
+  has it ticked).
+- The folders table: every sub-folder with its photo count and what to use its name for -
+  Person, Folder (inside the person above it), Folder of whoever's tagged, Album, or Leave out.
+  FaceSort guesses from the names and remembers your choices for that folder next time. An
+  example shows where a photo will end up. One Add button; "Add without tagging" is a link.
+- Rules for new photos (Settings > Tagging > Rules): when a photo comes from a folder, has
+  certain people, is a certain subject (food, landscape…), has a tag or a pose - put it in a
+  folder, an album, a tag, or Sort Later. Rules act on photos added after they were made (or
+  also existing ones, if you tick that), once per photo, after scans and when suggestions
+  change. A suggested person counts when the match is at least 95% (Settings: change or off).
+- Suggestions now carry a match strength (50% = just a suggestion, 95% = well clear).
+- Poses (Settings > Scanning > Content, offered once): RTMPose (OpenMMLab, Apache) marks 17
+  body points on each person; FaceSort works out Standing, Sitting, Lying down, Kneeling, Arms
+  raised, Facing away, Full body and Close-up. They're the first tags offered beside a photo,
+  and rules can use them. About 90 MB once, on this PC only.
+
+
 - After updates (a scan, suggestions, background work) the gallery stays on the group or person
   you picked. If that group is gone (all done, say), it goes to the very next one in the list -
   never back to the top.

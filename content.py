@@ -445,8 +445,18 @@ class TagScorer:
         """Up to n tags: the ones the photo has first, then the best suggestions."""
         have = list(dict.fromkeys(have))
         sc = self.scores(photo_id)
-        rest = [t for t, _ in sorted(sc.items(), key=lambda kv: -kv[1]) if t not in have and t in self.tags + list(self.albums)]
-        out = have[:n] + rest[:max(0, n - len(have))]
+        # (1.46) the poses read from the photo come first (unless you've taken that tag off it)
+        try:
+            import pose
+            no = {r[0] for r in self.conn.execute("""SELECT a.name FROM album_rejects r JOIN albums a ON a.id=r.album_id
+                                                     WHERE r.photo_id=?""", (photo_id,))}
+            posed = [p for p in pose.photo_poses(self.conn, photo_id) if p not in have and p not in no
+                     and p in self.tags]
+        except Exception:
+            posed = []
+        rest = [t for t, _ in sorted(sc.items(), key=lambda kv: -kv[1]) if t not in have and t not in posed
+                and t in self.tags + list(self.albums)]
+        out = have[:n] + (posed + rest)[:max(0, n - len(have))]
         if len(out) < n:                 # then the tags you've used lately (never a content tag it has no sign of)
             for (t,) in self.conn.execute("""SELECT a.name FROM albums a JOIN album_photos ap ON ap.album_id=a.id
                                              WHERE a.tag=1 GROUP BY a.id ORDER BY MAX(ap.added) DESC LIMIT 40"""):

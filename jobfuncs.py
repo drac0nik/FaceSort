@@ -12,7 +12,7 @@ import jobs
 import known
 import store
 
-__all__ = ['dup_sets_job', 'misplaced_job', 'clip_index_job', 'clip_download_job', 'copies_job', 'bodies_job', 'bodies_download_job', 'find_dark_job', 'clarity_job', 'stats_job', 'collage_job', 'dup_check_job', 'scan_and_group', 'regroup_job', 'remember_job', 'attrs_job', 'content_job', 'subjects_job', 'content_learn_job', 'sex_learn_job', 'destinations_job', 'clarity_shard_job', 'checkpoint_job', 'scan_job', 'ping_job', 'sleep_job', 'SUGGESTION_SIG', 'SHOOT_SIG']
+__all__ = ['dup_sets_job', 'misplaced_job', 'clip_index_job', 'clip_download_job', 'copies_job', 'bodies_job', 'bodies_download_job', 'find_dark_job', 'clarity_job', 'stats_job', 'collage_job', 'dup_check_job', 'scan_and_group', 'regroup_job', 'remember_job', 'attrs_job', 'content_job', 'subjects_job', 'content_learn_job', 'sex_learn_job', 'destinations_job', 'clarity_shard_job', 'pose_job', 'rules_job', 'checkpoint_job', 'scan_job', 'ping_job', 'sleep_job', 'SUGGESTION_SIG', 'SHOOT_SIG']
 
 def log(msg):
     try:
@@ -225,3 +225,15 @@ def checkpoint_job(conn, progress=None, cancelled=lambda: False):
         return {"wal_mb": round(size / 1e6)}
     busy, frames, done = conn.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()
     return {"wal_mb": round(size / 1e6), "frames": frames, "checkpointed": done, "busy": busy}
+
+
+def rules_job(conn, settings, progress=lambda d, t, m: None, cancelled=lambda: False):
+    """(1.46) The rules for incoming photos (rules.py)."""
+    import rules
+    return rules.run(conn, settings, progress, cancelled)
+
+
+def pose_job(conn, progress=lambda d, t, m: None, cancelled=lambda: False):
+    """(1.46) Poses (pose.py), in the graphics card helper."""
+    import pose
+    return pose.read_missing(conn, progress, cancelled)

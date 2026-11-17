@@ -19,7 +19,7 @@ from ui_common import (APP_VERSION, bodies_job, clarity_job, log, log_path, open
                        scan_and_group, stats_job, Worker, bg_job, ProcessWorker)
 from dialogs import ExportDialog, ScanDialog
 
-LOOK_ONLY_JOBS = {"discardlook", "colordl", "facedl", "contentdl"}   # jobs that only read or download (no redraw after)
+LOOK_ONLY_JOBS = {"discardlook", "colordl", "facedl", "contentdl", "posedl"}   # jobs that only read or download (no redraw after)
 REGROUP_IDLE = 3.0       # (gentle background mode) seconds without a key / click before suggestions update
 
 
@@ -41,7 +41,7 @@ class JobsMixin:
         if self.busy():
             return True
         for name in ("regroup_worker", "remember_worker", "dup_worker", "copies_worker", "mis_worker",
-                     "clip_worker", "subjects_worker", "ckpt_worker", "stats_worker", "clarity_worker", "bodies_worker", "attrs_worker", "sex_worker",
+                     "clip_worker", "subjects_worker", "ckpt_worker", "rules_worker", "pose_worker", "stats_worker", "clarity_worker", "bodies_worker", "attrs_worker", "sex_worker",
                      "content_worker"):
             wk = getattr(self, name, None)
             if wk is not None and wk.isRunning():
@@ -207,6 +207,49 @@ class JobsMixin:
         self.content_worker.ok.connect(lambda n: n and (self.refresh_timer.start(), self.safe_view_changed()))
         self.content_worker.failed.connect(lambda tb: log(tb))
         self.content_worker.start_background(self.settings)
+
+    def start_pose(self):
+        """(1.46) Poses for photos not read yet - in the graphics card helper."""
+        import pose
+        if not self.settings.get("pose_on") or not pose.ready() or getattr(self, "_closing", False):
+            return
+        w = getattr(self, "pose_worker", None)
+        if w and w.isRunning():
+            return
+        if not self.conn.execute("""SELECT 1 FROM photos WHERE COALESCE(pose_done, 0)=0 AND is_video=0
+                                    AND error IS NULL AND nfaces > 0 LIMIT 1""").fetchone():
+            return
+        self.pose_worker = bg_job(self.settings, jobfuncs.pose_job, role="gpu")
+        self.pose_worker.progress.connect(lambda d, t, m: self.statusBar().showMessage(m, 3000) if m else None)
+        self.pose_worker.ok.connect(lambda n: n and QTimer.singleShot(1000, self.start_rules))
+        self.pose_worker.failed.connect(lambda tb: log(tb))
+        self.pose_worker.start_background(self.settings)
+
+    def start_rules(self):
+        """(1.46) Rules for new photos: after a scan and when suggestions change."""
+        if getattr(self, "_closing", False):
+            return
+        if not self.conn.execute("SELECT 1 FROM rules WHERE enabled=1").fetchone():
+            return
+        w = getattr(self, "rules_worker", None)
+        if w and w.isRunning():
+            self._rules_again = True
+            return
+        self._rules_again = False
+        self.rules_worker = bg_job(self.settings, jobfuncs.rules_job, dict(self.settings), priority=helpers.SOON)
+
+        def done(res):
+            if res:
+                n = sum(k for _name, k in res)
+                self.statusBar().showMessage("Rules: " + "; ".join(f"{name} ({k:,})" for name, k in res[:3])
+                                             + (" …" if len(res) > 3 else "") + f" - {n:,} photo"
+                                             f"{'s' if n != 1 else ''}", 10000)
+                self.after_change(regroup=False, defer=True)
+            if getattr(self, "_rules_again", False):
+                QTimer.singleShot(500, self.start_rules)
+        self.rules_worker.ok.connect(done)
+        self.rules_worker.failed.connect(lambda tb: log(tb))
+        self.rules_worker.start_background(self.settings)
 
     def start_checkpoint(self):
         """Every couple of minutes, when you've paused: fold a big write-ahead log back into the library."""
@@ -374,7 +417,26 @@ class JobsMixin:
             self.engine_label.setText("Face engine: " + short)
             self.engine_label.setToolTip(text)
 
+    def prune_imported(self):
+        """(1.46) Imported-once folders with none of their photos left in the library (sorted away,
+        say) are forgotten - nothing to keep track of."""
+        imp = self.settings.get("imported") or []
+        if not imp:
+            return
+        paths = [r[0] for r in self.conn.execute("SELECT path FROM photos")]
+        keep = [d for d in imp if any(p.startswith(d.rstrip("\\/") + os.sep) for p in paths)]
+        if keep != imp:
+            self.settings["imported"] = keep
+            store.save_settings(self.settings)
+
     def job_done(self, name, res, on_done):
+        try:
+            self.prune_imported()
+        except Exception as e:
+            log(f"imported folders: {e}")
+        if name == "scan":
+            QTimer.singleShot(1500, self.start_rules)          # (1.46) rules for the new photos
+            QTimer.singleShot(6000, self.start_pose)           # and their poses
         if isinstance(res, dict) and res.get("engine_status"):
             self._engine_status = tuple(res["engine_status"])
         self.update_engine_label()
@@ -644,6 +706,8 @@ class JobsMixin:
     def regroup_done(self, changed):
         self._data_gen += 1
         self.statusBar().clearMessage()
+        if changed:
+            QTimer.singleShot(2000, self.start_rules)       # (1.46) new suggestions: rules may match now
         if not changed and not self.refresh_timer.isActive():
             return          # nothing changed: don't redraw (no stutter)
         self.refresh_timer.start()         # redrawn once you pause (never under your fingers)
@@ -754,6 +818,7 @@ class JobsMixin:
                                getattr(self, "dest_worker", None), getattr(self, "attrs_worker", None),
                                getattr(self, "sex_worker", None), getattr(self, "content_worker", None),
                                getattr(self, "subjects_worker", None), getattr(self, "ckpt_worker", None),
+                               getattr(self, "rules_worker", None), getattr(self, "pose_worker", None),
                                getattr(self, "content_learn_worker", None))
                    if w is not None]
         for w in workers:

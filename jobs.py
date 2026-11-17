@@ -293,6 +293,7 @@ def scan_library(conn, settings, progress=lambda done, total, msg: None, cancell
         known_kind[p] = "other" if oth else "video" if vid else "photo"
     # forget photos that were deleted from folders that are still reachable
     gone = []
+    imported_dirs = tuple(store.norm_path(d).rstrip("\\/") + os.sep for d in settings.get("imported", []))
     checking = o["mode"] in ("both", "verify") and only is None and not drop_scan
     ex_names = {e.lower() for e in o["exclude"] if e and not os.path.isabs(e)}
     for p in (known if checking else ()):
@@ -308,6 +309,11 @@ def scan_library(conn, settings, progress=lambda done, total, msg: None, cancell
             continue                                 # in a library folder not chosen this time
         if top is None and p in {store.norm_path(f) for f in settings.get("files", [])}:
             top = os.path.dirname(p)                 # a dropped file: gone if its folder is still there
+        if top is None and imported_dirs and p.startswith(imported_dirs):
+            # (1.46) imported once (the folder isn't watched): gone only if the file itself is
+            if os.path.exists(p):
+                continue
+            top = os.path.dirname(p)
         if top is None or os.path.isdir(top):
             gone.append(p)
     if o["missing"] == "keep":

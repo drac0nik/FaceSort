@@ -89,7 +89,7 @@ class GalleryMixin:
         lst.addItem(it)
         rows = [(fo, fo, counts.get(i, 0)) for i, fo in enumerate(self.settings["folders"])]
         if counts.get(None):
-            rows.append(("Other places (dropped in from elsewhere)", self.OTHER_PLACES, counts[None]))
+            rows.append(("Imported once / other places (not watched)", self.OTHER_PLACES, counts[None]))
         self._scope_empty = [key for _l, key, n in rows if not n and key != self.OTHER_PLACES]
         for label, key, n in rows:
             if not n:

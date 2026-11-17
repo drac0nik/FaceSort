@@ -60,7 +60,7 @@ jobs:
           --add-data "models;models" --add-data "icon.png;."
           --collect-all pillow_heif --collect-binaries onnxruntime --collect-binaries cv2
           --collect-binaries rawpy --collect-data imageio_ffmpeg --exclude-module tkinter
-          --hidden-import helpers --hidden-import jobfuncs --hidden-import fp16 --hidden-import onnxconverter_common.float16 --hidden-import content --hidden-import face_attrs
+          --hidden-import helpers --hidden-import jobfuncs --hidden-import fp16 --hidden-import importer --hidden-import rules --hidden-import rules_ui --hidden-import pose --hidden-import onnxconverter_common.float16 --hidden-import content --hidden-import face_attrs
           --distpath dist --workpath build facesort.py
 
       - name: Check the helper processes in the built app
