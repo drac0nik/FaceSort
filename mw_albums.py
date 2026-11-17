@@ -43,9 +43,7 @@ class AlbumsMixin:
         name = (self.conn.execute("SELECT name FROM albums WHERE id=?", (aid,)).fetchone() or ["?"])[0]
         self.statusBar().showMessage(f"{n:,} photo{'s' if n != 1 else ''} added to “{name}”"
                                      + (f" ({len(photos) - n:,} were already in it)" if n < len(photos) else ""), 6000)
-        self.rebuild_tree()
-        if self.view == ("album", aid):
-            self.refresh_grid(keep_selection=True)
+        self.update_lists(grid=self.view == ("album", aid), stats=False)
 
     def remove_photos_from_album(self, aid, photos):
         store.remove_from_album(self.conn, aid, photos)
@@ -54,8 +52,7 @@ class AlbumsMixin:
         self.conn.commit()
         self.statusBar().showMessage(f"{len(photos):,} photo{'s' if len(photos) != 1 else ''} taken out of the album "
                                      "(nothing was deleted).", 6000)
-        self.rebuild_tree()
-        self.refresh_grid()
+        self.update_lists(stats=False)
 
     def rename_album(self, aid):
         old = (self.conn.execute("SELECT name FROM albums WHERE id=?", (aid,)).fetchone() or [""])[0]

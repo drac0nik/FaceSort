@@ -29,8 +29,10 @@ try:                                     # video playback (Qt's own player, FFmp
 except Exception:
     MEDIA_OK = False
 SPEEDS = (0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 4.0)
-APP_VERSION = "1.50.2"
-IDLE_REDRAW = 2.5       # seconds without a key / click before the sidebar and lists are fully redrawn (1.45.3: was 1.2)
+APP_VERSION = "1.50.3"
+IDLE_REDRAW = 1.0       # seconds without a key / click before the sidebar and lists are fully redrawn when they
+                        # can't be read ahead (1.45.3: 2.5; 1.50.3: 1.0)
+APPLY_QUIET = 0.35      # (1.50.3) numbers read ahead are swapped into the lists at a pause this long
 DETECTOR_VERSION = 3   # bump when detection improves, so photos with no faces get re-checked
 SUGGEST = QColor(232, 160, 32)
 

@@ -68,34 +68,92 @@ class ListsMixin:
         self._ra_worker = None
         if getattr(self, "_closing", False):
             return
-        changed = self._ra_again or (id(self.conn), store.data_dir(), self.conn.total_changes) != mark
-        self._ra_tries = getattr(self, "_ra_tries", 0) + 1
-        if changed and self._ra_tries < 3:
-            self._start_read_ahead()            # something changed since: those numbers are old
+        if answers is None or (id(self.conn), store.data_dir()) != mark[:2]:
+            self._ra_ready = None              # (failed, or another library now: draw it as usual)
+            grid, stats = getattr(self, "_lists_want", (True, True))
+            self._lists_want = (False, False)
+            self.apply_lists(None, grid, stats)
             return
+        self._ra_ready = (answers, mark)
+        self._apply_when_quiet()
+
+    def _apply_when_quiet(self):
+        """(1.50.3) Swap the new lists in at a short pause in your clicking / typing - so the moment
+        it takes never lands in the middle of tagging. Changed again since they were read: the side
+        lists and counts are still newer than what's on screen, so they go in (the gallery doesn't -
+        you've changed it since) and everything is read once more."""
+        from ui_common import APPLY_QUIET
+        ready = getattr(self, "_ra_ready", None)
+        if ready is None or getattr(self, "_closing", False):
+            return
+        answers, mark = ready
+        quiet = time.monotonic() - getattr(self, "_last_input", 0.0)
+        waited = time.monotonic() - getattr(self, "_ra_started", 0.0)
+        if quiet < APPLY_QUIET and waited < 8.0 and self.viewer is None:
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(int((APPLY_QUIET - quiet) * 1000) + 30, self._apply_when_quiet)
+            return
+        self._ra_ready = None
+        stale = self._ra_again or (id(self.conn), store.data_dir(), self.conn.total_changes) != mark
         grid, stats = getattr(self, "_lists_want", (True, True))
+        if stale:
+            self.apply_lists(answers, False, stats)
+            self._lists_want = (True, False)
+            self._start_read_ahead()
+            return
         self._lists_want = (False, False)
-        self.apply_lists(None if changed else answers, grid, stats)
+        self.apply_lists(answers, grid, stats)
 
     def apply_lists(self, answers, grid=True, stats=True):
+        """Redraw with answers read ahead (None: ask as usual). (1.50.3) A part whose answers are
+        exactly the ones it was last drawn from (a regroup that changed nothing, a change that only
+        touched the gallery…) isn't redrawn at all."""
         import listcache
+        view = tuple(self.view) if self.view else None
+        last = getattr(self, "_last_parts", None)
+
+        def same(part):
+            if answers is None or not last or last.get("view") != view or part not in last:
+                return False
+            keys, old = last[part]
+            return all(k in answers for k in keys) and [answers[k] for k in keys] == old
+        do_tree = not same("tree")
+        grid = grid and not (same("grid") and not do_tree)
+        stats = stats and not same("stats")
+        if not (do_tree or grid or stats):
+            return
         real = self.conn
         if isinstance(real, listcache.Recording):
             real = real._real
         rec = listcache.Recording(real, answers)
         self.conn = rec
         try:
-            self._rebuild_tree()
+            if do_tree:
+                self._rebuild_tree()
+            rec.part = "grid"
             if grid:
                 self.refresh_grid()
+            rec.part = "stats"
             if stats:
                 self.refresh_stats()
         finally:
             self.conn = real
             rec._answers = {}                  # (a button made during the redraw keeps a plain connection)
-        self._tree_questions = list(rec.asked)
+        if do_tree and grid and stats:
+            self._tree_questions = list(rec.asked)
+        else:                                  # (a part skipped: its questions are still wanted next time)
+            self._tree_questions = list(dict.fromkeys(list(getattr(self, "_tree_questions", ())) + list(rec.asked)))
         self._lists_hits = (rec.hits, rec.misses)
         self._lists_missed = rec.missed[:20]
+        parts = dict(last) if last and last.get("view") == tuple(self.view or ()) else {}
+        parts["view"] = tuple(self.view) if self.view else None
+        if answers is not None and not rec.misses:
+            for part, keys in rec.parts.items():
+                ks = list(keys)
+                parts[part] = (ks, [answers[k] for k in ks])
+        else:
+            parts = {"view": parts["view"]}
+        self._last_parts = parts
 
     def sort_other(self, sec):
         """Order the Smart Groups' "Other" list: as FaceSort lays it out, most / fewest first, or A-Z."""
@@ -171,6 +229,7 @@ class ListsMixin:
         finally:
             self.conn = real
         self._tree_questions = list(rec.asked)
+        self._last_parts = None
 
     def _rebuild_tree(self):
         c = self.conn

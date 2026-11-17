@@ -30,6 +30,11 @@ class ActionsMixin:
             self._refresh_on_close = True     # the preview is open: done when it closes, not under your fingers
             return
         quiet = time.monotonic() - self._last_input
+        if self.lists_async():
+            # (1.50.3) the numbers are read in the background straight away, while you keep working;
+            # the lists are swapped in at the next short pause (apply_when_quiet)
+            self.after_change(regroup=False)
+            return
         if quiet < IDLE_REDRAW:
             # you're still working (confirming, clicking): the full redraw waits for a real pause
             self.refresh_timer.start(int((IDLE_REDRAW - quiet) * 1000) + 50)
@@ -59,7 +64,10 @@ class ActionsMixin:
         else:
             self.pending_timer.start()                      # the Sort into folders count, once you pause
         if defer:
-            self.refresh_timer.start()
+            # (1.50.3) not pushed back by every click: during a long run of tagging the lists are read
+            # ahead about every half second and swapped in at your next short pause
+            if not (self.lists_async() and self.refresh_timer.isActive()):
+                self.refresh_timer.start()
             if regroup:
                 self.schedule_regroup()
             return
@@ -580,7 +588,7 @@ class ActionsMixin:
                 self.viewer.update_compare()
             return
         if len(sets) != before:
-            self.rebuild_tree()
+            self.update_lists(grid=False, stats=False)   # (1.50.3: read ahead, swapped in at a pause)
         if self.view[0] == "dupes":
             self.refresh_grid()
         elif self.dupes_btn.isChecked():
@@ -739,7 +747,7 @@ class ActionsMixin:
         if self.viewer_open():
             return
         if len(self._misplaced) != before:
-            self.rebuild_tree()
+            self.update_lists(grid=False, stats=False)
             if before == 0 and self._misplaced:
                 self.statusBar().showMessage(f"{len(self._misplaced):,} photos in your library aren't in the folder "
                                              "they belong in - see Other > Not where they belong.", 12000)

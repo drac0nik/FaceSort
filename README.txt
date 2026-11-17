@@ -153,6 +153,18 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.50.3
+- Tagging without waiting: while you work in the gallery, the side lists' numbers are read in the
+  background about every half second, and the lists are swapped in at your next short pause
+  (about a third of a second without a click or key) - never in the middle of a run of keypresses.
+  (Before: they waited for 2.5 seconds of quiet, then froze the window while they were redrawn.)
+- Parts of the redraw whose numbers haven't changed (a regroup that changed nothing, a change that
+  only touched the gallery) aren't redrawn at all.
+- Duplicate sets, "not where they belong" and "possibly the same person" finishing in the
+  background, and adding photos to / taking them out of an album, go the same quick way.
+- Fixed: after an update, the first start showed a generic icon on the taskbar (the installer now
+  gives the shortcuts FaceSort's app id and refreshes Windows' icon cache).
+
 1.50.2
 - Fixed: folders you dropped in (imported once, not watched) stayed behind, empty, after Sort into
   folders moved their photos out. Now the emptied folder goes to ~To Be Discarded - the whole

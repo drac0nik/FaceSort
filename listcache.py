@@ -69,6 +69,8 @@ class Recording:
         self.hits = 0
         self.misses = 0
         self.missed = []                  # (questions not read ahead, when there were answers)
+        self.part = "tree"                # which part of the redraw is asking (tree / grid / stats)
+        self.parts = {}                   # part -> its questions
 
     def execute(self, sql, params=()):
         head = sql.lstrip()[:10].upper()
@@ -77,6 +79,7 @@ class Recording:
         key = _key(sql, params)
         if key not in self.asked and len(self.asked) < MAX_QUERIES:
             self.asked[key] = None
+        self.parts.setdefault(self.part, {})[key] = None
         got = self._answers.get(key)
         if got is not None:
             self.hits += 1

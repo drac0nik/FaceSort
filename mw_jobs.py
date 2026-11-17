@@ -287,9 +287,7 @@ class JobsMixin:
             import samepeople
             self._same_count = len(samepeople.pairs(self.conn))
             if had != self._same_count:
-                self.rebuild_tree()
-                if self.view and self.view[0] == "same":
-                    self.refresh_grid()
+                self.update_lists(grid=bool(self.view and self.view[0] == "same"), stats=False)
         self.same_worker.ok.connect(done)
         self.same_worker.failed.connect(lambda tb: log(tb))
         self.same_worker.start_background(self.settings)

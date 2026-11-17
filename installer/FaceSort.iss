@@ -36,6 +36,9 @@ ArchitecturesInstallIn64BitMode=x64compatible
 ; an update closes a running FaceSort first (it saves on close) and starts it again afterwards
 CloseApplications=force
 RestartApplications=no
+; (1.50.3) tells Windows to refresh its icon cache after installing: right after an update the new
+; FaceSort.exe otherwise showed a generic icon on the taskbar until the second start
+ChangesAssociations=yes
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"
@@ -48,8 +51,10 @@ Type: filesandordirs; Name: "{app}\_internal"
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\FaceSort"; Filename: "{app}\FaceSort.exe"
-Name: "{autodesktop}\FaceSort"; Filename: "{app}\FaceSort.exe"; Tasks: desktopicon
+; (1.50.3) the same app id FaceSort gives itself, so the taskbar matches the running window to these
+; shortcuts (and their icon) at once - also on the first start after an update
+Name: "{autoprograms}\FaceSort"; Filename: "{app}\FaceSort.exe"; IconFilename: "{app}\FaceSort.exe"; AppUserModelID: "FaceSort.App"
+Name: "{autodesktop}\FaceSort"; Filename: "{app}\FaceSort.exe"; IconFilename: "{app}\FaceSort.exe"; AppUserModelID: "FaceSort.App"; Tasks: desktopicon
 
 [Run]
 ; after installing - and after a quiet update from inside FaceSort - start it (again)
