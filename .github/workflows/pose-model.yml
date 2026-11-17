@@ -1,0 +1,53 @@
+# Publishes the pose model (RTMPose-m, OpenMMLab, Apache-2.0) as the "models-pose" pre-release,
+# which FaceSort downloads when pose reading is on. Run it by hand from the Actions tab (once).
+name: Pose model
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Get RTMPose-m (body, 256x192) and check it
+        run: |
+          mkdir work && cd work
+          curl -sSfL -o rtmpose.zip "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/rtmpose-m_simcc-body7_pt-body7_420e-256x192-e48f03d0_20230504.zip"
+          sha256sum rtmpose.zip
+          unzip -q rtmpose.zip
+          ONNX=$(find . -name "*.onnx" | head -n1)
+          echo "found $ONNX"
+          cp "$ONNX" rtmpose_m_body7_256x192.onnx
+          pip install onnxruntime numpy
+          python - <<'PY'
+          import numpy as np, onnxruntime as ort
+          s = ort.InferenceSession("rtmpose_m_body7_256x192.onnx", providers=["CPUExecutionProvider"])
+          i = s.get_inputs()[0]
+          print("input", i.name, i.shape, [ (o.name, o.shape) for o in s.get_outputs()])
+          out = s.run(None, {i.name: np.random.rand(1, 3, 256, 192).astype(np.float32)})
+          print([o.shape for o in out])
+          assert out[0].shape[1] == 17
+          PY
+          sha256sum rtmpose_m_body7_256x192.onnx > rtmpose_m_body7_256x192.onnx.sha256
+          cat rtmpose_m_body7_256x192.onnx.sha256
+          curl -sSfL -o RTMPose-LICENSE.txt https://raw.githubusercontent.com/open-mmlab/mmpose/main/LICENSE
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd work
+          printf '%s\n' "Pose model used by FaceSort's pose reading (downloaded by the app; not an app release)." "" \
+            "rtmpose_m_body7_256x192.onnx: RTMPose-m (body, 17 keypoints, 256x192) by OpenMMLab (https://github.com/open-mmlab/mmpose/tree/main/projects/rtmpose), the official ONNX export (rtmpose-m_simcc-body7_pt-body7_420e-256x192-e48f03d0_20230504.zip), unchanged." "" \
+            "Licence: Apache-2.0 - see RTMPose-LICENSE.txt." > notes.md
+          gh release delete models-pose --cleanup-tag --yes || true
+          gh release create models-pose --target "${{ github.sha }}" --prerelease \
+            --title "Pose model (RTMPose-m)" --notes-file notes.md \
+            rtmpose_m_body7_256x192.onnx rtmpose_m_body7_256x192.onnx.sha256 RTMPose-LICENSE.txt
