@@ -46,6 +46,7 @@ class ActionsMixin:
         """Bring the window up to date after a change. defer=True: the change is already shown
         where you're working (e.g. a confirmed face); the rest catches up a moment later, once
         you pause, so quick keypresses never wait for it."""
+        self.flush_history()
         try:
             if store.apply_drop_folders(self.conn):     # dropped folder names, for people just tagged
                 self._data_gen = getattr(self, "_data_gen", 0) + 1
@@ -164,6 +165,7 @@ class ActionsMixin:
         (the tiles that leave are taken out, or the gallery alone is reloaded) and the side lists and
         counts catch up once you pause - so ignoring, tagging or closing the viewer never waits for
         a full redraw (that's what made each click take half a second on a big library)."""
+        self.flush_history()
         if drop:
             self.drop_from_view(drop)
         else:
@@ -569,6 +571,8 @@ class ActionsMixin:
         self.dup_worker.start()
 
     def dup_sets_done(self, key, res):
+        if getattr(self, "_closing", False):
+            return                                  # (finished as the window closed: nothing to show it in)
         sets, unchecked = res
         before = len(getattr(self, "_dups", []))
         self._dups, self._dup_key = sets, key
@@ -857,6 +861,34 @@ class ActionsMixin:
             self.conn.commit()
             self._pid_cache = {}
             self.after_change(regroup=False)
+
+    # ---------------------------------------------------------------- history (1.47)
+    def flush_history(self):
+        """What the last click / key changed becomes one history entry."""
+        try:
+            import history
+            history.flush(self.conn)
+        except Exception as e:
+            log(f"history: {e}")
+
+    def show_history(self):
+        from history_ui import HistoryDialog
+        self.flush_history()
+        HistoryDialog(self).exec()
+
+    def undo_last(self):
+        """Ctrl+Z: undo the latest change that hasn't been undone."""
+        import history
+        self.flush_history()
+        row = self.conn.execute("SELECT id, text FROM history WHERE undone=0 ORDER BY id DESC LIMIT 1").fetchone()
+        if not row:
+            self.statusBar().showMessage("Nothing to undo.", 4000)
+            return
+        done, skipped = history.undo(self.conn, row[0])
+        self.statusBar().showMessage(f"Undone: {row[1]}" + (f" ({skipped:,} item{'s' if skipped != 1 else ''} changed "
+                                                           "since - left as they are)" if skipped else ""), 8000)
+        self._pid_cache = {}
+        self.after_change()
 
     def build_folder_bar(self):
         """The bar of buttons above the gallery: one per folder section (jump to it, drop onto it)."""

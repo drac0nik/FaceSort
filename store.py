@@ -469,6 +469,8 @@ def connect(path=None):
         CREATE TABLE IF NOT EXISTS photo_pose(photo_id INTEGER, pose TEXT, PRIMARY KEY(photo_id, pose));   -- 1.46
         CREATE INDEX IF NOT EXISTS photo_pose_pose ON photo_pose(pose);
         CREATE TABLE IF NOT EXISTS photo_points(photo_id INTEGER PRIMARY KEY, info TEXT);  -- 1.46: body points
+        CREATE TABLE IF NOT EXISTS history(id INTEGER PRIMARY KEY, at REAL, kind TEXT, text TEXT, data TEXT,
+            size INTEGER, undone INTEGER DEFAULT 0);                                     -- 1.47: undo history
         CREATE TRIGGER IF NOT EXISTS photos_gone_pose AFTER DELETE ON photos BEGIN
             DELETE FROM photo_pose WHERE photo_id=OLD.id;
             DELETE FROM photo_points WHERE photo_id=OLD.id;

@@ -202,11 +202,17 @@ def run(conn, settings, progress=lambda d, t, m: None, cancelled=lambda: False, 
         progress(n, len(rules), f"Rules… {n} / {len(rules)}")
         ids = matching(conn, rule, thr, photo_ids)
         if ids:
-            done = act(conn, rule, ids)
+            import history
+            label = f"Rule: {rule['name'] or describe(rule)} ({len(ids)} photo{'s' if len(ids) != 1 else ''})"
+            faces = [r[0] for r in conn.execute(f"SELECT id FROM faces WHERE photo_id IN ({','.join('?' * len(ids))})",
+                                                ids)]
+            snap = history.Snapshot(conn, label, faces=faces, photos=ids)
+            with history.paused():
+                act(conn, rule, ids)
             try:
-                import history
-                history.record(conn, "rule", f"Rule: {rule['name'] or describe(rule)} ({len(ids)} photo"
-                                              f"{'s' if len(ids) != 1 else ''})", done)
+                data = snap.finish()
+                if data:
+                    history.record(conn, "rule", label, data)
             except Exception:
                 pass
             out.append((rule["name"] or describe(rule), len(ids)))

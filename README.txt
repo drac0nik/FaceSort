@@ -153,6 +153,16 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+History and undo (1.47)
+- History (toolbar): everything you've done in the last 30 days (and at least the last 5,000
+  changes) - naming, confirming, ignoring, discarding, folders, albums and tags, Sort Later,
+  renaming / merging / deleting people, what rules did, and files moved by Sort into folders.
+  One click or key is one entry.
+- Undo any entry, not just the last one (double-click it, or Undo). Anything changed again since
+  is left as it is now, and you're told how many. Moved files go back where they were if
+  they're still where FaceSort put them. Ctrl+Z undoes the latest change.
+- Only what changed is kept (the before and after of those rows, as text).
+
 Add photos, rules and poses (1.46)
 - Add photos: one window for dropping files or folders and for Add folder…. By default a dropped
   folder is imported once - what's there now is added and the folder is forgotten (not watched,

@@ -43,6 +43,8 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         super().__init__()
         self.settings = store.load_settings()
         self.conn = store.connect()
+        import history
+        history.install(store)            # (1.47) the window's changes go into the history
         # the window's changes are saved by commit(); anything an action leaves open is saved as
         # soon as the window is idle, so it never holds the write gate (dbgate) for long
         self._save_timer = QTimer(self)
@@ -191,6 +193,8 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         self.a_details.setToolTip("Show / hide the details panel on the right (size, dimensions, EXIF…)")
         self.a_details.setCheckable(True)
         self.a_details.setChecked(bool(self.settings.get("details_panel", False)))
+        act("History", QStyle.SP_BrowserReload, self.show_history,
+            "Everything you've done in the last 30 days - undo any of it (Ctrl+Z undoes the last change)")
         act("Settings", QStyle.SP_FileDialogDetailedView, self.open_settings)
         act("Help", QStyle.SP_DialogHelpButton, self.show_help)
 
@@ -714,6 +718,8 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
                 sc.setContext(ctx)
                 sc.activated.connect(fn)
                 self._main_shortcuts.append(sc)
+        sc = QShortcut(QKeySequence("Ctrl+Z"), self)            # (1.47) undo the last change (History: any of them)
+        sc.activated.connect(self.undo_last)
         sc = QShortcut(QKeySequence("F11"), self)
         sc.activated.connect(self.toggle_fullscreen)
         sc = QShortcut(QKeySequence("Ctrl+Shift+N"), self)       # new folder, as in Windows Explorer

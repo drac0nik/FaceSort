@@ -437,6 +437,10 @@ class JobsMixin:
         if name == "scan":
             QTimer.singleShot(1500, self.start_rules)          # (1.46) rules for the new photos
             QTimer.singleShot(6000, self.start_pose)           # and their poses
+        if isinstance(res, dict) and res.get("moves"):
+            import history
+            history.record_files(f"Moved {len(res['moves']):,} files (Sort into folders)", res["moves"])
+            history.flush(self.conn)
         if isinstance(res, dict) and res.get("engine_status"):
             self._engine_status = tuple(res["engine_status"])
         self.update_engine_label()

@@ -1205,6 +1205,8 @@ def export_folders(conn, dest, include_suggestions=False, move=False,
         cleaned = cleanup_empty_folders([r for r in roots if os.path.isdir(r)], dest, progress)
         stats["folders_cleaned"] = len(cleaned)
         log_rows += [(a, b) for a, b in cleaned]
+    if move and log_rows:
+        stats["moves"] = [(a, b) for a, b in log_rows if a != b]      # (1.47) for the history: undo moves them back
     if log_rows:
         # a record of every move, in case you want to put things back
         # (kept in FaceSort's own data folder - the library doesn't need it, so it stays out of your photos)

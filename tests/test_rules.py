@@ -1,4 +1,6 @@
 """Rules for incoming photos (1.46)."""
+import os
+
 import rules
 import store
 from conftest import add_photo, unit
@@ -7,7 +9,8 @@ import numpy as np
 
 def new_photo(c, name, seed, person=None, confirmed=1, conf=None):
     rng = np.random.default_rng(seed)
-    pid = add_photo(c, f"/lib/In/{name}.jpg", [unit(rng.normal(size=128))], seed=seed)
+    pid = add_photo(c, os.path.abspath(os.path.join(os.sep, "lib", "In", f"{name}.jpg")),
+                    [unit(rng.normal(size=128))], seed=seed)
     if person:
         c.execute("UPDATE faces SET person_id=?, confirmed=?, sugg_conf=? WHERE photo_id=?",
                   (person, confirmed, conf, pid))
@@ -53,7 +56,8 @@ def test_rules(library):
 
 def test_rule_folder_condition_and_order(library):
     c = library.conn
-    rid = rules.save_rule(c, {"cond": {"folder": "/lib/In"}, "action": {"tag": "Incoming"}})
+    rid = rules.save_rule(c, {"cond": {"folder": os.path.abspath(os.path.join(os.sep, "lib", "In"))},
+                              "action": {"tag": "Incoming"}})
     rid2 = rules.save_rule(c, {"cond": {}, "action": {"tag": "Any"}})
     p = new_photo(c, "f", 5011)
     rules.run(c, {})
