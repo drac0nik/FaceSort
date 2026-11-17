@@ -142,6 +142,118 @@ class AlbumsMixin:
         self.conn.commit()
         self.after_change(regroup=False)
 
+    # ---------------------------------------------------------------- smart albums (1.48)
+    def smart_threshold(self):
+        import rules
+        return rules.settings_threshold(self.settings) or 95.0
+
+    def smart_dialog(self, name="", f=None):
+        import smart
+        from smart_ui import SmartAlbumDialog, folder_choices
+        try:
+            people = self.people_by_recent()
+        except Exception:
+            people = []
+        tags = [r[0] for r in self.conn.execute("SELECT name FROM albums ORDER BY tag DESC, name COLLATE NOCASE")]
+        thr = self.smart_threshold()
+        return SmartAlbumDialog(self, self.conn, name, f, people, tags, folder_choices(self.conn),
+                                count_fn=lambda flt: len(smart.photo_ids(self.conn, flt, thr)))
+
+    def new_smart_album(self, f=None, name=""):
+        import smart
+        d = self.smart_dialog(name, f)
+        if not d.exec():
+            return None
+        sid = smart.save(self.conn, d.chosen_name(), d.value())
+        self.rebuild_tree()
+        self.show_view(("smart", sid))
+        return sid
+
+    def edit_smart_album(self, sid):
+        import smart
+        name, f = smart.get(self.conn, sid)
+        if name is None:
+            return
+        d = self.smart_dialog(name, f)
+        if not d.exec():
+            return
+        smart.save(self.conn, d.chosen_name() or name, d.value(), sid)
+        self.rebuild_tree()
+        if self.view == ("smart", sid):
+            self.refresh_grid()
+
+    def delete_smart_album(self, sid):
+        import smart
+        name, _f = smart.get(self.conn, sid)
+        if QMessageBox.question(self, "Delete smart album", f"Delete the smart album “{name}”?\n\nOnly the saved "
+                                "conditions go - no photo is touched.") != QMessageBox.Yes:
+            return
+        smart.delete(self.conn, sid)
+        if self.view == ("smart", sid):
+            self.view = ("none", None)
+        self.rebuild_tree()
+        self.refresh_grid()
+
+    def smart_to_album(self, sid):
+        import smart
+        aid = smart.make_normal(self.conn, sid, self.smart_threshold())
+        if aid:
+            name = (self.conn.execute("SELECT name FROM albums WHERE id=?", (aid,)).fetchone() or ["?"])[0]
+            self.statusBar().showMessage(f"Album “{name}” made with the photos in the smart album now.", 8000)
+            self.rebuild_tree()
+
+    def show_view(self, key):
+        it = self.find_tree_item(key) if hasattr(self, "find_tree_item") else None
+        if it is not None:
+            self.select_item(it)
+        else:
+            self.view = key
+            self.refresh_grid(keep_selection=False)
+
+    def smart_suggestions(self):
+        import smart
+        cache = getattr(self, "_smart_sugg_cache", None)
+        sig = self.conn.execute("SELECT (SELECT COUNT(*) FROM photos), (SELECT COUNT(*) FROM faces WHERE confirmed=1), "
+                                "(SELECT COUNT(*) FROM album_photos), (SELECT COUNT(*) FROM smart_albums), "
+                                "(SELECT COUNT(*) FROM smart_dismissed)").fetchone()
+        if cache and cache[0] == sig:
+            return cache[1]
+        try:
+            hidden = self.hidden_people() if hasattr(self, "hidden_people") else ()
+        except Exception:
+            hidden = ()
+        got = smart.suggestions(self.conn, hidden_people=hidden)
+        self._smart_sugg_cache = (sig, got)
+        return got
+
+    def choose_smart_suggestions(self):
+        from smart_ui import SmartSuggestDialog
+        d = SmartSuggestDialog(self, self.conn, self.smart_suggestions(), preview=self.preview_smart)
+        d.exec()
+        if d.edit:
+            self.new_smart_album(d.edit["filter"], d.edit["name"])
+        elif d.made:
+            self.rebuild_tree()
+            self.show_view(("smart", d.made[-1]))
+        else:
+            self.rebuild_tree()
+            if self.view and self.view[0] == "smart_sugg":
+                self.refresh_grid()
+
+    def preview_smart(self, sugg):
+        self._smart_preview = sugg
+        self.view = ("smart_preview", None)
+        self.refresh_grid(keep_selection=False)
+
+    def smart_near_answer(self, photos, yes):
+        import smart
+        near = getattr(self, "_smart_near", {}) or {}
+        pairs = [(p, near[p]) for p in photos if p in near]
+        if not pairs:
+            return
+        (smart.accept_near if yes else smart.reject_near)(self.conn, pairs)
+        self.after_change(regroup=False)
+
     # ---------------------------------------------------------------- search by description
     def describe_search(self):
         text = " ".join(self.search_box.text().split())
@@ -465,6 +577,11 @@ class AlbumsMixin:
             return m
         if drop and tuple(drop) == ("album_root",):
             m.addAction("New album…", self.new_album)
+            m.addAction("New smart album…", lambda: self.new_smart_album())
+            return m
+        if drop and tuple(drop) == ("smart_root",):
+            m.addAction("New smart album…", lambda: self.new_smart_album())
+            m.addAction("Suggested smart albums…", self.choose_smart_suggestions)
             return m
         key = key_of(it)
         if not key:
@@ -475,6 +592,18 @@ class AlbumsMixin:
             m.addAction("New album…", self.new_album)
             m.addSeparator()
             m.addAction("Delete album… (photos stay)", lambda: self.delete_album(aid))
+            return m
+        if key[0] == "smart":
+            sid = key[1]
+            m.addAction("Change…", lambda: self.edit_smart_album(sid))
+            m.addAction("Make a normal album (as it is now)", lambda: self.smart_to_album(sid))
+            m.addAction("New smart album…", lambda: self.new_smart_album())
+            m.addSeparator()
+            m.addAction("Delete smart album… (photos stay)", lambda: self.delete_smart_album(sid))
+            return m
+        if key[0] == "smart_sugg":
+            m.addAction("Choose which to make…", self.choose_smart_suggestions)
+            m.addAction("New smart album…", lambda: self.new_smart_album())
             return m
         if key[0] in ("person", "category", "group"):
             self.select_item(it)

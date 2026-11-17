@@ -301,6 +301,7 @@ def learn_levels(conn, cancelled=lambda: False):
     descriptions); every photo's level is then worked out again. Returns photos changed."""
     said = dict(conn.execute("SELECT photo_id, level_set FROM photo_content WHERE level_set IS NOT NULL"))
     learned = {}
+    _imported_levels(conn, said, learned, cancelled)
     if said and clip_ok():
         vecs = clip_vecs(conn, said)
         lab = [(vecs[p], s) for p, s in said.items() if p in vecs]
@@ -329,6 +330,27 @@ def learn_levels(conn, cancelled=lambda: False):
     conn.executemany("UPDATE photo_content SET level=? WHERE photo_id=?", changed)
     conn.commit()
     return len(changed)
+
+
+def _imported_levels(conn, said, learned, cancelled):
+    """(1.48) Level models imported from another FaceSort: used while there are too few corrections
+    here to learn from (fewer than 20)."""
+    if len(said) >= 20 or not clip_ok():
+        return
+    try:
+        import learned as lm
+        m1, m2 = lm.imported(conn, "level", "nsfw"), lm.imported(conn, "level", "explicit")
+    except Exception:
+        return
+    if m1 is None:
+        return
+    for pid, v in clip_vecs(conn).items():
+        if cancelled():
+            return
+        v = v / (np.linalg.norm(v) or 1)
+        p1 = float(1 / (1 + np.exp(-(v @ m1[0] + m1[1]))))
+        p2 = float(1 / (1 + np.exp(-(v @ m2[0] + m2[1])))) if m2 is not None else 0.0
+        learned[pid] = (p1, p2)
 
 
 def set_level(conn, photo_ids, value):
@@ -383,8 +405,28 @@ class TagScorer:
                 X /= np.linalg.norm(X, axis=1, keepdims=True) + 1e-9
                 y = np.array([1.0] * len(P) + [0.0] * len(N), np.float32)
                 model = _train(X, y, steps=200)
+        # (1.48) a model imported from another FaceSort: a head start, blended with what's learned here
+        try:
+            import learned
+            imp = learned.imported(self.conn, "tag", name)
+            if imp is not None and self.clip:
+                model = learned.blend(model, len(pos), imp)
+        except Exception:
+            pass
         self._models[name] = (sig, model)
         return model
+
+    def _imported_only(self, name):
+        """(1.48) A tag with no album here yet, but a model imported from another FaceSort."""
+        cache = self.__dict__.setdefault("_imp", {})
+        if name not in cache:
+            try:
+                import learned
+                imp = learned.imported(self.conn, "tag", name)
+            except Exception:
+                imp = None
+            cache[name] = (imp[0], imp[1]) if imp is not None else None
+        return cache[name] if self.clip else None
 
     def _baseline(self):
         """How well each tag's words fit photos in general (so a tag is suggested when a photo fits
@@ -425,7 +467,7 @@ class TagScorer:
             for t in self.tags + [a for a in self.albums if a not in self.tags]:
                 if t in ("Explicit", "Suggestive", "Nude", "Topless"):
                     continue
-                m = self._album_model(t)
+                m = self._album_model(t) if t in self.albums else self._imported_only(t)
                 if m is not None:                         # your own album: learned from its photos
                     p = float(1 / (1 + np.exp(-(v @ m[0] + m[1]))))
                     if p >= 0.5:
@@ -465,6 +507,31 @@ class TagScorer:
                     if len(out) >= n:
                         break
         return out
+
+    def probabilities(self, tag, photo_ids):
+        """(1.48) [(photo id, 0-1)] how likely each photo has this tag: the tag's learned model (yours or
+        imported), else how much better than usual the photo fits the tag's words."""
+        if not self.clip:
+            return []
+        vecs = clip_vecs(self.conn, list(photo_ids))
+        ids = [p for p in photo_ids if p in vecs]
+        if not ids:
+            return []
+        X = np.stack([vecs[p] for p in ids])
+        X /= np.linalg.norm(X, axis=1, keepdims=True) + 1e-9
+        m = self._album_model(tag) if tag in self.albums else self._imported_only(tag)
+        if m is not None:
+            p = 1 / (1 + np.exp(-(X @ m[0] + m[1])))
+        else:
+            if tag not in self.tags:
+                self.tags.append(tag)
+                self._base = None
+            base = self._baseline().get(tag)
+            if base is None:
+                return []
+            z = (X @ text_vec(PROMPTS.get(tag, f"a photo of {tag}")) - base[0]) / base[1]
+            p = np.where(z >= 1.6, np.minimum(0.95, 0.5 + z / 8), 0.0)
+        return [(ids[i], float(p[i])) for i in range(len(ids))]
 
     def album_suggestions(self, album_name, limit=60):
         """Photos FaceSort thinks belong in this album (from the photos you put in it)."""

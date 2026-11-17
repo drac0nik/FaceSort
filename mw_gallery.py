@@ -779,6 +779,57 @@ class GalleryMixin:
                                      "(FaceSort learns from both)." if sugg else ""))
             self.set_buttons([("Add all suggested", lambda aid=ident: self.add_album_suggestions(aid), True)]
                              if sugg else [])
+        elif kind == "smart":                # 1.48: a saved filter
+            import smart
+            name, f = smart.get(c, ident)
+            ids = smart.photo_ids(c, f or {}, self.smart_threshold()) if name is not None else []
+            rows = self.sort_rows(self.photo_rows(set(ids), limit=50000))
+            near = []
+            self._smart_near = {}
+            if f and f.get("tags") and self.settings.get("clip_on") and clip_search.available():
+                try:
+                    near = smart.near_misses(c, f, self.album_scorer(), self.smart_threshold())
+                except Exception as e:
+                    log(f"smart album near misses: {e}")
+            if near:
+                self._smart_near = {pid: t for pid, t, _p in near}
+                order = {pid: i for i, (pid, _t, _p) in enumerate(near)}
+                nrows = sorted(self.photo_rows(set(order), limit=len(order) + 1), key=lambda r: order.get(-r[0], 1 << 30))
+                rows = rows + [(0, f"Probably belong here too - missing a tag   ·   {len(nrows):,}", ("smart_near",), 1)] \
+                    + nrows
+            self.title.setText(f"Smart album · {name or '?'}")
+            self.subtitle.setText(f"{len(ids):,} photo{'s' if len(ids) != 1 else ''}: {smart.describe(f or {}, c)}. "
+                                  "It keeps itself up to date."
+                                  + (" At the end: photos FaceSort thinks have the missing tag - right-click > Yes / No "
+                                     "(it learns the tag from both)." if near else ""))
+            self.set_buttons([("Change…", lambda sid=ident: self.edit_smart_album(sid), True),
+                              ("Make a normal album", lambda sid=ident: self.smart_to_album(sid)),
+                              ("Yes to all at the end", lambda: self.smart_near_answer(list(self._smart_near), True))
+                              if near else None])
+        elif kind in ("smart_sugg", "smart_preview"):
+            import smart
+            rows = []
+            sugg = [getattr(self, "_smart_preview", None)] if kind == "smart_preview" else self.smart_suggestions()
+            sugg = [x for x in sugg if x]
+            for sg in sugg:
+                ids = smart.photo_ids(c, sg["filter"], self.smart_threshold())
+                part = self.sort_rows(self.photo_rows(set(ids), limit=50000 if kind == "smart_preview" else 12))
+                rows.append((0, f"{sg['name']}   ·   {sg['why']}", ("smart_s", sg["key"]), 1))
+                rows += part
+            if kind == "smart_preview" and sugg:
+                self.title.setText(f"Suggested · {sugg[0]['name']}")
+                self.subtitle.setText("What this smart album would hold now.")
+                self.set_buttons([("Make this smart album", lambda sg=sugg[0]: (
+                    self.show_view(("smart", smart.save(c, sg["name"], sg["filter"]))), self.rebuild_tree()), True),
+                    ("Change first…", lambda sg=sugg[0]: self.new_smart_album(sg["filter"], sg["name"])),
+                    ("No thanks", lambda sg=sugg[0]: (smart.dismiss(c, sg["key"]), self.show_view(("smart_sugg", None))))])
+            else:
+                self.title.setText("Suggested smart albums")
+                self.subtitle.setText(f"{len(sugg)} suggestion{'s' if len(sugg) != 1 else ''} from your library - a few "
+                                      "photos of each. Smart albums keep themselves up to date."
+                                      if sugg else "Nothing to suggest right now - name more people and tag more photos.")
+                self.set_buttons([("Choose which to make…", self.choose_smart_suggestions, True) if sugg else None,
+                                  ("New smart album…", lambda: self.new_smart_album())])
         elif kind == "vault":
             rows = []
             name = c.execute("SELECT name FROM categories WHERE id=?", (ident,)).fetchone()
@@ -963,7 +1014,9 @@ class GalleryMixin:
         self.zoom_row.setVisible(kind != "errors")
         if kind in self.smart_kinds() and kind not in ("dupes", "errors", "shoot"):
             rows = self.split_by_folder(rows)  # Smart Groups: one section per folder path
-        if kind not in ("search", "album") or (kind == "album" and not getattr(self, "_album_sugg", None)):
+        if kind in ("smart", "smart_sugg", "smart_preview"):
+            pass                            # (already in order, with their headings)
+        elif kind not in ("search", "album") or (kind == "album" and not getattr(self, "_album_sugg", None)):
             rows = self.sort_rows(rows)     # (search results stay best match first; album suggestions too)
         if getattr(self, "_dry", False):
             self._dry_rows = rows

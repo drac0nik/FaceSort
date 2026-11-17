@@ -788,6 +788,14 @@ class EngineMixin:
             tm = m.addMenu(app_icon("rotate_right"), "Turn")
             tm.addAction(app_icon("rotate_left"), "Turn left (anticlockwise)\t[", lambda: self.rotate_selected(False))
             tm.addAction(app_icon("rotate_right"), "Turn right (clockwise)\t]", lambda: self.rotate_selected(True))
+            if kind == "smart":
+                near = getattr(self, "_smart_near", None) or {}
+                hits = [p for p in sp_dup if p in near]
+                if hits:
+                    tags = sorted({near[p] for p in hits})
+                    m.addAction(app_icon("tag"), f"Yes - tag {', '.join(tags)}",
+                                lambda: self.smart_near_answer(hits, True))
+                    m.addAction(f"No - not {', '.join(tags)}", lambda: self.smart_near_answer(hits, False))
             if kind == "album":
                 sugg = [p for p in sp_dup if p in (getattr(self, "_album_sugg", None) or ())]
                 if sugg:

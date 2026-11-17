@@ -471,6 +471,10 @@ def connect(path=None):
         CREATE TABLE IF NOT EXISTS photo_points(photo_id INTEGER PRIMARY KEY, info TEXT);  -- 1.46: body points
         CREATE TABLE IF NOT EXISTS history(id INTEGER PRIMARY KEY, at REAL, kind TEXT, text TEXT, data TEXT,
             size INTEGER, undone INTEGER DEFAULT 0);                                     -- 1.47: undo history
+        CREATE TABLE IF NOT EXISTS learned(kind TEXT, name TEXT, w BLOB, b REAL, n INTEGER, at REAL,
+            PRIMARY KEY(kind, name));                                        -- 1.48: imported tag / level models
+        CREATE TABLE IF NOT EXISTS smart_albums(id INTEGER PRIMARY KEY, name TEXT, filter TEXT, created REAL);
+        CREATE TABLE IF NOT EXISTS smart_dismissed(key TEXT PRIMARY KEY, at REAL);       -- 1.48: suggestions you said no to
         CREATE TRIGGER IF NOT EXISTS photos_gone_pose AFTER DELETE ON photos BEGIN
             DELETE FROM photo_pose WHERE photo_id=OLD.id;
             DELETE FROM photo_points WHERE photo_id=OLD.id;

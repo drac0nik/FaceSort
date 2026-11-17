@@ -153,6 +153,24 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+Smart albums and shared learning (1.48)
+- Smart albums (Albums tab): saved conditions that fill themselves - people (any / all, and
+  optionally strong suggestions), tags (any / all, and not these), subject, pose, dates taken,
+  a library folder, with or without faces, photos or videos, Safe / Suggestive / Explicit.
+  Photos in a locked vault never appear. Right-click: Change, Make a normal album (freezes what's
+  in it now), Delete (photos stay).
+- Suggested smart albums: people often photographed together, bursts of photos over a few days
+  (events), and people often in one scene (Anna · Beach). See a few photos of each, make the
+  ones you want, or No thanks - never suggested again.
+- Training: a smart album with tags lists, at the end, photos that match everything but one tag
+  FaceSort thinks they have. Right-click > Yes tags them, No teaches it they don't.
+- Share what FaceSort learned (Settings > Tags): exports your tag models (the built-in content,
+  scene and pose tags, plus any of your own tags you tick) and the Safe / Suggestive / Explicit
+  model to a small .fslearn file. No photos, faces, people, names, folders, file names or dates -
+  only numbers on top of the description model - and nothing learned from vault photos.
+  Another FaceSort imports it as a head start (its tags join the tag list); once that FaceSort
+  has its own examples the two are blended. Forget imported removes it again.
+
 History and undo (1.47)
 - History (toolbar): everything you've done in the last 30 days (and at least the last 5,000
   changes) - naming, confirming, ignoring, discarding, folders, albums and tags, Sort Later,

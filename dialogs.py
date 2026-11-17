@@ -460,6 +460,11 @@ class SettingsDialog(QDialog):
         lay.addWidget(self.cb_safe_sugg)
         self.tags_edit = TagListEditor(tag_list(self.s))
         lay.addWidget(self.tags_edit)
+        b_learn = QPushButton("Share what FaceSort learned…")
+        b_learn.setToolTip("Export your tag and Safe / Suggestive / Explicit learning (no names, faces or photos) "
+                           "for another FaceSort, or import one")
+        b_learn.clicked.connect(self.share_learned)
+        lay.addWidget(b_learn, 0, Qt.AlignLeft)
         heading("Rules for new photos", lay)
         from rules_ui import RulesEditor
         win = self.parent()
@@ -624,6 +629,22 @@ class SettingsDialog(QDialog):
         import shutil
         shutil.rmtree(thumb_cache_dir(), ignore_errors=True)
         self.cache_label.setText("Thumbnail cache: cleared (rebuilt as you browse)")
+
+    def share_learned(self):
+        from learned_ui import LearnedDialog
+        win = self.parent()
+        d = LearnedDialog(self, win.conn, self.s)
+        d.exec()
+        if d.changed:
+            from tagcolumn import tag_list
+            try:
+                self.tags_edit.add_missing(tag_list(self.s))
+            except Exception:
+                pass
+            try:
+                win.learned_changed()
+            except Exception:
+                pass
 
     def result_settings(self):
         s = self.s
@@ -853,6 +874,13 @@ class GenericNamesEditor(QWidget):
     def result_list(self):
         return [{"name": self.list.item(i).text(), "menu": self.list.item(i).checkState() == Qt.Checked}
                 for i in range(self.list.count())]
+
+    def add_missing(self, items):
+        have = {n.casefold() for n in self.names()}
+        for it in items:
+            if it["name"].casefold() not in have:
+                have.add(it["name"].casefold())
+                self._add_item(it["name"], it.get("menu", True))
 
 
 class TagListEditor(GenericNamesEditor):

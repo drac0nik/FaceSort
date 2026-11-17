@@ -286,6 +286,16 @@ class JobsMixin:
         self.content_learn_worker.failed.connect(lambda tb: log(tb))
         self.content_learn_worker.start_background(self.settings)
 
+    def learned_changed(self):
+        """(1.48) Models imported / forgotten: tags suggested again and levels worked out again."""
+        from PySide6.QtWidgets import QApplication
+        import tagcolumn
+        for tc in QApplication.allWidgets():
+            if isinstance(tc, tagcolumn.TagColumn):
+                tc._scorer = None
+        if self.settings.get("content_on"):
+            self.start_content_learning()
+
     def start_sex_learning(self):
         """In the background: look-alikes of faces you corrected, FaceSort's own model trained on
         your corrections and the people you set as Man / Woman, and the Men / Unsure decision."""

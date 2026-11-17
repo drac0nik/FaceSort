@@ -324,6 +324,24 @@ class ListsMixin:
             it.setFlags(Qt.NoItemFlags)
             seca.addChild(it)
         seca.setExpanded(True)
+        # (1.48) smart albums: saved filters that fill themselves
+        import smart
+        sm = smart.all_smart(c)
+        secs = section(f"Smart albums ({len(sm)})", ("smart_root",), tree=self.treeA)
+        for sid, sname, f in sm:
+            it = QTreeWidgetItem([sname])
+            it.setIcon(0, app_icon("sparkle"))
+            it.setData(0, Qt.UserRole, ("smart", sid))
+            it.setData(0, Qt.UserRole + 1, sname.lower())
+            it.setToolTip(0, "Smart album: " + smart.describe(f, c) + "\n\nIt keeps itself up to date · right-click to "
+                             "change it or make it a normal album")
+            secs.addChild(it)
+        it = QTreeWidgetItem(["Suggested smart albums…"])
+        it.setIcon(0, app_icon("wand"))
+        it.setData(0, Qt.UserRole, ("smart_sugg", None))
+        it.setToolTip(0, "Smart albums FaceSort suggests from your library (people together, events, people in a scene)")
+        secs.addChild(it)
+        secs.setExpanded(True)
 
         groups, gdirs = {}, {}
         hints_on = self.settings.get("folder_hints", True)
