@@ -153,6 +153,17 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+Quicker side lists (1.50)
+- After a change, the numbers the left-hand lists need (each person's faces, the unnamed groups,
+  the Smart Groups counts…) are read on a background thread first; the window keeps responding,
+  and the redraw then only builds the rows. On a test library of 37,000 photos and 1,362 people
+  the freeze after each change went from about half a second to about a seventh of one.
+- Also with only some library folders shown (the folder filter).
+- People's face counts and list pictures are counted by the database in one pass; looking up a
+  row no longer walks every row of every list.
+- If you change something while the numbers are being read, they're read again - the lists
+  never show older numbers.
+
 1.49.2
 - Fixed: emptying ~To Be Discarded into the Recycle Bin, Done checking a dropped batch, and deleting
   a folder, album or smart album sent the gallery to Unnamed group 1. What you're looking at

@@ -390,13 +390,40 @@ class GalleryMixin:
             t.clearSelection()
             it.setSelected(True)
 
+    def tree_index(self):
+        """(1.50) {key: [rows]} for the lists as they are now (made once per redraw, not by walking
+        every row for each lookup)."""
+        idx = getattr(self, "_tree_idx", None)
+        if idx is None or idx[0] != getattr(self, "_tree_gen", 0):
+            m = {}
+            for it in self.iter_items():
+                k = key_of(it)
+                if k:
+                    m.setdefault(k, []).append(it)
+            idx = self._tree_idx = (getattr(self, "_tree_gen", 0), m)
+        return idx[1]
+
     def find_tree_item(self, key, section=None):
         """The row for key - in the tab that's showing if it's there (a folder is in both People
         and Folders), else wherever it is."""
         key = tuple(key)
-        found = [it for it in self.iter_items(section) if key_of(it) == key] if section else []
+        try:
+            every = list(self.tree_index().get(key, ()))
+            for it in every:
+                it.text(0)                       # (still there?)
+        except RuntimeError:
+            self._tree_idx = None
+            every = list(self.tree_index().get(key, ()))
+        found = []
+        if section:
+            for it in every:
+                top = it
+                while top.parent() is not None:
+                    top = top.parent()
+                if top.text(0).split(" (")[0] == section:
+                    found.append(it)
         if not found:
-            found = [it for it in self.iter_items() if key_of(it) == key]
+            found = every
         if not found:
             return None
         shown = self.trees[self.side_tabs.currentIndex()] if hasattr(self, "side_tabs") else None

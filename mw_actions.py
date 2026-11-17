@@ -69,9 +69,7 @@ class ActionsMixin:
             self.conn.commit()
         except Exception:
             pass
-        self.rebuild_tree()
-        self.refresh_grid()
-        self.refresh_stats()
+        self.update_lists()        # (1.50) the numbers are read ahead first: the window doesn't freeze
         if regroup:
             self.schedule_regroup()
 

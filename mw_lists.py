@@ -1,4 +1,5 @@
 """MainWindow, part: the left-hand lists (People / Folders / Albums / Smart Groups)."""
+import os
 import time
 import store
 from PySide6.QtCore import Qt
@@ -17,9 +18,84 @@ class ListsMixin:
         self._data_gen += 1     # the background jobs write through their own connection
         has_folders = bool(self.settings["folders"])
         self.stack.setCurrentIndex(1 if has_folders else 0)
-        self.rebuild_tree()
-        self.refresh_grid()
-        self.refresh_stats()
+        self.update_lists(now=first)
+
+    # ------------------------------------------------------------------ (1.50) numbers read ahead
+    def lists_async(self):
+        return os.environ.get("FACESORT_SYNC_LISTS") != "1" and bool(getattr(self, "_tree_questions", None))
+
+    def update_lists(self, grid=True, stats=True, now=False):
+        """Redraw the side lists (and the gallery and the counts at the bottom). The numbers they
+        need are read on a background thread first (listcache.py), so the window doesn't freeze
+        while the library is asked; the redraw itself then only builds the rows."""
+        want = getattr(self, "_lists_want", (False, False))
+        self._lists_want = (want[0] or grid, want[1] or stats)
+        if now or not self.lists_async() or getattr(self, "_closing", False):
+            self._lists_want = (False, False)
+            self.apply_lists(None, grid or want[0], stats or want[1])
+            return
+        w = getattr(self, "_ra_worker", None)
+        if w is not None and w.isRunning():
+            self._ra_again = True              # changed again meanwhile: read once more when that's done
+            return
+        self._ra_tries = 0
+        self._start_read_ahead()
+
+    def _start_read_ahead(self):
+        import listcache
+        from ui_common import Worker
+        try:
+            if self.conn.in_transaction:
+                self.conn.commit()              # (the background connection only sees saved changes)
+        except Exception:
+            pass
+        self._ra_again = False
+        mark = (id(self.conn), store.data_dir(), self.conn.total_changes)
+        scope = None
+        try:
+            if self.scope_on():
+                scope = self.in_scope
+        except Exception:
+            scope = None
+        w = Worker(listcache.read_ahead, list(self._tree_questions), scope)
+        w.ok.connect(lambda answers, mark=mark: self._read_ahead_done(answers, mark))
+        w.failed.connect(lambda tb: self._read_ahead_done(None, mark))
+        self._ra_worker = w
+        self._ra_started = time.monotonic()
+        w.start()
+
+    def _read_ahead_done(self, answers, mark):
+        self._ra_worker = None
+        if getattr(self, "_closing", False):
+            return
+        changed = self._ra_again or (id(self.conn), store.data_dir(), self.conn.total_changes) != mark
+        self._ra_tries = getattr(self, "_ra_tries", 0) + 1
+        if changed and self._ra_tries < 3:
+            self._start_read_ahead()            # something changed since: those numbers are old
+            return
+        grid, stats = getattr(self, "_lists_want", (True, True))
+        self._lists_want = (False, False)
+        self.apply_lists(None if changed else answers, grid, stats)
+
+    def apply_lists(self, answers, grid=True, stats=True):
+        import listcache
+        real = self.conn
+        if isinstance(real, listcache.Recording):
+            real = real._real
+        rec = listcache.Recording(real, answers)
+        self.conn = rec
+        try:
+            self._rebuild_tree()
+            if grid:
+                self.refresh_grid()
+            if stats:
+                self.refresh_stats()
+        finally:
+            self.conn = real
+            rec._answers = {}                  # (a button made during the redraw keeps a plain connection)
+        self._tree_questions = list(rec.asked)
+        self._lists_hits = (rec.hits, rec.misses)
+        self._lists_missed = rec.missed[:20]
 
     def sort_other(self, sec):
         """Order the Smart Groups' "Other" list: as FaceSort lays it out, most / fewest first, or A-Z."""
@@ -83,6 +159,20 @@ class ListsMixin:
         return False
 
     def rebuild_tree(self):
+        """Redraw the side lists now (the questions it asks are noted, to read ahead next time)."""
+        import listcache
+        if isinstance(self.conn, listcache.Recording):
+            return self._rebuild_tree()
+        real = self.conn
+        rec = listcache.Recording(real)
+        self.conn = rec
+        try:
+            self._rebuild_tree()
+        finally:
+            self.conn = real
+        self._tree_questions = list(rec.asked)
+
+    def _rebuild_tree(self):
         c = self.conn
         for t in self.trees:
             t.blockSignals(True)
@@ -90,6 +180,8 @@ class ListsMixin:
         collapsed = {top.text(0).split(" (")[0] for top in self.top_items() if not top.isExpanded()}
         multi_keys = list(self.view[1]) if self.view[0] == "multi" else []
         for it in self.iter_items():
+            if not it.childCount():
+                continue
             k = key_of(it)
             if k and k[0] == "person" and it.childCount():
                 k = ("category", ("p", k[1]))
@@ -118,9 +210,12 @@ class ListsMixin:
                 i = sib.index(cur) if cur in sib else -1
                 # the ones after it first (the very next group), then before it (it was the last),
                 # then the section / folder it was in
-                neighbours = [key_of(x) for x in sib[i + 1:]] + [key_of(x) for x in reversed(sib[:i])] + \
+                # (only the 40 nearest each side: working them all out for 1,300 people was slow)
+                neighbours = [key_of(x) for x in sib[i + 1:i + 41]] + [key_of(x) for x in reversed(sib[max(0, i - 40):i])] + \
                     [key_of(par)]
                 neighbours = [k for k in neighbours if k]
+        self._tree_gen = getattr(self, "_tree_gen", 0) + 1      # (the row index is made again when asked)
+        self._tree_idx = None
         for t in self.trees:
             t.clear()
         bold = QFont(self.tree.font())
@@ -153,17 +248,18 @@ class ListsMixin:
         # (1.45.1: back to one plain read, counted here. Asking the database for each person's best
         # face in the same query was quick on a test library, but on some libraries SQLite planned it
         # as a scan of every face per person - almost a minute. A plain read is always quick.)
+        # (1.50) counted by the database in the same single pass (one row per person, not one per
+        # face): the icon is the face with the highest confirmed / front-on / clear score
         nface, nsugg, best = {}, {}, {}
-        for person, fid, conf, q, turned in c.execute(
-                f"""SELECT person_id, id, confirmed, {store.clear_order("")},
-                           ABS(COALESCE(yaw, 0)) > 30 OR ABS(COALESCE(pitch, 0)) > 25 FROM faces INDEXED BY faces_cover
-                    WHERE ignored=0 AND person_id IS NOT NULL"""):
-            nface[person] = nface.get(person, 0) + 1
-            if not conf:
-                nsugg[person] = nsugg.get(person, 0) + 1
-            key = (conf, not turned, q or 0)      # the icon: a confirmed, front-on, clear face
-            if person not in best or key > best[person][0]:
-                best[person] = (key, fid)
+        for person, n, ns, fid, _score in c.execute(
+                f"""SELECT person_id, COUNT(*), TOTAL(confirmed=0), id,
+                           MAX(confirmed * 10000000 + (NOT (ABS(COALESCE(yaw, 0)) > 30 OR ABS(COALESCE(pitch, 0)) > 25))
+                               * 1000000 + COALESCE({store.clear_order("")}, 0))
+                    FROM faces INDEXED BY faces_cover WHERE ignored=0 AND person_id IS NOT NULL GROUP BY person_id"""):
+            nface[person] = n
+            if ns:
+                nsugg[person] = int(ns)
+            best[person] = (None, fid)
         ntag = dict(c.execute("""SELECT pp.person_id, COUNT(*) FROM photo_people pp JOIN photos x ON x.id=pp.photo_id
                                  WHERE x.sort_later=0 AND NOT EXISTS (SELECT 1 FROM faces f WHERE f.photo_id=pp.photo_id
                                  AND f.person_id=pp.person_id AND f.ignored=0) GROUP BY pp.person_id"""))
@@ -302,9 +398,9 @@ class ListsMixin:
         # each person's own folders, under that person - except in the People panel, which lists
         # just the people (their folders are the sections of their gallery and the folder bar)
         for it in list(self.iter_items()):
-            k = key_of(it)
             if it.treeWidget() is self.tree:
                 continue
+            k = key_of(it)
             if k and k[0] == "person" and owned.get(k[1]):
                 kids[("p", k[1])] = owned[k[1]]
                 add_cats(it, ("p", k[1]))
@@ -596,7 +692,8 @@ class ListsMixin:
                 if old_view and tuple(self.view) != old_view and old_view[0] != "none":
                     log(f"list: {old_view} is gone - now showing {tuple(self.view)}")
         self.make_rep_icons(icon_wait)
-        self.filter_tree(self.search.text())
+        if self.search.text().strip() or self.scope_on():
+            self.filter_tree(self.search.text())    # (1.50: new rows are all shown already otherwise)
         for t, sc in zip(self.trees, scrolls):
             t.verticalScrollBar().setValue(sc)   # don't jump the lists after every change
             t.blockSignals(False)
