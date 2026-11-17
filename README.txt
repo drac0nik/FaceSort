@@ -153,6 +153,12 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.50.6
+- "Filter by file name…" box above every gallery (next to Sort): shows only the pictures in that
+  gallery - a person's, a folder's, a group's - whose file name or folder name has every word you
+  type. Picking something else on the left clears it. (In Smart Groups it works together with the
+  side search box.)
+
 1.50.5
 - The search box at the top of the side panel: People and Folders are filtered by name as before;
   in Smart Groups the groups stay listed, and the gallery shows only the pictures whose file name

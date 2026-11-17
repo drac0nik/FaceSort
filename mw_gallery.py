@@ -519,10 +519,10 @@ class GalleryMixin:
                 best = r
         return p[len(best):].lower() if best else p.lower()
 
-    def search_filter_rows(self, rows):
+    def search_filter_rows(self, rows, words=None):
         """Only the pictures whose file or folder name has every word you typed (headings kept
         when something under them is)."""
-        words = self.search_words()
+        words = self.search_words() if words is None else words
         if not words:
             self._search_shown = None
             return rows
@@ -593,6 +593,11 @@ class GalleryMixin:
             view = k
         if view != self.view:
             self.view = view
+            gf = getattr(self, "gallery_filter", None)
+            if gf is not None and gf.text():
+                gf.blockSignals(True)          # (1.50.6) the file name filter is for the gallery you were on
+                gf.clear()
+                gf.blockSignals(False)
             self.refresh_grid(keep_selection=False)
 
     def ignore_all_shown(self):
@@ -1121,12 +1126,18 @@ class GalleryMixin:
             self.extra_box.hide()
         self.zoom_row.setVisible(kind != "errors")
         self._search_shown = None
+        typed = []
         if kind in self.search_filter_kinds() and self.search_words():
-            rows = self.search_filter_rows(rows)    # (1.50.5) narrowed by what's typed in the search box
+            typed.append(self.search.text().strip())   # (1.50.5) the side search box, in Smart Groups
+        gf = getattr(self, "gallery_filter", None)
+        if gf is not None and gf.text().strip() and kind not in ("dupes", "same"):
+            typed.append(gf.text().strip())             # (1.50.6) the gallery's own file name filter
+        if typed:
+            rows = self.search_filter_rows(rows, " ".join(typed).lower().split())
             if self._search_shown:
                 shown, total = self._search_shown
                 self.subtitle.setText(f"Showing {shown:,} of {total:,} whose file or folder name has "
-                                      f"“{self.search.text().strip()}”  ·  " + self.subtitle.text())
+                                      f"“{' '.join(typed)}”  ·  " + self.subtitle.text())
         if kind in self.smart_kinds() and kind not in ("dupes", "errors", "shoot", "same"):
             rows = self.split_by_folder(rows)  # Smart Groups: one section per folder path
         if kind in ("smart", "smart_sugg", "smart_preview", "same"):

@@ -518,6 +518,19 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         self.sort_btn.setMenu(sm)
         self.update_sort_button()
         zoom.addWidget(self.sort_btn)
+        # (1.50.6) narrow this gallery by file / folder name
+        self.gallery_filter = QLineEdit()
+        self.gallery_filter.setPlaceholderText("Filter by file name…")
+        self.gallery_filter.addAction(app_icon("search"), QLineEdit.LeadingPosition)
+        self.gallery_filter.setClearButtonEnabled(True)
+        self.gallery_filter.setMinimumWidth(120)
+        self.gallery_filter.setMaximumWidth(220)
+        self.gallery_filter.setToolTip("Show only the pictures in this gallery whose file name (or folder name, inside "
+                                       "the library folder) has every word you type")
+        self.gallery_filter_timer = QTimer(self, singleShot=True, interval=250)
+        self.gallery_filter_timer.timeout.connect(lambda: self.refresh_grid(keep_selection=True))
+        self.gallery_filter.textChanged.connect(lambda _t: self.gallery_filter_timer.start())
+        zoom.addWidget(self.gallery_filter)
         # this view's own buttons (Rename, Set folder, Delete person…), in the same style
         self.btn_row = QHBoxLayout()
         self.btn_row.setSpacing(6)

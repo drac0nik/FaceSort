@@ -358,3 +358,28 @@ def test_search_narrows_smart_groups_by_file_name(window, qapp):
     w.search.setText("")
     pump(qapp, 0.5)
     assert len([r for r in w.model.rows if r[0]]) == len(rows)
+
+
+def test_gallery_file_name_filter(window, qapp):
+    """(1.50.6) The gallery's own filter box narrows any gallery (a person's too) by file name, and
+    is cleared when you pick something else on the left."""
+    import os
+    from conftest import pump
+    w, c = window, window.conn
+    alice = c.execute("SELECT id FROM persons WHERE name='Alice'").fetchone()[0]
+    w.view = ("person", alice)
+    w.refresh_grid()
+    rows = [r for r in w.model.rows if r[0]]
+    assert len(rows) >= 2
+    word = os.path.splitext(os.path.basename(rows[0][1]))[0]
+    expect = {r[0] for r in rows if word.lower() in w.match_name(r[1])}
+    w.gallery_filter.setText(word)
+    pump(qapp, 0.5)
+    got = {r[0] for r in w.model.rows if r[0]}
+    assert got == expect and len(got) < len(rows)
+    assert "Showing" in w.subtitle.text()
+    bob = c.execute("SELECT id FROM persons WHERE name='Bob'").fetchone()[0]
+    it = w.find_tree_item(("person", bob))
+    w.select_item(it)
+    pump(qapp, 0.4)
+    assert w.view == ("person", bob) and w.gallery_filter.text() == ""
