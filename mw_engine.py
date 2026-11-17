@@ -516,6 +516,25 @@ class EngineMixin:
             self.after_change()        # regroup: lookalikes get set aside
             self.statusBar().showMessage(f"Marked {len(ids)} as not a face - FaceSort will set aside lookalikes", 6000)
 
+    def act_never_track(self):
+        """(1.51) A permanent "never a face": this, and everything that matches it closely - now and
+        in every photo scanned later - is set aside by itself (neverfaces.py)."""
+        import neverfaces
+        ids = self.sel_faces()
+        if not ids:
+            return
+        label, ok = QInputDialog.getText(self, "Never track", "What is it? (for the list in Settings)", text="Logo")
+        if not ok:
+            return
+        eid, n = neverfaces.add(self.conn, ids, label or "Logo")
+        if eid is None:
+            self.statusBar().showMessage("Those faces were measured with another face engine - rescan first.", 8000)
+            return
+        self.after_change()
+        self.statusBar().showMessage(f"Never track “{label or 'Logo'}”: {len(ids) + n:,} face"
+                                     f"{'s' if len(ids) + n != 1 else ''} set aside, and new photos are checked too "
+                                     "(Settings › Never track list…)", 10000)
+
     def act_notface_all(self):
         ids = [r[0] for r in self.model.rows if r[0] > 0]
         if ids:
@@ -834,6 +853,7 @@ class EngineMixin:
             m.addAction("Discard photo (to ~To Be Discarded)\tD", self.act_discard)
             if faces:
                 m.addAction("Not a face (knee, elbow, pattern…)\tN", self.act_notface)
+                m.addAction("Never track this (a logo, watermark, drawing…)…", self.act_never_track)
                 m.addAction("Ignore this face (stranger)\tI", self.act_ignore)
         sp = self.sel_photos()
         nraw = sum(1 for (p,) in self.conn.execute(

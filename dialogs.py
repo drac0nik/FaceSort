@@ -201,6 +201,12 @@ class SettingsDialog(QDialog):
         dw.setLayout(dl)
         dl.setContentsMargins(0, 0, 0, 0)
         form.addRow("Face detection:", dw)
+        import neverfaces
+        b_never = QPushButton(f"Never track list… ({len(neverfaces.load())})")
+        b_never.setToolTip("Logos, watermarks, drawings… that are never faces: everything matching them is set aside "
+                           "by itself, also in photos scanned later")
+        b_never.clicked.connect(self.never_track_list)
+        form.addRow("", b_never)
         self.threads = QSpinBox()
         self.threads.setRange(1, max(1, os.cpu_count() or 1))
         self.threads.setValue(self.s["threads"])
@@ -629,6 +635,17 @@ class SettingsDialog(QDialog):
         import shutil
         shutil.rmtree(thumb_cache_dir(), ignore_errors=True)
         self.cache_label.setText("Thumbnail cache: cleared (rebuilt as you browse)")
+
+    def never_track_list(self):
+        from neverfaces_ui import NeverTrackDialog
+        win = self.parent()
+        d = NeverTrackDialog(self, win.conn)
+        d.exec()
+        if d.changed:
+            try:
+                win.after_change()
+            except Exception:
+                pass
 
     def share_learned(self):
         from learned_ui import LearnedDialog

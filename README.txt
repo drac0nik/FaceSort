@@ -153,6 +153,16 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+Never track (1.51)
+- Right-click a face > "Never track this (a logo, watermark, drawing…)…": a permanent "this is
+  never a face". It, and every face that matches it closely - in the library now and in every photo
+  scanned later - is set aside as not a face by itself, so a site's drawn-face logo stops turning
+  up in your groups and suggestions. Faces you've named yourself are never touched.
+- Settings > Never track list… shows what's on it (with a picture of each and how many faces it
+  set aside); rename or remove an entry - removing can bring back the faces it set aside.
+- The list is kept next to your settings, so it survives clearing the library, and it keeps
+  working after switching face engines (the same spot is measured again with the new engine).
+
 1.50.6
 - "Filter by file name…" box above every gallery (next to Sort): shows only the pictures in that
   gallery - a person's, a folder's, a group's - whose file name or folder name has every word you

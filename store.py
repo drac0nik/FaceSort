@@ -480,6 +480,7 @@ def connect(path=None):
         CREATE TABLE IF NOT EXISTS smart_dismissed(key TEXT PRIMARY KEY, at REAL);       -- 1.48: suggestions you said no to
         CREATE TABLE IF NOT EXISTS same_people(a INTEGER, b INTEGER, score REAL, why TEXT);   -- 1.49: possibly the same
         CREATE TABLE IF NOT EXISTS not_same_people(a INTEGER, b INTEGER, at REAL, PRIMARY KEY(a, b));
+        CREATE TABLE IF NOT EXISTS never_hits(face_id INTEGER PRIMARY KEY, entry_id INTEGER);  -- 1.51: set aside by Never track
         CREATE TRIGGER IF NOT EXISTS photos_gone_pose AFTER DELETE ON photos BEGIN
             DELETE FROM photo_pose WHERE photo_id=OLD.id;
             DELETE FROM photo_points WHERE photo_id=OLD.id;
@@ -1755,6 +1756,17 @@ def regroup(conn, threshold=0.42, progress=None, cancelled=lambda: False, sync=T
     for fid, pid in conn.execute("SELECT face_id, person_id FROM rejects"):
         rejected.setdefault(fid, set()).add(pid)
 
+    # (1.51) Never track: what matches your permanent list is set aside as not a face, by itself
+    try:
+        import neverfaces
+        if neverfaces.load():
+            hits = neverfaces.matches(conn)        # (read first; the write is only the marking)
+            conn.commit()
+            if hits:
+                with conn.write():
+                    neverfaces.mark(conn, hits)
+    except Exception:
+        pass
     # things that look like what you marked "not a face" are set aside for you to check
     # (nothing is written until the end, so confirming faces meanwhile never waits for this)
     nf_rows = conn.execute("SELECT emb, quality FROM faces WHERE ignored=3 AND model=?", (model,)).fetchall()
