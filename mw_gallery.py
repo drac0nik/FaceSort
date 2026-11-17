@@ -502,7 +502,10 @@ class GalleryMixin:
         if len(keys) > 1:
             view = ("multi", tuple(keys))
         else:
-            k = keys[0] if keys else key_of(t.currentItem())
+            # (1.49.1) only a row you actually picked: a list whose selection was just cleared (or a
+            # row hidden) still has an old current row - following it jumped to Unnamed group 1
+            cur = t.currentItem()
+            k = keys[0] if keys else (key_of(cur) if cur is not None and cur.isSelected() else None)
             if not k:
                 return
             view = k

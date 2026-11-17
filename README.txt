@@ -153,6 +153,12 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.49.1
+- Fixed: while browsing albums (and after search results), the gallery could jump to Unnamed
+  group 1 when the lists were redrawn. The gallery now stays on what you're looking at; it only
+  moves on when that row is really gone (to the next one). If it ever does move, facesort.log
+  says what it left and where it went.
+
 Possibly the same person (1.49)
 - Smart Groups > Possibly the same person: pairs of people who may be one - their faces look
   alike, their names are almost the same ("Jen Smith" / "Jen Smith."), or a generic name

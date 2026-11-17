@@ -231,3 +231,34 @@ def test_learned_dialog(window, qapp, tmp_path, monkeypatch):
     d.do_forget()
     assert "Nothing imported" in d.state.text()
     d.close()
+
+
+def test_view_stays_after_redraw(window, qapp):
+    """(1.49.1) Albums, search results and a stale row in another list never send you to a group."""
+    from conftest import pump
+    from ui_common import key_of
+    w, c = window, window.conn
+    ph = [r[0] for r in c.execute("SELECT id FROM photos LIMIT 3")]
+    aid = store.create_album(c, "Stay")
+    store.add_to_album(c, aid, ph)
+    w.rebuild_tree()
+    g = next(x for x in w.iter_items() if key_of(x) and key_of(x)[0] == "group")
+    g.treeWidget().setCurrentItem(g)                       # a group is current in Smart Groups
+    pump(qapp, 0.2)
+    w.side_tabs.setCurrentIndex(w.trees.index(w.treeA))
+    pump(qapp, 0.2)
+    w.treeA.setCurrentItem(w.find_tree_item(("album", aid)))
+    pump(qapp, 0.3)
+    assert w.view == ("album", aid)
+    for t in w.trees:                                      # selections cleared everywhere
+        t.clearSelection()
+    pump(qapp, 0.3)
+    w._active_tree = w.tree2 if hasattr(w, "tree2") else w._active_tree
+    w._schedule_view_sync()
+    pump(qapp, 0.3)
+    assert w.view == ("album", aid)
+    w.rebuild_tree()
+    assert w.view == ("album", aid)
+    w.view = ("search", "beach")
+    w.rebuild_tree()
+    assert w.view == ("search", "beach")

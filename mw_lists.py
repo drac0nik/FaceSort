@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QIcon
 from PySide6.QtWidgets import QStyle, QTreeWidgetItem
 from icons import app_icon
-from ui_common import key_of, NOFACES_WHERE, ROLE_DROP, round_pixmap, std_icon, UNASSOC_WHERE
+from ui_common import key_of, log, NOFACES_WHERE, ROLE_DROP, round_pixmap, std_icon, UNASSOC_WHERE
 
 
 class ListsMixin:
@@ -64,6 +64,24 @@ class ListsMixin:
                                     if wait_v and wait_v > 0 and self.settings.get("video_mode") == "separate"
                                     and wait_v > wait_n else ""))
 
+    def view_still_there(self):
+        """(1.49.1) Views that aren't a row on the left (search results, a suggested smart album, a
+        dropped batch…) or whose row is only hidden stay where they are after the lists are redrawn."""
+        kind, ident = (tuple(self.view) + (None, None))[:2] if self.view else (None, None)
+        c = self.conn
+        try:
+            if kind in ("search", "smart_preview"):
+                return True
+            if kind == "album":
+                return bool(c.execute("SELECT 1 FROM albums WHERE id=?", (ident,)).fetchone())
+            if kind == "smart":
+                return bool(c.execute("SELECT 1 FROM smart_albums WHERE id=?", (ident,)).fetchone())
+            if kind == "dropped":
+                return bool(c.execute("SELECT 1 FROM drop_batches WHERE batch=?", (ident,)).fetchone())
+        except Exception:
+            return False
+        return False
+
     def rebuild_tree(self):
         c = self.conn
         for t in self.trees:
@@ -79,7 +97,14 @@ class ListsMixin:
                 k = ("category", ("later", None))
             if k and k[0] == "category" and it.childCount():
                 (self._cat_collapsed.discard if it.isExpanded() else self._cat_collapsed.add)(k[1])
-        cur = self.current_item()
+        # (1.49.1) the row of what the gallery shows - not whatever a list last had current (a list
+        # you left keeps its old current row, and its neighbours sent you to Unnamed group 1)
+        cur = self.find_tree_item(self.view) if self.view and self.view[0] not in ("multi", "none") else None
+        if cur is None:
+            cur = self.current_item()
+            if cur is not None and (not self.view or key_of(cur) != tuple(self.view)):
+                cur = None
+        old_view = tuple(self.view) if self.view else None
         neighbours = []                  # (1.45.5) if the group you're on goes, the one after it
         if cur is not None:
             top = cur
@@ -549,18 +574,21 @@ class ListsMixin:
             target = self.find_tree_item(self.view, self._view_section)
             if target is None and self.view[0] == "group":
                 target = self.find_group_for_anchor()
-            if target is None and self.view[0] != "none":
+            keep = target is None and self.view_still_there()
+            if target is None and not keep and self.view[0] != "none":
                 # (1.45.5) the group you were on is gone (all done, say): the very next one - the
                 # gallery never jumps somewhere else on its own
                 for k in neighbours:
                     target = self.find_tree_item(k, self._view_section)
                     if target is not None:
                         break
-            if target is None:
+            if target is None and not keep and (self.view[0] == "none" or not neighbours):
                 target = self.first_selectable()
             if target is not None:
                 self.select_item(target, switch=False)
                 self.view = key_of(target)
+                if old_view and tuple(self.view) != old_view and old_view[0] != "none":
+                    log(f"list: {old_view} is gone - now showing {tuple(self.view)}")
         self.make_rep_icons(icon_wait)
         self.filter_tree(self.search.text())
         for t, sc in zip(self.trees, scrolls):
