@@ -853,7 +853,8 @@ class JobsMixin:
         self.settings["export_convert"] = dlg.convert()
         store.save_settings(self.settings)
         self.run_job("export", jobs.export_folders, d, inc, move, on_done=done,
-                     roots=list(self.settings["folders"]), ai_folder=dlg.ai_folder(),
+                     roots=list(self.settings["folders"]), imported=list(self.settings.get("imported") or []),
+                     ai_folder=dlg.ai_folder(),
                      include_dropped=dlg.include_dropped(), convert_webp=dlg.convert())
 
     def closeEvent(self, e):

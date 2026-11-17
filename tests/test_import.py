@@ -95,3 +95,27 @@ def test_dialog_guesses(window, tmp_path):
     assert dlg2.watch.isChecked()
     dlg2._done("plain")
     assert dlg2.choices()["folders"] == [] and dlg2.choices()["watch"]
+
+
+def test_emptied_imported_folders_are_cleaned_up(tmp_path):
+    """(1.50.2) A folder dropped in and imported once: when Sort into folders has moved everything
+    out of it, it goes to ~To Be Discarded too (the whole folder, not just the empty ones inside)."""
+    import jobs
+    lib = tmp_path / "Photos"
+    (lib / "Kept" / "Empty inside").mkdir(parents=True)
+    (lib / "Kept" / "note.txt").write_text("x")
+    dropped = tmp_path / "Downloads" / "Shoot 12"
+    (dropped / "Day 1").mkdir(parents=True)
+    (dropped / "Day 2").mkdir(parents=True)
+    (dropped / "Day 2" / "Thumbs.db").write_text("junk")
+    busy = tmp_path / "Downloads" / "Shoot 13"
+    busy.mkdir(parents=True)
+    (busy / "readme.txt").write_text("still here")
+    dest = tmp_path / "Sorted"
+    dest.mkdir()
+    moved = jobs.cleanup_empty_folders([str(lib), str(dropped), str(busy)], str(dest), whole=[str(dropped), str(busy)])
+    olds = {os.path.basename(a) for a, _b in moved}
+    assert "Shoot 12" in olds and not dropped.exists()                # the whole dropped folder
+    assert busy.exists() and "Shoot 13" not in olds                   # something else is in it: stays
+    assert "Empty inside" in olds and lib.exists()                    # library folder itself never moves
+    assert (dest / jobs.DISCARD_FOLDER / "Shoot 12" / "Day 2").exists()

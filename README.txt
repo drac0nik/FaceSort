@@ -153,6 +153,12 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.50.2
+- Fixed: folders you dropped in (imported once, not watched) stayed behind, empty, after Sort into
+  folders moved their photos out. Now the emptied folder goes to ~To Be Discarded - the whole
+  folder, with its empty sub-folders - like empty folders in your library folders. A folder that
+  still has anything else in it (a text file, say) stays where it is.
+
 1.50.1
 - Smart Groups sorted by Original location: only photos still to sort - nobody tagged on them, no
   folder, not in your sorted library. (A group photo with one person named no longer shows up

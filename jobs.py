@@ -857,11 +857,13 @@ def _free_dir(parent, name):
     return target
 
 
-def cleanup_empty_folders(roots, dest, progress=lambda d, t, m: None):
+def cleanup_empty_folders(roots, dest, progress=lambda d, t, m: None, whole=()):
     r"""Move empty folders (nothing in them but empty folders, or Windows' Thumbs.db /
     desktop.ini) from your photo folders into <dest>\~To Be Discarded. A folder with any other
     file in it - text, html, anything - stays where it is. Your photo folders themselves and
-    the destination are never moved. Returns [(old, new)]."""
+    the destination are never moved - except folders in whole (1.50.2: folders you dropped in and
+    imported once), which go too when nothing is left in them. Returns [(old, new)]."""
+    whole_n = {os.path.normcase(os.path.abspath(w)).rstrip("\\/") for w in whole}
     dest_n = os.path.normcase(os.path.abspath(dest))
     discard = os.path.join(dest, DISCARD_FOLDER)
     moved = []
@@ -879,13 +881,16 @@ def cleanup_empty_folders(roots, dest, progress=lambda d, t, m: None):
             empty[d] = not real and all(empty.get(os.path.join(d, x), False) for x in dirs)
         root_n = os.path.normcase(os.path.abspath(root))
         tops = []
-        for d, e in empty.items():
-            if not e or os.path.normcase(os.path.abspath(d)) == root_n or inside_dest(d):
-                continue
-            parent = os.path.dirname(d)
-            if os.path.normcase(os.path.abspath(parent)) != root_n and empty.get(parent) and not inside_dest(parent):
-                continue          # its parent is empty too: the parent moves (with this inside)
-            tops.append(d)
+        if root_n.rstrip("\\/") in whole_n and empty.get(root) and not inside_dest(root):
+            tops = [root]                 # (an imported-once folder that's empty now: it goes, all of it)
+        else:
+            for d, e in empty.items():
+                if not e or os.path.normcase(os.path.abspath(d)) == root_n or inside_dest(d):
+                    continue
+                parent = os.path.dirname(d)
+                if os.path.normcase(os.path.abspath(parent)) != root_n and empty.get(parent) and not inside_dest(parent):
+                    continue          # its parent is empty too: the parent moves (with this inside)
+                tops.append(d)
         for n, d in enumerate(sorted(tops), 1):
             progress(n, len(tops), f"Cleaning up: {d}")
             try:
@@ -1079,7 +1084,7 @@ def misplaced(conn, dest, include_suggestions=False, ai_folder=False):
 
 def export_folders(conn, dest, include_suggestions=False, move=False,
                    progress=lambda d, t, m: None, cancelled=lambda: False, roots=(), convert_webp=True,
-                   cleanup=True, ai_folder=False, include_dropped=False, only=None):
+                   cleanup=True, ai_folder=False, include_dropped=False, only=None, imported=()):
     r"""Put photos into <dest>\<folder>\<sub-folder...>\<person>\<inner folder...>\<file>.
     - a person you placed in a folder always goes there; others follow the photo's folder
     - a photo's folder that goes inside people's folders ends up inside each person's folder
@@ -1202,7 +1207,8 @@ def export_folders(conn, dest, include_suggestions=False, move=False,
         stats["folders_cleaned"] = len(cleaned)
         log_rows += [(a, b) for a, b in cleaned]
     elif move and cleanup and not cancelled() and (stats["moved"] or stats["webp"] or stats.get("extra_files")):
-        cleaned = cleanup_empty_folders([r for r in roots if os.path.isdir(r)], dest, progress)
+        cleaned = cleanup_empty_folders([r for r in list(roots) + list(imported) if os.path.isdir(r)], dest, progress,
+                                        whole=imported)
         stats["folders_cleaned"] = len(cleaned)
         log_rows += [(a, b) for a, b in cleaned]
     if move and log_rows:
