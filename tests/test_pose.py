@@ -58,3 +58,18 @@ def test_poses_as_tags_and_in_rules(library):
     assert "Seated" in store.photo_tags(c, pid)
     c.execute("DELETE FROM photos WHERE id=?", (pid,))
     assert not c.execute("SELECT 1 FROM photo_pose WHERE photo_id=?", (pid,)).fetchone()
+
+
+def test_read_missing_saves_numpy_numbers(library, monkeypatch):
+    """(1.49.2) Points come back as numpy float32 - they used to stop the whole pose job."""
+    c = library.conn
+    pid = add_photo(c, "/lib/Pose/q.jpg", [unit(np.random.default_rng(7002).normal(size=128))], seed=7002)
+    c.execute("UPDATE photos SET pose_done=0")
+    c.commit()
+    fake = {"people": [{"poses": ["Standing"], "points": [[np.float32(1.5), np.float32(2.0), np.float32(0.9)]],
+                        "box": [np.float32(1), np.float32(2), np.float32(3), np.float32(4)]}]}
+    monkeypatch.setattr(pose, "read_photo", lambda bgr, boxes=None: fake)
+    monkeypatch.setattr(pose, "available", lambda: True, raising=False)
+    pose.read_missing(c)
+    assert pose.photo_poses(c, pid) == ["Standing"]
+    assert c.execute("SELECT pose_done FROM photos WHERE id=?", (pid,)).fetchone()[0] == 1

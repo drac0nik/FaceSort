@@ -153,6 +153,21 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.49.2
+- Fixed: emptying ~To Be Discarded into the Recycle Bin, Done checking a dropped batch, and deleting
+  a folder, album or smart album sent the gallery to Unnamed group 1. What you're looking at
+  stays; when its row is gone, the next row in the same list is shown.
+- Graphics card helper crashes: a job that brings it down (an access violation in the graphics
+  driver / ONNX Runtime) now runs on a CPU helper instead - slower, but it gets done (it kept
+  crashing and the photos never got their tags). The log names the job; it's remembered until the
+  next version.
+- Fixed: reading poses stopped with "float32 is not JSON serializable" (no poses were saved).
+- Moving photos into a folder (folder bar, right-click) redraws the gallery straight away; the
+  side lists catch up when you pause.
+- The write-ahead log file is cut back to 32 MB after each checkpoint (it stayed at 172 MB).
+- Helpers really run at below-normal priority on Windows now, and closing FaceSort ends it at once
+  (both Windows calls were quietly failing).
+
 1.49.1
 - Fixed: while browsing albums (and after search results), the gallery could jump to Unnamed
   group 1 when the lists were redrawn. The gallery now stays on what you're looking at; it only

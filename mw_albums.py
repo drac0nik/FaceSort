@@ -76,9 +76,7 @@ class AlbumsMixin:
                                 "they stay in the library and in their folders.") != QMessageBox.Yes:
             return
         store.delete_album(self.conn, aid)
-        if self.view == ("album", aid):
-            self.view = ("none", None)
-        self.rebuild_tree()
+        self.rebuild_tree()                # (shown? the next album is)
         self.refresh_grid()
 
     def album_menu(self, menu, photos):
@@ -189,8 +187,6 @@ class AlbumsMixin:
                                 "conditions go - no photo is touched.") != QMessageBox.Yes:
             return
         smart.delete(self.conn, sid)
-        if self.view == ("smart", sid):
-            self.view = ("none", None)
         self.rebuild_tree()
         self.refresh_grid()
 
@@ -600,7 +596,6 @@ class AlbumsMixin:
                                 "and folders inside them move up one level.") == QMessageBox.Yes:
             for cid in ids:
                 store.delete_category(self.conn, cid)
-            self.view = ("none", None)
             self.structure_changed()
 
     def build_tree_menu(self, it):

@@ -278,7 +278,7 @@ def read_missing(conn, progress=lambda d, t, m: None, cancelled=lambda: False):
                 rows = {(pid, p) for person in info["people"] for p in person["poses"]}
                 conn.executemany("INSERT OR IGNORE INTO photo_pose(photo_id, pose) VALUES(?,?)", list(rows))
                 conn.execute("INSERT OR REPLACE INTO photo_points(photo_id, info) VALUES(?,?)",
-                             (pid, json.dumps(info, separators=(",", ":"))))
+                             (pid, json.dumps(info, separators=(",", ":"), default=float)))
             conn.execute("UPDATE photos SET pose_done=? WHERE id=?", (1 if ok else 2, pid))
         done += 1
         if done % 5 == 0 or done == len(todo):

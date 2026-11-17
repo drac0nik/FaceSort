@@ -382,9 +382,7 @@ class ActionsMixin:
                                 f"Remove the folder “{name}”? Its photos, people and folders inside it "
                                 "stay - they move up one level.") == QMessageBox.Yes:
             store.delete_category(self.conn, cid)
-            if not stay:
-                self.view = ("none", None)
-            self.structure_changed()
+            self.structure_changed()       # (its row goes: the one after it is shown)
 
     def update_sort_button(self):
         key = self.settings.get("grid_sort", "default")
@@ -770,7 +768,6 @@ class ActionsMixin:
                 for p, e in st["errors"][:50]:
                     log(f"put back: {p}: {e}")
             self.statusBar().showMessage(msg, 12000)
-            self.view = ("none", None) if self.view[0] == "misplaced" else self.view
             self.refresh_all()
             QTimer.singleShot(500, self.start_misplaced)
         self.run_job("export", jobs.export_folders, dest, bool(self.settings.get("tag_suggestions")), True,
@@ -951,7 +948,7 @@ class ActionsMixin:
         if photos and cid is not None:
             store.set_photo_folder(self.conn, photos, cid)
             self.conn.commit()
-            self.after_change(regroup=False)
+            self.quick_change(regroup=False)
             self.statusBar().showMessage(f"{len(photos):,} photo{'s' if len(photos) != 1 else ''} → {self.cat_name(cid)}", 6000)
 
     def section_photos(self, row):
@@ -1046,7 +1043,7 @@ class ActionsMixin:
         else:   # "Not in a folder": take them out of this person's folders (and the others' copies)
             store.take_out_of_person_folders(self.conn, photos, person)
         self.conn.commit()
-        self.after_change(regroup=False)
+        self.quick_change(regroup=False)    # (1.49.2) the gallery now, the side lists once you pause
         self.statusBar().showMessage(f"{len(photos):,} photo{'s' if len(photos) != 1 else ''} → "
                                      + (self.cat_name(folder) if folder else "not in a folder"), 6000)
 
@@ -1278,8 +1275,7 @@ class ActionsMixin:
     def done_checking(self, batch=None):
         store.done_checking(self.conn, batch)
         self.statusBar().showMessage("Done - those photos are part of the library now (Sort into folders includes them).", 8000)
-        self.view = ("none", None)
-        self.after_change(regroup=False)
+        self.after_change(regroup=False)  # (1.49.2) the batch's row goes: the next one is shown, not a group
 
     def person_sections(self, person_id, rows):
         """A person's thumbnails split by their own folders (Beach 2023, …) - every folder of

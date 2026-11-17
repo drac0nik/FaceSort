@@ -888,7 +888,13 @@ if __name__ == "__main__":
         # a normal close). Everything is saved by now.
         try:
             import ctypes
+            from ctypes import wintypes
             k = ctypes.windll.kernel32
+            # (1.49.2) with the types spelled out: by default the handle came back cut to 32 bits, so
+            # TerminateProcess failed quietly and the slower exit below (which can crash) ran instead
+            k.GetCurrentProcess.restype = wintypes.HANDLE
+            k.TerminateProcess.argtypes = (wintypes.HANDLE, wintypes.UINT)
+            k.TerminateProcess.restype = wintypes.BOOL
             k.TerminateProcess(k.GetCurrentProcess(), int(code or 0))
         except Exception:
             pass

@@ -164,8 +164,7 @@ class VaultsMixin:
                                     "moved (open in another program, or no permission):\n"
                                     + "\n".join(bad[:12]) + ("\n…" if len(bad) > 12 else ""))
             self.statusBar().showMessage(msg, 15000)
-            self.view = ("none", None)
-            self.refresh_all()
+            self.refresh_all()             # (1.49.2: what you were looking at stays - it used to jump to a group)
         if not self.run_job("recycle", jobs.recycle_discarded, roots, on_done=done):
             QMessageBox.information(self, "Busy", "Wait for the current task to finish, then try again.")
 

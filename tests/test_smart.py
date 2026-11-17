@@ -262,3 +262,36 @@ def test_view_stays_after_redraw(window, qapp):
     w.view = ("search", "beach")
     w.rebuild_tree()
     assert w.view == ("search", "beach")
+
+
+def test_view_moves_to_next_not_a_group(window, qapp):
+    """(1.49.2) Done checking a dropped batch, deleting an album: the next row in that list is shown."""
+    from ui_common import key_of
+    w, c = window, window.conn
+    ph = [r[0] for r in c.execute("SELECT id FROM photos LIMIT 4")]
+    a1, a2 = store.create_album(c, "AAA one"), store.create_album(c, "AAB two")
+    store.add_to_album(c, a1, ph[:2])
+    store.add_to_album(c, a2, ph[2:])
+    w.rebuild_tree()
+    w.select_item(w.find_tree_item(("album", a1)))
+    w.view = ("album", a1)
+    import mw_albums
+    mw_albums.QMessageBox.question, old = (lambda *a, **k: mw_albums.QMessageBox.Yes), mw_albums.QMessageBox.question
+    try:
+        w.delete_album(a1)
+    finally:
+        mw_albums.QMessageBox.question = old
+    assert w.view == ("album", a2)
+    # a dropped batch, done checking
+    b1 = store.new_drop_batch(c, "first")
+    c.execute("UPDATE photos SET dropped=? WHERE id=?", (b1, ph[0]))
+    c.commit()
+    w.rebuild_tree()
+    it = w.find_tree_item(("dropped", b1))
+    if it is None:
+        assert 0, "not listed"
+    w.select_item(it)
+    w.view = ("dropped", b1)
+    w.done_checking(b1)
+    assert w.view[0] not in ("group",), w.view
+    assert key_of(w.current_item()) == tuple(w.view)

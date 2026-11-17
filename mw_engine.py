@@ -254,7 +254,6 @@ class EngineMixin:
         """Forget the failures so the next scan tries those files again."""
         self.conn.execute("DELETE FROM photos WHERE error IS NOT NULL")
         self.conn.commit()
-        self.view = ("none", None)
         self.start_scan()
 
     def act_discard(self):

@@ -37,7 +37,16 @@ import traceback
 ROLE_ENV = "FACESORT_HELPER"            # "gpu" / "cpu" in a helper; unset in the window
 NOW, SOON, IDLE = 0, 1, 2               # priorities
 MAX_CPU_HELPERS = 6
+GPU_CRASHES_MAX = 1                     # (1.49.2) a job that crashed the GPU helper this often runs on the CPU
 UI_QUIET = 1.5                          # seconds after your last click / key before housekeeping goes full speed
+
+
+def _app_version():
+    try:
+        from ui_common import APP_VERSION      # (window side only)
+        return APP_VERSION
+    except Exception:
+        return "?"
 
 
 def role():
@@ -132,7 +141,12 @@ def _lower_priority():
     try:
         if sys.platform == "win32":
             import ctypes
-            ctypes.windll.kernel32.SetPriorityClass(ctypes.windll.kernel32.GetCurrentProcess(), 0x4000)  # below normal
+            from ctypes import wintypes
+            k = ctypes.windll.kernel32
+            # (1.49.2) types spelled out: the handle used to be cut to 32 bits and the call failed
+            k.GetCurrentProcess.restype = wintypes.HANDLE
+            k.SetPriorityClass.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+            k.SetPriorityClass(k.GetCurrentProcess(), 0x4000)  # below normal
         else:
             os.nice(5)
     except Exception:
@@ -261,8 +275,41 @@ class Pool:
         self.last_touch = time.monotonic()
 
     # ---- jobs
+    # ---- (1.49.2) jobs that crash the graphics card helper run on the CPU instead
+    def _crash_file(self):
+        import store
+        return os.path.join(store.data_dir(), "gpu_crashes.json")
+
+    def gpu_crashes(self):
+        if getattr(self, "_crashes", None) is None:
+            self._crashes = {}
+            try:
+                import json
+                with open(self._crash_file(), encoding="utf-8") as f:
+                    data = json.load(f)
+                if data.get("version") == _app_version():
+                    self._crashes = {k: int(v) for k, v in data.get("jobs", {}).items()}
+            except Exception:
+                pass
+        return self._crashes
+
+    def _note_crash(self, func):
+        c = self.gpu_crashes()
+        c[func] = c.get(func, 0) + 1
+        try:
+            import json
+            with open(self._crash_file(), "w", encoding="utf-8") as f:
+                json.dump({"version": _app_version(), "jobs": c}, f)
+        except Exception:
+            pass
+
+    def gpu_safe(self, func):
+        return self.gpu_crashes().get(func, 0) < GPU_CRASHES_MAX
+
     def submit(self, func, args=(), kw=None, role_="cpu", priority=IDLE, cb=None):
         tid = next(self.seq)
+        if role_ == "gpu" and not self.gpu_safe(func):
+            role_ = "cpu"                  # (it crashed the graphics card helper: the CPU does it, slower but sure)
         import store
         self.tasks[tid] = {"msg": (func, tuple(args), dict(kw or {}), priority, role_, store.data_dir()),
                            "cb": cb, "helper": None}
@@ -339,11 +386,17 @@ class Pool:
                     self.xlock.release()
                 except ValueError:
                     pass
+            what = ""
             if h.tid is not None:
                 t = self.tasks.pop(h.tid, None)
                 if t is not None:
+                    func = t["msg"][0]
+                    what = f" while doing {func}"
+                    if h.role == "gpu" and h.proc.exitcode not in (0, None):
+                        self._note_crash(func)
+                        what += " - from now on that job runs on the CPU (this version)"
                     self._call(t, "failed", f"the {h.role} helper stopped unexpectedly (exit code {h.proc.exitcode})")
-            self.log(f"helper {h.role}{h.slot} ended (exit code {h.proc.exitcode})")
+            self.log(f"helper {h.role}{h.slot} ended (exit code {h.proc.exitcode}){what}")
 
     def _dispatch(self):
         if self.closed:

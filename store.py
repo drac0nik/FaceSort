@@ -283,6 +283,9 @@ def connect(path=None):
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA synchronous=NORMAL")
+    # (1.49.2) the write-ahead log file is cut back to 32 MB each time it starts over after a
+    # checkpoint (it stayed at its biggest size - 172 MB - for good, and was checked every 2 minutes)
+    conn.execute("PRAGMA journal_size_limit=33554432")
     # read the library through memory-mapping, with a bigger cache: after a background job writes
     # (updating suggestions, reading face details) the lists re-read their indexes - from memory
     # this way, instead of copying them from disk again (seconds on a big library)

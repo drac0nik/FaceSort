@@ -105,6 +105,7 @@ class ListsMixin:
             if cur is not None and (not self.view or key_of(cur) != tuple(self.view)):
                 cur = None
         old_view = tuple(self.view) if self.view else None
+        old_tree = self.trees.index(cur.treeWidget()) if cur is not None and cur.treeWidget() in self.trees else None
         neighbours = []                  # (1.45.5) if the group you're on goes, the one after it
         if cur is not None:
             top = cur
@@ -582,6 +583,11 @@ class ListsMixin:
                     target = self.find_tree_item(k, self._view_section)
                     if target is not None:
                         break
+            if target is None and not keep and old_tree is not None and self.view[0] != "none":
+                # (1.49.2) nothing beside it: the first row of the same list (not Unnamed group 1)
+                t = self.trees[old_tree]
+                target = next((x for x in self.iter_items() if x.treeWidget() is t and key_of(x)
+                               and not x.isHidden()), None)
             if target is None and not keep and (self.view[0] == "none" or not neighbours):
                 target = self.first_selectable()
             if target is not None:

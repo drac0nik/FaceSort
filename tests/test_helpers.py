@@ -213,3 +213,42 @@ def test_slow_reads_are_logged_and_wal_checkpoint(library, monkeypatch):
     assert logged and "slow read" in logged[0] and "plan:" in logged[0]
     r = jobfuncs.checkpoint_job(library.conn)
     assert r is not None and "wal_mb" in r
+
+
+def test_job_that_crashes_the_gpu_helper_moves_to_the_cpu(library, qapp, helpers_on, monkeypatch):
+    """(1.49.2) A job that brings the graphics card helper down runs on a CPU helper from then on
+    (remembered for this version), and the log says which job it was."""
+    from ui_common import bg_job
+    p = helpers.pool()
+    logged = []
+    old_log = p.log
+    import ui_common
+    monkeypatch.setattr(ui_common, "log", logged.append)
+    p._crashes = {}
+    try:
+        w = bg_job({}, jobfuncs.sleep_job, 30, role="gpu")
+        got = {}
+        w.failed.connect(lambda tb: got.setdefault("failed", tb))
+        w.start()
+        end = time.time() + 30
+        while time.time() < end and not any(h.role == "gpu" and h.tid is not None and h.pid for h in p.helpers):
+            pump(qapp, 0.05)
+        gpu = [h for h in p.helpers if h.role == "gpu" and h.tid is not None]
+        assert gpu
+        time.sleep(0.5)
+        gpu[0].proc.kill()
+        end = time.time() + 15
+        while "failed" not in got and time.time() < end:
+            pump(qapp, 0.05)
+        assert "stopped unexpectedly" in got.get("failed", "")
+        assert any("sleep_job" in m and "CPU" in m for m in logged), logged
+        assert not p.gpu_safe("jobfuncs:sleep_job")
+        import json
+        with open(os.path.join(store.data_dir(), "gpu_crashes.json"), encoding="utf-8") as f:
+            assert json.load(f)["jobs"]["jobfuncs:sleep_job"] == 1
+        p._crashes["jobfuncs:ping_job"] = 1                     # a job that crashed it: now on a CPU helper
+        res = run(bg_job({}, jobfuncs.ping_job, role="gpu"), qapp)
+        assert "ok" in res and res["ok"][1] == "cpu"
+    finally:
+        p.log = old_log
+        p._crashes = {}
