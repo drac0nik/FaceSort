@@ -830,6 +830,29 @@ class GalleryMixin:
                                       if sugg else "Nothing to suggest right now - name more people and tag more photos.")
                 self.set_buttons([("Choose which to make…", self.choose_smart_suggestions, True) if sugg else None,
                                   ("New smart album…", lambda: self.new_smart_album())])
+        elif kind == "same":                 # 1.49: possibly the same person
+            import samepeople
+            rows, self._same_of, self._same_pairs = [], {}, []
+            names = dict(c.execute("SELECT id, name FROM persons"))
+            for a_, b_, score, why in samepeople.pairs(c)[:60]:
+                self._same_pairs.append((a_, b_, why))
+                rows.append((0, f"{names.get(a_, '?')}   ⟷   {names.get(b_, '?')}   ·   {why}", ("same_pair", a_, b_), 1))
+                for pid in (a_, b_):
+                    got = c.execute(base + "WHERE f.person_id=? AND f.confirmed=1 AND f.ignored=0 ORDER BY "
+                                    + store.clear_order() + " DESC LIMIT 6", (pid,)).fetchall()
+                    if not got:
+                        got = [(-r[0], r[1], names.get(pid), 1) for r in c.execute(
+                            "SELECT ph.id, ph.path FROM photo_people pp JOIN photos ph ON ph.id=pp.photo_id "
+                            "WHERE pp.person_id=? AND COALESCE(ph.sort_later, 0) != 2 LIMIT 6", (pid,))]
+                    for r in got:
+                        self._same_of[r[0]] = (a_, b_, why)
+                    rows += got
+            self.title.setText("Possibly the same person")
+            self.subtitle.setText(f"{len(self._same_pairs)} pair{'s' if len(self._same_pairs) != 1 else ''} of people who "
+                                  "may be one. Click a face in a pair, then Merge… or Not the same (FaceSort remembers).")
+            self.set_buttons([("Merge…", self.merge_selected_pair, True), ("Not the same", self.not_same_selected_pair),
+                              ("Look again", lambda: self.start_same_people(force=True))] if self._same_pairs else
+                             [("Look again", lambda: self.start_same_people(force=True))])
         elif kind == "vault":
             rows = []
             name = c.execute("SELECT name FROM categories WHERE id=?", (ident,)).fetchone()
@@ -1012,9 +1035,9 @@ class GalleryMixin:
         else:
             self.extra_box.hide()
         self.zoom_row.setVisible(kind != "errors")
-        if kind in self.smart_kinds() and kind not in ("dupes", "errors", "shoot"):
+        if kind in self.smart_kinds() and kind not in ("dupes", "errors", "shoot", "same"):
             rows = self.split_by_folder(rows)  # Smart Groups: one section per folder path
-        if kind in ("smart", "smart_sugg", "smart_preview"):
+        if kind in ("smart", "smart_sugg", "smart_preview", "same"):
             pass                            # (already in order, with their headings)
         elif kind not in ("search", "album") or (kind == "album" and not getattr(self, "_album_sugg", None)):
             rows = self.sort_rows(rows)     # (search results stay best match first; album suggestions too)

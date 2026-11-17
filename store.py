@@ -475,6 +475,8 @@ def connect(path=None):
             PRIMARY KEY(kind, name));                                        -- 1.48: imported tag / level models
         CREATE TABLE IF NOT EXISTS smart_albums(id INTEGER PRIMARY KEY, name TEXT, filter TEXT, created REAL);
         CREATE TABLE IF NOT EXISTS smart_dismissed(key TEXT PRIMARY KEY, at REAL);       -- 1.48: suggestions you said no to
+        CREATE TABLE IF NOT EXISTS same_people(a INTEGER, b INTEGER, score REAL, why TEXT);   -- 1.49: possibly the same
+        CREATE TABLE IF NOT EXISTS not_same_people(a INTEGER, b INTEGER, at REAL, PRIMARY KEY(a, b));
         CREATE TRIGGER IF NOT EXISTS photos_gone_pose AFTER DELETE ON photos BEGIN
             DELETE FROM photo_pose WHERE photo_id=OLD.id;
             DELETE FROM photo_points WHERE photo_id=OLD.id;
@@ -1581,6 +1583,13 @@ def rename_person(conn, person_id, new_name):
         conn.execute("UPDATE tattoos SET person_id=? WHERE person_id=?", (target, person_id))
         conn.execute("UPDATE OR IGNORE tattoo_suggestions SET person_id=? WHERE person_id=?", (target, person_id))
         conn.execute("UPDATE OR IGNORE tattoo_rejects SET person_id=? WHERE person_id=?", (target, person_id))
+        # (1.49) their own folders and body matches come along (deleting them took the folders with them)
+        conn.execute("UPDATE categories SET owner_id=? WHERE owner_id=?", (target, person_id))
+        for t in ("bodies", "body_suggestions"):
+            try:
+                conn.execute(f"UPDATE {t} SET person_id=? WHERE person_id=?", (target, person_id))
+            except sqlite3.Error:
+                pass
         conn.execute("DELETE FROM persons WHERE id=?", (person_id,))
         conn.commit()
         return target

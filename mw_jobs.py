@@ -251,6 +251,49 @@ class JobsMixin:
         self.rules_worker.failed.connect(lambda tb: log(tb))
         self.rules_worker.start_background(self.settings)
 
+    def same_people_sig(self):
+        return self.conn.execute("SELECT (SELECT COUNT(*) FROM faces WHERE confirmed=1), (SELECT COUNT(*) FROM persons), "
+                                 "(SELECT COALESCE(MAX(id), 0) FROM persons), "
+                                 "(SELECT COUNT(*) FROM not_same_people)").fetchone()
+
+    def start_same_people(self, force=False):
+        """(1.49) In the background: pairs of people who may be one (when people or names changed)."""
+        if getattr(self, "_closing", False):
+            return
+        sig = self.same_people_sig()
+        if not force and (sig == getattr(self, "_same_sig", None)
+                          or time.monotonic() - getattr(self, "_same_at", -1e9) < 120):
+            return
+        w = getattr(self, "same_worker", None)
+        if w and w.isRunning():
+            return
+        self._same_sig, self._same_at = sig, time.monotonic()
+        try:
+            from ui_common import generic_names
+            gens = [g["name"] for g in generic_names(self.settings)]
+        except Exception:
+            gens = []
+        try:
+            hidden = [r[0] for r in self.conn.execute(
+                "SELECT id FROM persons WHERE name IN (%s)" % ",".join("?" * len(self.hidden_names())),
+                list(self.hidden_names()))] if self.hidden_names() else []
+        except Exception:
+            hidden = []
+        self.same_worker = bg_job(self.settings, jobfuncs.same_people_job, dict(self.settings), gens, hidden,
+                                  priority=helpers.IDLE)
+
+        def done(n):
+            had = getattr(self, "_same_count", None)
+            import samepeople
+            self._same_count = len(samepeople.pairs(self.conn))
+            if had != self._same_count:
+                self.rebuild_tree()
+                if self.view and self.view[0] == "same":
+                    self.refresh_grid()
+        self.same_worker.ok.connect(done)
+        self.same_worker.failed.connect(lambda tb: log(tb))
+        self.same_worker.start_background(self.settings)
+
     def start_checkpoint(self):
         """Every couple of minutes, when you've paused: fold a big write-ahead log back into the library."""
         if getattr(self, "_closing", False) or time.monotonic() - getattr(self, "_last_input", 0) < 5:
@@ -722,6 +765,7 @@ class JobsMixin:
         self.statusBar().clearMessage()
         if changed:
             QTimer.singleShot(2000, self.start_rules)       # (1.46) new suggestions: rules may match now
+        QTimer.singleShot(4000, self.start_same_people)     # (1.49) possibly the same person
         if not changed and not self.refresh_timer.isActive():
             return          # nothing changed: don't redraw (no stutter)
         self.refresh_timer.start()         # redrawn once you pause (never under your fingers)

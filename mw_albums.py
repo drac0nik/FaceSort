@@ -254,6 +254,44 @@ class AlbumsMixin:
         (smart.accept_near if yes else smart.reject_near)(self.conn, pairs)
         self.after_change(regroup=False)
 
+    # ---------------------------------------------------------------- possibly the same person (1.49)
+    def selected_pair(self):
+        of = getattr(self, "_same_of", {}) or {}
+        try:
+            sel = [k for k in self.selected_ids() if k in of]
+        except Exception:
+            sel = []
+        if sel:
+            return of[sel[0]]
+        pairs = getattr(self, "_same_pairs", None) or []
+        return pairs[0] if pairs else None
+
+    def merge_selected_pair(self, pair=None):
+        import samepeople
+        from samepeople_ui import MergeDialog
+        pair = pair or self.selected_pair()
+        if not pair:
+            return
+        a, b, why = pair
+        if not (self.conn.execute("SELECT 1 FROM persons WHERE id=?", (a,)).fetchone()
+                and self.conn.execute("SELECT 1 FROM persons WHERE id=?", (b,)).fetchone()):
+            return
+        d = MergeDialog(self, self.conn, a, b, why)
+        if not d.exec():
+            return
+        keep, other, name, cat = d.choice()
+        left = samepeople.merge(self.conn, keep, other, name, cat)
+        self.statusBar().showMessage(f"Merged into {self.person_name(left)} (History can undo it).", 8000)
+        self.after_change()
+
+    def not_same_selected_pair(self, pair=None):
+        import samepeople
+        pair = pair or self.selected_pair()
+        if not pair:
+            return
+        samepeople.mark_not_same(self.conn, pair[0], pair[1])
+        self.after_change(regroup=False)
+
     # ---------------------------------------------------------------- search by description
     def describe_search(self):
         text = " ".join(self.search_box.text().split())

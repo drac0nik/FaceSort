@@ -50,7 +50,7 @@ echo       Building FaceSort.exe (1-3 minutes)...
   --name FaceSort --icon icon.ico ^
   --add-data "models;models" --add-data "icon.png;." ^
   --collect-all pillow_heif --collect-binaries onnxruntime --collect-binaries cv2 --collect-binaries rawpy --collect-data imageio_ffmpeg --exclude-module tkinter ^
-  --hidden-import helpers --hidden-import jobfuncs --hidden-import fp16 --hidden-import importer --hidden-import rules --hidden-import rules_ui --hidden-import pose --hidden-import history --hidden-import history_ui --hidden-import smart --hidden-import smart_ui --hidden-import learned --hidden-import learned_ui --hidden-import onnxconverter_common.float16 --hidden-import content --hidden-import face_attrs ^
+  --hidden-import helpers --hidden-import jobfuncs --hidden-import fp16 --hidden-import importer --hidden-import rules --hidden-import rules_ui --hidden-import pose --hidden-import history --hidden-import history_ui --hidden-import smart --hidden-import smart_ui --hidden-import learned --hidden-import learned_ui --hidden-import samepeople --hidden-import samepeople_ui --hidden-import onnxconverter_common.float16 --hidden-import content --hidden-import face_attrs ^
   --distpath dist --workpath build facesort.py
 if errorlevel 1 goto :buildfail
 if not exist "dist\FaceSort.exe" goto :buildfail

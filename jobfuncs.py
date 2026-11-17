@@ -12,7 +12,7 @@ import jobs
 import known
 import store
 
-__all__ = ['dup_sets_job', 'misplaced_job', 'clip_index_job', 'clip_download_job', 'copies_job', 'bodies_job', 'bodies_download_job', 'find_dark_job', 'clarity_job', 'stats_job', 'collage_job', 'dup_check_job', 'scan_and_group', 'regroup_job', 'remember_job', 'attrs_job', 'content_job', 'subjects_job', 'content_learn_job', 'sex_learn_job', 'destinations_job', 'clarity_shard_job', 'pose_job', 'rules_job', 'checkpoint_job', 'scan_job', 'ping_job', 'sleep_job', 'SUGGESTION_SIG', 'SHOOT_SIG']
+__all__ = ['dup_sets_job', 'misplaced_job', 'clip_index_job', 'clip_download_job', 'copies_job', 'bodies_job', 'bodies_download_job', 'find_dark_job', 'clarity_job', 'stats_job', 'collage_job', 'dup_check_job', 'scan_and_group', 'regroup_job', 'remember_job', 'attrs_job', 'content_job', 'subjects_job', 'content_learn_job', 'sex_learn_job', 'destinations_job', 'clarity_shard_job', 'pose_job', 'rules_job', 'same_people_job', 'checkpoint_job', 'scan_job', 'ping_job', 'sleep_job', 'SUGGESTION_SIG', 'SHOOT_SIG']
 
 def log(msg):
     try:
@@ -231,6 +231,12 @@ def rules_job(conn, settings, progress=lambda d, t, m: None, cancelled=lambda: F
     """(1.46) The rules for incoming photos (rules.py)."""
     import rules
     return rules.run(conn, settings, progress, cancelled)
+
+
+def same_people_job(conn, settings, generics=(), hidden=(), progress=lambda d, t, m: None, cancelled=lambda: False):
+    """(1.49) Possibly the same person (samepeople.py)."""
+    import samepeople
+    return samepeople.compute(conn, settings, progress, cancelled, generics, hidden)
 
 
 def pose_job(conn, progress=lambda d, t, m: None, cancelled=lambda: False):

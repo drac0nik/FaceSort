@@ -153,6 +153,17 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+Possibly the same person (1.49)
+- Smart Groups > Possibly the same person: pairs of people who may be one - their faces look
+  alike, their names are almost the same ("Jen Smith" / "Jen Smith."), or a generic name
+  ("Model 04") looks like someone you've named. Each pair shows a few of each one's clearest faces.
+- Merge…: choose the name (either one, or another) and which folder to keep. Faces, whole-photo
+  tags, tattoos and their own folders all go to the one person; History can undo it.
+- Not the same: remembered, never suggested again. Worked out in the background after
+  suggestions change (Look again does it now).
+- Fixed: merging two people by renaming one to the other's name no longer loses the folders
+  inside the merged person's folder.
+
 Smart albums and shared learning (1.48)
 - Smart albums (Albums tab): saved conditions that fill themselves - people (any / all, and
   optionally strong suggestions), tags (any / all, and not these), subject, pose, dates taken,

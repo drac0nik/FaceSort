@@ -325,3 +325,16 @@ def install(store):
           faces=person_faces, photos=person_photos, persons=lambda c, pid, new: [pid])
     _wrap(store, "delete_person", lambda c, pid: f"Deleted {_person_name(c, pid)}",
           faces=person_faces, photos=person_photos, persons=lambda c, pid: [pid])
+    try:                                   # (1.49) "Possibly the same person" merges
+        import samepeople
+
+        def both_faces(c, keep, other, *a, **k):
+            return person_faces(c, keep) + person_faces(c, other)
+
+        def both_photos(c, keep, other, *a, **k):
+            return sorted(set(person_photos(c, keep)) | set(person_photos(c, other)))
+        _wrap(samepeople, "merge", lambda c, keep, other, *a, **k:
+              f"Merged {_person_name(c, other)} into {_person_name(c, keep)}",
+              faces=both_faces, photos=both_photos, persons=lambda c, keep, other, *a, **k: [keep, other])
+    except Exception:
+        pass

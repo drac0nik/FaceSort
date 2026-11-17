@@ -461,6 +461,15 @@ class ListsMixin:
                 it.setData(0, Qt.UserRole, key)
                 it.setToolTip(0, tip)
                 sec3.addChild(it)
+        import samepeople                  # (1.49) people who may be one
+        nsame = len(samepeople.pairs(c))
+        if nsame:
+            it = QTreeWidgetItem([f"Possibly the same person   {nsame}"])
+            it.setIcon(0, app_icon("compare"))
+            it.setData(0, Qt.UserRole, ("same", None))
+            it.setToolTip(0, "Pairs of people who may be one person: faces that look alike, almost the same name, or a "
+                             "generic name that looks like someone. Merge them, or Not the same (remembered).")
+            sec3.insertChild(min(2, sec3.childCount()), it)
         nai1 = c.execute("SELECT COUNT(*) FROM photos WHERE ai=1 AND error IS NULL").fetchone()[0]
         nai2 = c.execute("SELECT COUNT(*) FROM photos WHERE ai=2 AND error IS NULL").fetchone()[0]
         if (nai1 or nai2) and self.settings.get("show_ai_group", False):     # (off: the badge is enough)

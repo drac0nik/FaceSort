@@ -788,6 +788,10 @@ class EngineMixin:
             tm = m.addMenu(app_icon("rotate_right"), "Turn")
             tm.addAction(app_icon("rotate_left"), "Turn left (anticlockwise)\t[", lambda: self.rotate_selected(False))
             tm.addAction(app_icon("rotate_right"), "Turn right (clockwise)\t]", lambda: self.rotate_selected(True))
+            if kind == "same" and self.selected_pair():
+                pr = self.selected_pair()
+                m.addAction(app_icon("compare"), "Merge these two people…", lambda: self.merge_selected_pair(pr))
+                m.addAction("Not the same person", lambda: self.not_same_selected_pair(pr))
             if kind == "smart":
                 near = getattr(self, "_smart_near", None) or {}
                 hits = [p for p in sp_dup if p in near]
