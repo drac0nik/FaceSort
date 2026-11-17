@@ -1,8 +1,10 @@
 """MainWindow, part: library folders shown, and filling the gallery."""
 import os
 import re
+import shutil
 import clip_search
 import details
+import jobs
 import bodies
 import store
 from PySide6.QtCore import QItemSelectionModel, Qt, QTimer
@@ -10,7 +12,7 @@ from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import QListWidgetItem, QMessageBox, QStyle, QTreeWidgetItem
 from icons import app_icon
 from ui_common import (
-    button_icon, HAS_PERSON, key_of, LEGEND_GRAY, legend_html, NOFACES_WHERE, PEOPLE_LABEL_ALL, std_icon, UNASSOC_WHERE,
+    button_icon, HAS_PERSON, key_of, log, LEGEND_GRAY, legend_html, NOFACES_WHERE, PEOPLE_LABEL_ALL, std_icon, UNASSOC_WHERE,
     tool_button)
 
 
@@ -62,7 +64,12 @@ class GalleryMixin:
         self.scope_btn.setText("Showing: " + (names[0] if len(names) == 1 else f"{names[0]} + {len(names) - 1} more"))
         self.scope_btn.setStyleSheet("QToolButton { color: #f59e0b; font-weight: bold; }")
 
+    EMPTY_ROW = "*empty*"
+
     def fill_scope_list(self):
+        """(1.45.5) Click anywhere on a folder to tick / untick it; "All library folders" ticks or
+        unticks them all; library folders with no photos left aren't listed (a row at the end
+        offers to take them off your library folders)."""
         lst = self.scope_list
         lst.blockSignals(True)
         lst.clear()
@@ -74,8 +81,7 @@ class GalleryMixin:
             hit = next((i for i, f in enumerate(every) if p.startswith(f)), None)
             counts[hit] = counts.get(hit, 0) + 1
         it = QListWidgetItem("All library folders")
-        it.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
-        it.setCheckState(Qt.Checked if not sel else Qt.Unchecked)
+        it.setFlags(Qt.ItemIsEnabled)                # (ticked by a click anywhere on the row - see scope_clicked)
         it.setData(Qt.UserRole, None)
         f = it.font()
         f.setBold(True)
@@ -84,41 +90,107 @@ class GalleryMixin:
         rows = [(fo, fo, counts.get(i, 0)) for i, fo in enumerate(self.settings["folders"])]
         if counts.get(None):
             rows.append(("Other places (dropped in from elsewhere)", self.OTHER_PLACES, counts[None]))
+        self._scope_empty = [key for _l, key, n in rows if not n and key != self.OTHER_PLACES]
         for label, key, n in rows:
+            if not n:
+                continue                             # (nothing in it: not worth a row)
             it = QListWidgetItem(f"{label}   ·   {n:,}")
-            it.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+            it.setFlags(Qt.ItemIsEnabled)
             it.setCheckState(Qt.Checked if (not sel or key in sel) else Qt.Unchecked)
             it.setData(Qt.UserRole, key)
             it.setToolTip(key if key != self.OTHER_PLACES else "Photos that aren't inside any of your library folders")
             lst.addItem(it)
+        if self._scope_empty:
+            n = len(self._scope_empty)
+            it = QListWidgetItem(f"{n} empty library folder{'s' if n != 1 else ''} not listed - take "
+                                 f"{'them' if n != 1 else 'it'} off your library folders…")
+            it.setFlags(Qt.ItemIsEnabled)
+            it.setData(Qt.UserRole, self.EMPTY_ROW)
+            it.setForeground(QColor("#888"))
+            it.setToolTip("\n".join(self._scope_empty))
+            lst.addItem(it)
+        self._scope_sync_all()
         lst.blockSignals(False)
         lst.setMinimumWidth(min(700, max(320, lst.sizeHintForColumn(0) + 30)))
         lst.setFixedHeight(min(420, lst.sizeHintForRow(0) * lst.count() + 8))
 
-    def scope_item_changed(self, it):
+    def _scope_rows(self):
+        lst = self.scope_list
+        return [lst.item(i) for i in range(1, lst.count()) if lst.item(i).data(Qt.UserRole) != self.EMPTY_ROW]
+
+    def _scope_sync_all(self):
+        rows = self._scope_rows()
+        on = sum(1 for r in rows if r.checkState() == Qt.Checked)
+        self.scope_list.item(0).setCheckState(Qt.Checked if rows and on == len(rows) else
+                                              Qt.PartiallyChecked if on else Qt.Unchecked)
+
+    def scope_clicked(self, it):
+        key = it.data(Qt.UserRole)
+        if key == self.EMPTY_ROW:
+            self.scope_menu.close()
+            return self.remove_empty_library_folders()
         lst = self.scope_list
         lst.blockSignals(True)
-        if it.data(Qt.UserRole) is None:          # "All": tick or untick everything
-            st = it.checkState()
-            if st == Qt.Unchecked:                # (nothing at all makes no sense: back to all)
-                st = Qt.Checked
-                it.setCheckState(st)
-            for i in range(1, lst.count()):
-                lst.item(i).setCheckState(st)
+        rows = self._scope_rows()
+        if key is None:                              # "All": all on, or (if they all were) all off
+            st = Qt.Unchecked if all(r.checkState() == Qt.Checked for r in rows) else Qt.Checked
+            for r in rows:
+                r.setCheckState(st)
+        else:
+            it.setCheckState(Qt.Unchecked if it.checkState() == Qt.Checked else Qt.Checked)
+        self._scope_sync_all()
         lst.blockSignals(False)
-        keys = [lst.item(i).data(Qt.UserRole) for i in range(1, lst.count())
-                if lst.item(i).checkState() == Qt.Checked]
-        every = len(keys) == lst.count() - 1
-        lst.blockSignals(True)
-        lst.item(0).setCheckState(Qt.Checked if every else Qt.Unchecked)
-        lst.blockSignals(False)
-        if not keys:                              # unticked the last one: show everything again
-            keys, every = [], True
+        keys = [r.data(Qt.UserRole) for r in rows if r.checkState() == Qt.Checked]
+        if not keys:
+            # everything unticked: nothing changes until you tick the folders you want
+            self.scope_btn.setText("Tick the folders to show…")
+            return
+        every = len(keys) == len(rows)
         self.settings["scope_folders"] = [] if every else keys
         store.save_settings(self.settings)
         self.update_scope_button()
         self.rebuild_tree()
         self.refresh_grid(keep_selection=True)
+
+    def scope_item_changed(self, it):                # (older signal - kept for anything still calling it)
+        return None
+
+    def remove_empty_library_folders(self):
+        """Take library folders that have no photos left off your library folders (the folders on
+        the disk stay; a completely empty one - nothing but empty folders - goes to ~To Be Discarded
+        when there's a sorted library to put it in)."""
+        empty = list(getattr(self, "_scope_empty", []))
+        if not empty:
+            return
+        dest = self.settings.get("library_root")
+        if dest:
+            empty = [f for f in empty if os.path.normcase(os.path.abspath(f)) != os.path.normcase(os.path.abspath(dest))]
+        if not empty:
+            return
+        msg = ("FaceSort has no photos from these library folders any more:\n\n" + "\n".join(empty[:15])
+               + ("\n…" if len(empty) > 15 else "") + "\n\nTake them off your library folders? (They won't be "
+               "scanned any more. " + ("A folder with nothing at all in it goes to '~To Be Discarded'; one that still "
+                                       "has other files stays where it is.)" if dest else "The folders themselves stay where they are.)"))
+        if QMessageBox.question(self, "Empty library folders", msg) != QMessageBox.Yes:
+            return
+        moved = 0
+        for f in empty:
+            if dest and os.path.isdir(f) and jobs._is_empty_dir(f):
+                try:
+                    disc = os.path.join(dest, jobs.DISCARD_FOLDER)
+                    os.makedirs(disc, exist_ok=True)
+                    shutil.move(f, jobs._free_dir(disc, os.path.basename(f.rstrip("\\/")) or "folder"))
+                    moved += 1
+                except OSError as e:
+                    log(f"moving empty folder {f}: {e}")
+        self.settings["folders"] = [f for f in self.settings["folders"] if f not in empty]
+        self.settings["scope_folders"] = [f for f in self.settings.get("scope_folders", []) if f not in empty]
+        store.save_settings(self.settings)
+        self.statusBar().showMessage(f"✓ {len(empty)} empty folder{'s' if len(empty) != 1 else ''} taken off your "
+                                     "library folders" + (f" ({moved} moved to '{jobs.DISCARD_FOLDER}')" if moved else ""),
+                                     8000)
+        self.update_scope_button()
+        self.rebuild_tree()
 
     def apply_scope_to_tree(self, c):
         """Only some library folders shown: people, groups, folders and albums count just the photos

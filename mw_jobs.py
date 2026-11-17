@@ -399,8 +399,6 @@ class JobsMixin:
         # number can stand for a different / changed file, so reload them (from the disk cache: quick)
         self.hi_cache.clear()
         self.hires.clear()
-        if name == "scan" and self.view[0] == "unknown":
-            self.view = ("none", None)  # land on the biggest unnamed group
         goto = getattr(self, "_goto_after_scan", None)
         if name == "scan" and goto:
             self._goto_after_scan = None

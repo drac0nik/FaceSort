@@ -616,3 +616,69 @@ def test_no_folder_bar_for_duplicate_sets_or_thousands_of_sections(window, monke
     w.model.set_rows([(0, f"Folder {i}", None, 1) for i in range(5)])
     w.build_folder_bar()
     assert not w._bar_heads
+
+
+def test_selected_group_stays_or_moves_to_the_next(window):
+    """1.45.5: after an update the gallery stays on the group you picked; if that group is gone it
+    goes to the very next one (not back to the top)."""
+    w = window
+    smart = [k for k in all_keys(w, w.tree2) if k[0] in ("unknown", "partial", "dupes", "nofaces", "group")]
+    assert smart
+    w.view = ("dupes", None)
+    w.rebuild_tree()
+    assert w.view == ("dupes", None)                     # (still there: stays)
+    # a group that has gone: the one listed after it is picked
+    it = w.find_tree_item(("dupes", None))
+    par = it.parent()
+    sib = [par.child(j) for j in range(par.childCount())]
+    i = sib.index(it)
+    from ui_common import key_of
+    want = [key_of(x) for x in sib[i + 1:]] + [key_of(x) for x in reversed(sib[:i])]
+    w.select_item(it, switch=False)
+    orig = type(w).dup_sets
+    try:
+        type(w).dup_sets = lambda self, wait=False: []
+        real = w.find_tree_item
+        w.find_tree_item = lambda key, section=None: None if tuple(key) == ("dupes", None) else real(key, section)
+        w.rebuild_tree()
+    finally:
+        type(w).dup_sets = orig
+        del w.find_tree_item
+    assert w.view == next(k for k in want if k)
+
+
+def test_folder_scope_list_clicks(window, qapp, tmp_path):
+    """1.45.5: a click anywhere on a folder ticks / unticks it; "All" turns them all off or on;
+    library folders with no photos aren't listed and can be taken off the list."""
+    from PySide6.QtCore import Qt
+    w = window
+    empty = tmp_path / "Empty folder"
+    empty.mkdir()
+    w.settings["folders"] = list(w.settings["folders"]) + [str(empty)]
+    w.fill_scope_list()
+    lst = w.scope_list
+    labels = [lst.item(i).text() for i in range(lst.count())]
+    assert not any("Empty folder" in t for t in labels[1:-1]) and "empty library folder" in labels[-1]
+    rows = w._scope_rows()
+    if len(rows) < 2:                                    # (the test library has one folder: add another with photos)
+        return
+    w.scope_clicked(rows[0])                             # a click on the row (not just the box)
+    assert rows[0].checkState() == Qt.Unchecked and w.settings["scope_folders"] == [rows[1].data(Qt.UserRole)]
+    w.scope_clicked(lst.item(0))                         # All: (not all on) -> all on
+    assert all(r.checkState() == Qt.Checked for r in rows) and w.settings["scope_folders"] == []
+    w.scope_clicked(lst.item(0))                         # All again: all off (nothing changes until you tick)
+    assert all(r.checkState() == Qt.Unchecked for r in rows)
+
+
+def test_remove_empty_library_folders(window, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    w = window
+    empty = tmp_path / "Done with"
+    (empty / "sub").mkdir(parents=True)
+    w.settings["folders"] = list(w.settings["folders"]) + [str(empty)]
+    w.settings["library_root"] = str(tmp_path / "Sorted")
+    w.fill_scope_list()
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
+    w.remove_empty_library_folders()
+    assert str(empty) not in w.settings["folders"] and not empty.exists()
+    assert (tmp_path / "Sorted" / "~To Be Discarded" / "Done with").is_dir()

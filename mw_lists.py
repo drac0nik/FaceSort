@@ -80,11 +80,21 @@ class ListsMixin:
             if k and k[0] == "category" and it.childCount():
                 (self._cat_collapsed.discard if it.isExpanded() else self._cat_collapsed.add)(k[1])
         cur = self.current_item()
+        neighbours = []                  # (1.45.5) if the group you're on goes, the one after it
         if cur is not None:
             top = cur
             while top.parent() is not None:
                 top = top.parent()
             self._view_section = top.text(0).split(" (")[0]
+            par = cur.parent()
+            if par is not None:
+                sib = [par.child(j) for j in range(par.childCount())]
+                i = sib.index(cur) if cur in sib else -1
+                # the ones after it first (the very next group), then before it (it was the last),
+                # then the section / folder it was in
+                neighbours = [key_of(x) for x in sib[i + 1:]] + [key_of(x) for x in reversed(sib[:i])] + \
+                    [key_of(par)]
+                neighbours = [k for k in neighbours if k]
         for t in self.trees:
             t.clear()
         bold = QFont(self.tree.font())
@@ -512,6 +522,13 @@ class ListsMixin:
             target = self.find_tree_item(self.view, self._view_section)
             if target is None and self.view[0] == "group":
                 target = self.find_group_for_anchor()
+            if target is None and self.view[0] != "none":
+                # (1.45.5) the group you were on is gone (all done, say): the very next one - the
+                # gallery never jumps somewhere else on its own
+                for k in neighbours:
+                    target = self.find_tree_item(k, self._view_section)
+                    if target is not None:
+                        break
             if target is None:
                 target = self.first_selectable()
             if target is not None:

@@ -284,7 +284,7 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         self.scope_menu = QMenu(self.scope_btn)
         self.scope_list = QListWidget()
         self.scope_list.setFrameShape(QFrame.NoFrame)
-        self.scope_list.itemChanged.connect(self.scope_item_changed)
+        self.scope_list.itemClicked.connect(self.scope_clicked)    # (a click anywhere on a row)
         wa = QWidgetAction(self.scope_menu)
         wa.setDefaultWidget(self.scope_list)
         self.scope_menu.addAction(wa)

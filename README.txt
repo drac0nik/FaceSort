@@ -153,6 +153,15 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+The gallery stays where you are; the folders list (1.45.5)
+- After updates (a scan, suggestions, background work) the gallery stays on the group or person
+  you picked. If that group is gone (all done, say), it goes to the very next one in the list -
+  never back to the top.
+- The library folders list (top left): click anywhere on a folder to tick / untick it; "All
+  library folders" ticks them all, or unticks them all if they all were. Library folders with no
+  photos left aren't listed - the last row offers to take them off your library folders (a
+  completely empty one goes to '~To Be Discarded').
+
 Duplicates with thousands of sets (1.45.4)
 - The Duplicates group froze for up to a minute and a half with thousands of sets: the bar above
   the gallery made a button for every set ("Set 1" ... "Set 5400"). The duplicate sets don't get
