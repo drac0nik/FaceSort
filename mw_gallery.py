@@ -529,6 +529,8 @@ class GalleryMixin:
         out, head, total, shown = [], None, 0, 0
         for r in rows:
             if not r[0]:
+                if head is not None and self.is_folder_heading(head):
+                    out.append(head)          # (a folder heading stays, to drop onto)
                 head = r
                 continue
             total += 1
@@ -539,6 +541,8 @@ class GalleryMixin:
                     head = None
                 out.append(r)
                 shown += 1
+        if head is not None and self.is_folder_heading(head):
+            out.append(head)
         self._search_shown = (shown, total)
         return out
 

@@ -324,9 +324,17 @@ class DataMixin:
                 if not r2[0]:
                     break
                 n += 1
-            if n:
+            # (1.51.1) a folder's heading stays even when nothing's left under it (with only some
+            # library folders shown, a person's empty folders had vanished from the folder bar) -
+            # you drop photos onto those
+            if n or self.is_folder_heading(r):
                 out.append((r[0], re.sub(r"(\s·\s+)[\d,]+$", lambda m: f"{m.group(1)}{n:,}", r[1]),) + tuple(r[2:]))
         return out
+
+    @staticmethod
+    def is_folder_heading(r):
+        """A heading that stands for a folder (photos can be dropped onto it)."""
+        return not r[0] and isinstance(r[2], tuple) and bool(r[2]) and r[2][0] in ("pf", "cat")
 
     def set_view_mode(self, i):
         self.viewer_mode = i == 1

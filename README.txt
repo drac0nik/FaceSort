@@ -153,6 +153,12 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.51.1
+- Fixed: a person's empty folders had disappeared from the folder bar above their gallery when
+  only some library folders were shown (the folder filter on the left) or Pictures / Video was
+  picked. Folder headings stay, empty or not, so you can drop photos onto them - also while the
+  file name filter is in use.
+
 Never track (1.51)
 - Right-click a face > "Never track this (a logo, watermark, drawing…)…": a permanent "this is
   never a face". It, and every face that matches it closely - in the library now and in every photo

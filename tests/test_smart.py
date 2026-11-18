@@ -383,3 +383,26 @@ def test_gallery_file_name_filter(window, qapp):
     w.select_item(it)
     pump(qapp, 0.4)
     assert w.view == ("person", bob) and w.gallery_filter.text() == ""
+
+
+def test_empty_person_folders_stay_in_the_folder_bar(window, qapp, monkeypatch):
+    """(1.51.1) With only some library folders shown (or Pictures / Video), a person's empty
+    folders still get their heading - and button in the folder bar - to drop photos onto."""
+    w, c = window, window.conn
+    alice = c.execute("SELECT id FROM persons WHERE name='Alice'").fetchone()[0]
+    top = store.create_category(c, "Shoots", None, alice)
+    store.create_category(c, "Empty one", top, None)
+    c.commit()
+    monkeypatch.setattr(type(w), "scope_on", lambda self: True)
+    monkeypatch.setattr(type(w), "in_scope", lambda self, path: True)
+    for mode in ("all", "videos"):
+        w.settings["media_filter"] = mode
+        w.view = ("person", alice)
+        w.refresh_grid()
+        bar = [b.text() for _i, b in w._bar_heads]
+        assert any("Empty one" in t for t in bar), (mode, bar)
+    w.settings["media_filter"] = "all"
+    w.gallery_filter.setText("zzznomatch")
+    w.refresh_grid()
+    assert any("Empty one" in b.text() for _i, b in w._bar_heads)
+    w.gallery_filter.setText("")
