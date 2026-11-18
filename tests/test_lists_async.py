@@ -100,3 +100,25 @@ def test_swapped_in_at_a_pause_and_skipped_when_unchanged(window, qapp, monkeypa
     wait_lists(w, qapp)
     pump(qapp, 0.6)
     assert w.find_tree_item(("person", pid)) is it
+
+
+def test_scope_table_and_buckets_not_redone(window, qapp, monkeypatch):
+    """(1.51.3) The folder filter's photo list is written once per change of photos, and the
+    Smart Groups buckets are worked out once per change (not per selected bucket)."""
+    w = window
+    monkeypatch.setattr(type(w), "scope_on", lambda self: True)
+    monkeypatch.setattr(type(w), "in_scope", lambda self, path: True)
+    w.rebuild_tree()
+    filled = w._scope_filled
+    calls = []
+    real = w.conn.executemany
+    monkeypatch.setattr(w.conn, "executemany", lambda *a, **k: (calls.append(a[0]), real(*a, **k))[1], raising=False)
+    w.rebuild_tree()
+    assert w._scope_filled == filled and not [q for q in calls if "scope_ids" in q]
+    n = []
+    import store as st
+    orig = st.photo_buckets
+    monkeypatch.setattr(st, "photo_buckets", lambda *a, **k: (n.append(1), orig(*a, **k))[1])
+    w.photo_buckets("location")
+    w.photo_buckets("location")
+    assert len(n) == 1

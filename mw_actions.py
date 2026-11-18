@@ -413,18 +413,24 @@ class ActionsMixin:
         self.update_sort_button()
         self.refresh_grid(keep_selection=True)
 
+    def conn_id(self):
+        """(1.51.3) The library connection's identity - the same during a redraw (when self.conn is
+        the read-ahead wrapper) as outside it; caches keyed on the wrapper were thrown away at every
+        redraw."""
+        return id(getattr(self.conn, "_real", self.conn))
+
     def photo_meta(self, paths=None):
         """{path: (size, date taken, date downloaded/created, width, height)} for sorting.
         (1.51.1) Only the gallery's own pictures are read, and kept until a scan or job changes the
         photos (they used to be re-read for the whole library - with a check that itself read every
         photo - each time the gallery was redrawn with a Sort other than Best first)."""
         if self.settings.get("grid_sort") == "downloaded":
-            gen = (self._data_gen, id(self.conn))
+            gen = (self._data_gen, self.conn_id())
             if getattr(self, "_created_filled", None) != gen:
                 store.fill_created(self.conn)
                 self._created_filled = gen
                 self._meta = {}
-        key = (self._data_gen, id(self.conn))
+        key = (self._data_gen, self.conn_id())
         if getattr(self, "_meta_key", None) != key:
             self._meta, self._meta_key = {}, key
         meta = self._meta
@@ -548,11 +554,11 @@ class ActionsMixin:
         """What the duplicate sets depend on. It reads every photo (a third of a second on a big
         library), so it's re-read only after a change here, after background work, or every few
         seconds - not for each photo you step through in the viewer."""
-        stamp = (id(self.conn), self.conn.total_changes, getattr(self, "_data_gen", 0))
+        stamp = (self.conn_id(), self.conn.total_changes, getattr(self, "_data_gen", 0))
         got = getattr(self, "_dup_key_memo", None)
         if got and got[0] == stamp and time.monotonic() - got[1] < 5:
             return got[2]
-        if got and got[2][0] == id(self.conn):
+        if got and got[2][0] == self.conn_id():
             # (1.51.1) re-read in the background - it reads every photo, a third of a second each
             # time the gallery was redrawn after a change; the last answer is used meanwhile, and the
             # sets are worked out again if it turns out something that matters changed
@@ -575,9 +581,9 @@ class ActionsMixin:
         w = Worker(lambda conn, progress=None, cancelled=None: tuple(conn.execute(DUP_KEY_SQL).fetchone()))
 
         def done(vals, stamp=stamp):
-            if getattr(self, "_closing", False) or stamp[0] != id(self.conn):
+            if getattr(self, "_closing", False) or stamp[0] != self.conn_id():
                 return
-            key = (id(self.conn),) + tuple(vals)
+            key = (self.conn_id(),) + tuple(vals)
             self._dup_key_memo = (stamp, time.monotonic(), key)
             if hasattr(self, "_dups") and getattr(self, "_dup_key", None) != key and not self.dup_timer.isActive():
                 self.dup_timer.start()
@@ -586,7 +592,7 @@ class ActionsMixin:
         w.start()
 
     def _dup_key_read(self):
-        return (id(self.conn),) + tuple(self.conn.execute(DUP_KEY_SQL).fetchone())
+        return (self.conn_id(),) + tuple(self.conn.execute(DUP_KEY_SQL).fetchone())
 
     def dup_sets(self, wait=False):
         """The duplicate sets. Worked out in the background when something that matters changed
@@ -1125,7 +1131,7 @@ class ActionsMixin:
         photo, so the sidebar and the views share one copy). stale_ok (the side list's folder
         counts): if it's out of date, the last copy is used now and a fresh one is worked out in the
         background - on a big library that takes seconds, and the lists redraw when it's ready."""
-        key = (self.conn.total_changes, self._data_gen, id(self.conn))
+        key = (self.conn.total_changes, self._data_gen, self.conn_id())
         cache = getattr(self, "_dest_cache", None)
         if cache and cache[0] == key:
             return cache[2 if include_suggestions else 1]
@@ -1145,7 +1151,7 @@ class ActionsMixin:
             t = self._dest_timer = _QT(self)
             t.setSingleShot(True)
             t.timeout.connect(lambda: self._refresh_destinations_now(
-                (self.conn.total_changes, self._data_gen, id(self.conn))))
+                (self.conn.total_changes, self._data_gen, self.conn_id())))
         t.start(1500)
 
     def _refresh_destinations_now(self, key):
@@ -1160,7 +1166,7 @@ class ActionsMixin:
         def done(res):
             if getattr(self, "_closing", False) or res is None:
                 return
-            now = (self.conn.total_changes, self._data_gen, id(self.conn))
+            now = (self.conn.total_changes, self._data_gen, self.conn_id())
             self._dest_cache = (key, res[0], res[1])
             if now != key or self._dest_again:
                 self._refresh_destinations(now)          # changed again meanwhile: once more (after a pause)
@@ -1174,7 +1180,7 @@ class ActionsMixin:
         """{photo id: folder}, re-read only when photos were added, removed or moved (not on every
         naming - this reads every photo)."""
         sig = self.conn.execute("SELECT COUNT(*), MAX(id), TOTAL(LENGTH(path)) FROM photos").fetchone()
-        key = (self._data_gen, id(self.conn)) + tuple(sig)
+        key = (self._data_gen, self.conn_id()) + tuple(sig)
         if getattr(self, "_dirs_key", None) != key:
             self._dirs, self._dirs_key = store.photo_dirs(self.conn), key
         return self._dirs

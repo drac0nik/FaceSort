@@ -54,7 +54,8 @@ class GalleryMixin:
         c = c or self.conn
         # (1.51.1) worked out again only when the photos or the folders picked changed (it checked
         # every photo's path at each redraw - over half a second on a big library)
-        sig = (id(self.conn), getattr(self, "_data_gen", 0), tuple(sorted(self.scope_folders() or ())),
+        sig = (id(getattr(self.conn, "_real", self.conn)), getattr(self, "_data_gen", 0),
+               tuple(sorted(self.scope_folders() or ())),
                tuple(self.settings.get("folders") or ())) + tuple(
             c.execute("SELECT COUNT(*), COALESCE(MAX(id), 0), TOTAL(LENGTH(path)) FROM photos").fetchone())
         got = getattr(self, "_scope_ids", None)
@@ -202,6 +203,18 @@ class GalleryMixin:
         self.update_scope_button()
         self.rebuild_tree()
 
+    def photo_buckets(self, mode):
+        """(1.51.3) Smart Groups by date / original location, worked out once per change (it was
+        worked out again for each bucket of a multi-selection - 5 seconds for a few buckets)."""
+        real = getattr(self.conn, "_real", self.conn)
+        key = (mode, id(real), real.total_changes, getattr(self, "_data_gen", 0))
+        got = getattr(self, "_buckets_memo", None)
+        if got and got[0] == key:
+            return got[1]
+        b = store.photo_buckets(self.conn, mode, self.sorted_photo_sql())
+        self._buckets_memo = (key, b)
+        return b
+
     def apply_scope_to_tree(self, c):
         """Only some library folders shown: people, groups, folders and albums count just the photos
         from those folders, and the ones with none there are hidden."""
@@ -209,9 +222,15 @@ class GalleryMixin:
         ids = self.scoped_photo_ids(c)
         if ids is None:
             return
-        c.execute("CREATE TEMP TABLE IF NOT EXISTS scope_ids(id INTEGER PRIMARY KEY)")
-        c.execute("DELETE FROM temp.scope_ids")
-        c.executemany("INSERT INTO temp.scope_ids(id) VALUES(?)", ((i,) for i in ids))
+        # (1.51.3) refilled only when the set of photos changed (it was refilled - tens of thousands
+        # of rows - at every redraw)
+        real = getattr(c, "_real", c)
+        sig = (id(real), getattr(self, "_scope_ids", (None,))[0])
+        if getattr(self, "_scope_filled", None) != sig:
+            c.execute("CREATE TEMP TABLE IF NOT EXISTS scope_ids(id INTEGER PRIMARY KEY)")
+            c.execute("DELETE FROM temp.scope_ids")
+            c.executemany("INSERT INTO temp.scope_ids(id) VALUES(?)", ((i,) for i in ids))
+            self._scope_filled = sig
         conf, sugg = {}, {}
         for pid, n in c.execute("""SELECT person_id, COUNT(DISTINCT photo_id) FROM (
                                      SELECT person_id, photo_id FROM faces WHERE confirmed=1 AND ignored=0
@@ -302,7 +321,7 @@ class GalleryMixin:
 
     def add_buckets(self, section, mode):
         """Lower list sorted by date taken / date created / original location instead of by face."""
-        buckets = store.photo_buckets(self.conn, mode, self.sorted_photo_sql())
+        buckets = self.photo_buckets(mode)
         title = {"taken": "To sort by date taken", "created": "To sort by date created",
                  "location": "To sort by original location"}[mode]
         sec = section(f"{title} ({len(buckets)})", tree=self.tree2)
@@ -721,7 +740,10 @@ class GalleryMixin:
                               ("Set folder…", self.act_category),
                               ("Delete person", self.delete_person)])
         elif kind == "group":
-            rows = c.execute(base + "WHERE f.cluster=? AND f.person_id IS NULL AND f.ignored=0 ORDER BY " + store.clear_order() + " DESC",
+            # (1.51.3) straight to the group's faces (the database sometimes walked the big covering
+            # index instead - a third of a second per group)
+            rows = c.execute(base.replace("FROM faces f JOIN", "FROM faces f INDEXED BY faces_cluster JOIN")
+                             + "WHERE f.cluster=? AND f.person_id IS NULL AND f.ignored=0 ORDER BY " + store.clear_order() + " DESC",
                              (ident,)).fetchall()
             it = self.find_tree_item(("group", ident))
             num = it.data(0, Qt.UserRole + 2) if it else ""
@@ -1039,7 +1061,7 @@ class GalleryMixin:
             self.set_buttons([("Keep the best of every set…", self.keep_best_all, True)] if sets else [])
         elif kind == "bucket":
             mode, _, key = ident.partition("|")
-            b = store.photo_buckets(c, mode, self.sorted_photo_sql()).get(key, ["", 0, []])
+            b = self.photo_buckets(mode).get(key, ["", 0, []])
             pids = b[2]
             rows = []
             for i in range(0, len(pids), 900):

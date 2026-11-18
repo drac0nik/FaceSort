@@ -147,10 +147,15 @@ class ListsMixin:
         self._lists_missed = rec.missed[:20]
         parts = dict(last) if last and last.get("view") == tuple(self.view or ()) else {}
         parts["view"] = tuple(self.view) if self.view else None
-        if answers is not None and not rec.misses:
+        if answers is not None:
+            known = dict(answers)
+            known.update(rec.fetched)
             for part, keys in rec.parts.items():
                 ks = list(keys)
-                parts[part] = (ks, [answers[k] for k in ks])
+                if all(k in known for k in ks):
+                    parts[part] = (ks, [known[k] for k in ks])
+                else:
+                    parts.pop(part, None)
         else:
             parts = {"view": parts["view"]}
         self._last_parts = parts
@@ -748,7 +753,9 @@ class ListsMixin:
             if target is not None:
                 self.select_item(target, switch=False)
                 self.view = key_of(target)
-                if old_view and tuple(self.view) != old_view and old_view[0] != "none":
+                # (1.51.3: only when it lands on another kind of list - one group done, the next group
+                # is what's meant to happen and filled the log)
+                if old_view and tuple(self.view) != old_view and old_view[0] not in ("none", self.view[0]):
                     log(f"list: {old_view} is gone - now showing {tuple(self.view)}")
         self.make_rep_icons(icon_wait)
         if self.search.text().strip() or self.scope_on():

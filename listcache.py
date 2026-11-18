@@ -69,6 +69,7 @@ class Recording:
         self.hits = 0
         self.misses = 0
         self.missed = []                  # (questions not read ahead, when there were answers)
+        self.fetched = {}                 # their answers, asked on the spot
         self.part = "tree"                # which part of the redraw is asking (tree / grid / stats)
         self.parts = {}                   # part -> its questions
 
@@ -87,6 +88,11 @@ class Recording:
         self.misses += 1
         if self._answers:
             self.missed.append(key)
+            # (1.51.3) asked now, on the spot: kept with the answers, so the next redraw can still tell
+            # whether anything changed
+            rows = self._real.execute(sql, params).fetchall()
+            self.fetched[key] = rows
+            return Rows(rows)
         return self._real.execute(sql, params)
 
     def __getattr__(self, name):

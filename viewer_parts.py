@@ -940,7 +940,7 @@ class PersonPicker(QDialog):
         # (1.51.1) each person's best face and photo count read every face in the library - a third
         # of a second each time this opened. Kept for a minute (or until people are added or a scan /
         # job changes the library): new people still show at once, a count may lag a little
-        sig = (id(c), getattr(win, "_data_gen", 0)) + tuple(c.execute("SELECT COUNT(*), MAX(id) FROM persons").fetchone())
+        sig = (id(getattr(c, "_real", c)), getattr(win, "_data_gen", 0)) + tuple(c.execute("SELECT COUNT(*), MAX(id) FROM persons").fetchone())
         got = getattr(win, "_picker_cache", None)
         if got and got[0] == sig and time.monotonic() - got[1] < 60:
             rep, counts = got[2], got[3]
@@ -1007,6 +1007,19 @@ class PersonPicker(QDialog):
             return True
         return super().eventFilter(obj, ev)
 
+    def icon_for(self, fid):
+        """(1.51.3) Each face's round icon made once (and kept by the window while the pictures
+        don't change) - 300 of them were made again at every key typed."""
+        win = self.win
+        gen = getattr(getattr(win, "pix_cache", None), "gen", 0)
+        cache = getattr(win, "_picker_icons", None)
+        if cache is None or cache[0] != gen or len(cache[1]) > 5000:
+            cache = win._picker_icons = (gen, {})
+        icon = cache[1].get(fid)
+        if icon is None:
+            icon = cache[1][fid] = QIcon(round_pixmap(win.face_pixmap(fid), 56, 10))
+        return icon
+
     def fill(self, *_):
         text = " ".join(self.edit.text().split())
         ranked = TagEdit.rank(text, [(r[0], r) for r in self.people])
@@ -1022,7 +1035,7 @@ class PersonPicker(QDialog):
             self.list.addItem(it)
         for name, r in ranked[:300]:
             _, pid, fid, n, where, _u = r
-            icon = QIcon(round_pixmap(self.win.face_pixmap(fid), 56, 10)) if fid else app_icon("person", "grey")
+            icon = self.icon_for(fid) if fid else app_icon("person", "grey")
             extra = "  ·  ".join(x for x in (f"{n:,} photo{'s' if n != 1 else ''}" if pid else "", where) if x)
             it = QListWidgetItem(icon, f"{name}\n{extra}" if extra else name)
             it.setData(Qt.UserRole, ("person", r))

@@ -153,6 +153,22 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.51.3
+- Quicker (from the speed report):
+  - Picking several date / location buckets in Smart Groups worked them all out again for each
+    one (5 seconds for a few): once per change now.
+  - With the folder filter on, the list of photos in the picked folders was rewritten at every
+    redraw of the side lists: only when the photos change now.
+  - Some things that were meant to be kept between redraws (each picture's details for sorting,
+    what the duplicate sets depend on, the folder filter's photos) were thrown away at every redraw
+    of the side lists by mistake - they're kept now.
+  - The name box made 300 round face icons again at every letter typed: each is made once now.
+  - Opening an unnamed group goes straight to its faces (it could take a third of a second).
+  - After a change that adds something new to the side lists, the next redraw can still be skipped
+    when nothing else changed.
+- facesort.log: "is gone - now showing" is only written when the gallery lands on a different kind
+  of list (the next group after naming one is what's meant to happen, and filled the log).
+
 1.51.2
 - Quicker (from the speed report):
   - With a Sort other than Best first, each redraw read the details of every photo in the library
