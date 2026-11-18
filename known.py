@@ -528,13 +528,45 @@ def names():
     # (1.45.3) the helpers save who's who often, which used to mean reading every name again (a second
     # on a big file) at the next right-click: a list under half a minute old is still used - the
     # library's own people are always current anyway, this only adds people remembered from before
-    if _NAMES.get("names") is not None and time.monotonic() - _NAMES.get("at", 0) < 30:
+    if _NAMES.get("names") is not None:
+        # (1.51.1) never read on the spot once there's a list: reading the file while the helpers
+        # were saving to it took up to 1.7 s at a right-click. The list is read again in the
+        # background, ready for next time (the library's own people are always current anyway).
+        if time.monotonic() - _NAMES.get("at", 0) >= 30:
+            _reload_names_soon(sig)
         return list(_NAMES["names"])
-    with _db() as k:
-        got = [r[0] for r in k.execute("SELECT name FROM people ORDER BY name COLLATE NOCASE")]
+    got = _read_names()
     if sig is not None:
         _NAMES.update(sig=sig, names=got, at=time.monotonic())
     return list(got)
+
+
+def _read_names():
+    with _db() as k:
+        return [r[0] for r in k.execute("SELECT name FROM people ORDER BY name COLLATE NOCASE")]
+
+
+def _reload_names_soon(sig):
+    if _NAMES.get("loading"):
+        return
+    _NAMES["loading"] = True
+
+    def run():
+        try:
+            got = _read_names()
+            _NAMES.update(sig=sig, names=got, at=time.monotonic())
+        except Exception:
+            _NAMES["at"] = time.monotonic()
+        finally:
+            _NAMES["loading"] = False
+    import threading
+    threading.Thread(target=run, daemon=True, name="known-names").start()
+
+
+def warm_names():
+    """Read the remembered names in the background (at start), so the first right-click is quick."""
+    if _NAMES.get("names") is None:
+        _reload_names_soon(None)
 
 
 def category_for(path_):

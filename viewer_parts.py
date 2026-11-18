@@ -937,12 +937,21 @@ class PersonPicker(QDialog):
         c = win.conn
         paths = store.category_paths(c)
         self.people = []
-        rep = {pid: fid for pid, fid, _ in c.execute(        # their best confirmed face (else a suggested one)
-            """SELECT person_id, id, MAX(confirmed * 1000000 + COALESCE(px * score, 0)) FROM faces WHERE ignored=0
-               AND person_id IS NOT NULL GROUP BY person_id""")}
-        counts = dict(c.execute("""SELECT person_id, COUNT(DISTINCT photo_id) FROM (
-                                       SELECT person_id, photo_id FROM faces WHERE ignored=0 AND person_id IS NOT NULL
-                                       UNION SELECT person_id, photo_id FROM photo_people) GROUP BY person_id"""))
+        # (1.51.1) each person's best face and photo count read every face in the library - a third
+        # of a second each time this opened. Kept for a minute (or until people are added or a scan /
+        # job changes the library): new people still show at once, a count may lag a little
+        sig = (id(c), getattr(win, "_data_gen", 0)) + tuple(c.execute("SELECT COUNT(*), MAX(id) FROM persons").fetchone())
+        got = getattr(win, "_picker_cache", None)
+        if got and got[0] == sig and time.monotonic() - got[1] < 60:
+            rep, counts = got[2], got[3]
+        else:
+            rep = {pid: fid for pid, fid, _ in c.execute(        # their best confirmed face (else a suggested one)
+                """SELECT person_id, id, MAX(confirmed * 1000000 + COALESCE(px * score, 0)) FROM faces WHERE ignored=0
+                   AND person_id IS NOT NULL GROUP BY person_id""")}
+            counts = dict(c.execute("""SELECT person_id, COUNT(DISTINCT photo_id) FROM (
+                                           SELECT person_id, photo_id FROM faces WHERE ignored=0 AND person_id IS NOT NULL
+                                           UNION SELECT person_id, photo_id FROM photo_people) GROUP BY person_id"""))
+            win._picker_cache = (sig, time.monotonic(), rep, counts)
         seen = set()
         hidden = win.hidden_names()
         for pid, name, cat, used in c.execute("SELECT id, name, category_id, last_used FROM persons"):

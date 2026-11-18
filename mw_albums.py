@@ -544,7 +544,7 @@ class AlbumsMixin:
             norm = os.path.normcase(os.path.normpath(d))
             picked = []
             sel = self.sel_photos() if hasattr(self, "grid") else []
-            pool = list(sel) + [p for p in (photo_ids or [])[:1] if p not in sel]
+            pool = list(sel) + [p for p in list(photo_ids or [])[:1] if p not in sel]
             if pool:
                 q = ",".join("?" * len(pool))
                 paths = dict(self.conn.execute(f"SELECT id, path FROM photos WHERE id IN ({q})", pool))

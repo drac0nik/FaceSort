@@ -115,6 +115,11 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         self._scan_after = False
         self.safe_view_changed()                   # (what Safe view blurs, before anything is drawn)
         self.refresh_all(first=True)
+        try:
+            import known
+            known.warm_names()                     # (1.51.1) the first right-click doesn't wait for it
+        except Exception:
+            pass
         if self.settings.get("detector_version", 1) < DETECTOR_VERSION:
             # face detection improved since these photos were scanned: re-check the ones
             # where nothing was found (names and photo tags are kept)
@@ -836,6 +841,37 @@ def selftest_helpers(out_path):
     return 0 if ok else 1
 
 
+_crash_file = None
+
+
+def _quiet_native_dialogs():
+    """(1.51.1) Windows' own file / folder pickers raise harmless COM errors inside themselves
+    (0x8001010e, "wrong thread", handled by Windows) - and the crash recorder wrote each one into
+    facesort.log as a "fatal exception" with every thread's stack: hundreds of lines per dialog.
+    It's paused while one of those pickers is open."""
+    import faulthandler
+    from PySide6.QtWidgets import QFileDialog
+
+    def quiet(fn):
+        def wrapped(*a, **k):
+            was = faulthandler.is_enabled()
+            if was:
+                faulthandler.disable()
+            try:
+                return fn(*a, **k)
+            finally:
+                if was and _crash_file is not None:
+                    faulthandler.enable(_crash_file)
+        return staticmethod(wrapped)
+    for name in ("getExistingDirectory", "getOpenFileName", "getOpenFileNames", "getSaveFileName",
+                 "getExistingDirectoryUrl", "getOpenFileUrl", "getOpenFileUrls", "getSaveFileUrl"):
+        fn = getattr(QFileDialog, name, None)
+        if fn is not None and not getattr(fn, "_quiet", False):
+            q = quiet(fn)
+            q.__func__._quiet = True
+            setattr(QFileDialog, name, q)
+
+
 def main():
     global _crash_file
     if len(sys.argv) >= 3 and sys.argv[1] == "--selftest-helpers":
@@ -845,6 +881,7 @@ def main():
         import faulthandler
         _crash_file = open(log_path(), "a", encoding="utf-8")
         faulthandler.enable(_crash_file)
+        _quiet_native_dialogs()
     except Exception:
         pass
     log(f"FaceSort {APP_VERSION} starting")

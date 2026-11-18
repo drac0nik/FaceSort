@@ -37,7 +37,9 @@ import traceback
 ROLE_ENV = "FACESORT_HELPER"            # "gpu" / "cpu" in a helper; unset in the window
 NOW, SOON, IDLE = 0, 1, 2               # priorities
 MAX_CPU_HELPERS = 6
-GPU_CRASHES_MAX = 1                     # (1.49.2) a job that crashed the GPU helper this often runs on the CPU
+GPU_CRASHES_MAX = 2                     # (1.49.2) a job that crashed the GPU helper this often runs on the CPU
+                                        # (1.51.1: after one crash it tries the card again without FP16)
+GPU_CRASH_DAYS = 30                     # (1.51.1) remembered this long (was: until the next version)
 UI_QUIET = 1.5                          # seconds after your last click / key before housekeeping goes full speed
 
 
@@ -186,7 +188,12 @@ def helper_main(role_, slot, task_q, result_q, cancel, ui_active, xlock, xui, xo
             break
         if task is None:
             break
-        tid, func, args, kw, pri, data_dir = task
+        tid, func, args, kw, pri, data_dir = task[:6]
+        opts = task[6] if len(task) > 6 else {}
+        if opts.get("nofp16"):
+            os.environ["FACESORT_NO_FP16"] = "1"
+        else:
+            os.environ.pop("FACESORT_NO_FP16", None)
         cancel.value = 0
         if data_dir != conn_dir:
             if conn is not None:
@@ -281,14 +288,17 @@ class Pool:
         return os.path.join(store.data_dir(), "gpu_crashes.json")
 
     def gpu_crashes(self):
+        """{job: crashes} (the last GPU_CRASH_DAYS days)."""
         if getattr(self, "_crashes", None) is None:
-            self._crashes = {}
+            self._crashes, self._crash_at = {}, {}
             try:
                 import json
                 with open(self._crash_file(), encoding="utf-8") as f:
                     data = json.load(f)
-                if data.get("version") == _app_version():
-                    self._crashes = {k: int(v) for k, v in data.get("jobs", {}).items()}
+                for k, v in data.get("jobs", {}).items():
+                    n, at = (v[0], v[1]) if isinstance(v, list) else (int(v), time.time())
+                    if time.time() - at < GPU_CRASH_DAYS * 86400:
+                        self._crashes[k], self._crash_at[k] = int(n), at
             except Exception:
                 pass
         return self._crashes
@@ -296,23 +306,30 @@ class Pool:
     def _note_crash(self, func):
         c = self.gpu_crashes()
         c[func] = c.get(func, 0) + 1
+        if getattr(self, "_crash_at", None) is None:
+            self._crash_at = {}
+        self._crash_at[func] = time.time()
         try:
             import json
             with open(self._crash_file(), "w", encoding="utf-8") as f:
-                json.dump({"version": _app_version(), "jobs": c}, f)
+                json.dump({"jobs": {k: [n, self._crash_at.get(k, time.time())] for k, n in c.items()}}, f)
         except Exception:
             pass
+        return c[func]
 
     def gpu_safe(self, func):
         return self.gpu_crashes().get(func, 0) < GPU_CRASHES_MAX
 
     def submit(self, func, args=(), kw=None, role_="cpu", priority=IDLE, cb=None):
         tid = next(self.seq)
+        opts = {}
         if role_ == "gpu" and not self.gpu_safe(func):
             role_ = "cpu"                  # (it crashed the graphics card helper: the CPU does it, slower but sure)
+        elif role_ == "gpu" and self.gpu_crashes().get(func, 0):
+            opts["nofp16"] = True          # (crashed once: the card again, without FP16)
         import store
         self.tasks[tid] = {"msg": (func, tuple(args), dict(kw or {}), priority, role_, store.data_dir()),
-                           "cb": cb, "helper": None}
+                           "cb": cb, "helper": None, "opts": opts}
         heapq.heappush(self.waiting, (priority, tid, tid))
         self._dispatch()
         return tid
@@ -393,8 +410,9 @@ class Pool:
                     func = t["msg"][0]
                     what = f" while doing {func}"
                     if h.role == "gpu" and h.proc.exitcode not in (0, None):
-                        self._note_crash(func)
-                        what += " - from now on that job runs on the CPU (this version)"
+                        n = self._note_crash(func)
+                        what += (" - next time it runs on the graphics card without FP16" if n < GPU_CRASHES_MAX
+                                 else f" - from now on that job runs on the CPU (for {GPU_CRASH_DAYS} days)")
                     self._call(t, "failed", f"the {h.role} helper stopped unexpectedly (exit code {h.proc.exitcode})")
             self.log(f"helper {h.role}{h.slot} ended (exit code {h.proc.exitcode}){what}")
 
@@ -414,7 +432,7 @@ class Pool:
                 continue
             h.tid, t["helper"] = tid, h
             h.cancel.value = 0
-            h.task_q.put((tid, func, args, kw, pri, data_dir))
+            h.task_q.put((tid, func, args, kw, pri, data_dir, t.get("opts") or {}))
         for item in skipped:
             heapq.heappush(self.waiting, item)
         # something you're waiting for (a scan, say) and its helper is busy with housekeeping: the

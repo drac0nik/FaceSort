@@ -553,7 +553,11 @@ def test_known_names_kept_until_the_file_changes(data_dir):
             k.execute("INSERT INTO people(name) VALUES('Somebody New')")
         time.sleep(0.02)
         assert "Somebody New" not in known.names() and not reads   # (1.45.3: a list under 30 s old is used)
-        known._NAMES["at"] = 0                                       # half a minute later
+        known._NAMES["at"] = 0                                       # half a minute later:
+        assert "Somebody New" not in known.names()                   # (1.51.1) never read on the spot -
+        end = time.time() + 5                                        # read again in the background
+        while known._NAMES.get("loading") and time.time() < end:
+            time.sleep(0.02)
         assert "Somebody New" in known.names() and reads
     finally:
         known._db = real

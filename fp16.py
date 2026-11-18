@@ -29,6 +29,8 @@ _lock = threading.Lock()
 
 
 def _settings_on():
+    if os.environ.get("FACESORT_NO_FP16") == "1":
+        return False                      # (1.51.1) this job crashed the graphics card helper once
     try:
         import store
         return bool(store.load_settings().get("fp16", True))

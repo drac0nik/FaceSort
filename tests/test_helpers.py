@@ -216,15 +216,16 @@ def test_slow_reads_are_logged_and_wal_checkpoint(library, monkeypatch):
 
 
 def test_job_that_crashes_the_gpu_helper_moves_to_the_cpu(library, qapp, helpers_on, monkeypatch):
-    """(1.49.2) A job that brings the graphics card helper down runs on a CPU helper from then on
-    (remembered for this version), and the log says which job it was."""
+    """(1.49.2) A job that brings the graphics card helper down runs again on the card without FP16
+    (1.51.1), and after a second crash on a CPU helper (remembered for 30 days); the log says
+    which job it was."""
     from ui_common import bg_job
     p = helpers.pool()
     logged = []
     old_log = p.log
     import ui_common
     monkeypatch.setattr(ui_common, "log", logged.append)
-    p._crashes = {}
+    p._crashes, p._crash_at = {}, {}
     try:
         w = bg_job({}, jobfuncs.sleep_job, 30, role="gpu")
         got = {}
@@ -241,12 +242,15 @@ def test_job_that_crashes_the_gpu_helper_moves_to_the_cpu(library, qapp, helpers
         while "failed" not in got and time.time() < end:
             pump(qapp, 0.05)
         assert "stopped unexpectedly" in got.get("failed", "")
-        assert any("sleep_job" in m and "CPU" in m for m in logged), logged
-        assert not p.gpu_safe("jobfuncs:sleep_job")
+        assert any("sleep_job" in m and "without FP16" in m for m in logged), logged
+        assert p.gpu_safe("jobfuncs:sleep_job")
         import json
         with open(os.path.join(store.data_dir(), "gpu_crashes.json"), encoding="utf-8") as f:
-            assert json.load(f)["jobs"]["jobfuncs:sleep_job"] == 1
-        p._crashes["jobfuncs:ping_job"] = 1                     # a job that crashed it: now on a CPU helper
+            assert json.load(f)["jobs"]["jobfuncs:sleep_job"][0] == 1
+        p._crashes["jobfuncs:ping_job"] = 1                     # crashed once: the card, without FP16
+        res = run(bg_job({}, jobfuncs.ping_job, role="gpu"), qapp)
+        assert "ok" in res and res["ok"][1] == "gpu"
+        p._crashes["jobfuncs:ping_job"] = 2                     # twice: a CPU helper
         res = run(bg_job({}, jobfuncs.ping_job, role="gpu"), qapp)
         assert "ok" in res and res["ok"][1] == "cpu"
     finally:

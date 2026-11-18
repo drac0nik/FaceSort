@@ -52,7 +52,17 @@ class GalleryMixin:
         if not self.scope_on():
             return None
         c = c or self.conn
-        return {pid for pid, path in c.execute("SELECT id, path FROM photos") if self.in_scope(path)}
+        # (1.51.1) worked out again only when the photos or the folders picked changed (it checked
+        # every photo's path at each redraw - over half a second on a big library)
+        sig = (id(self.conn), getattr(self, "_data_gen", 0), tuple(sorted(self.scope_folders() or ())),
+               tuple(self.settings.get("folders") or ())) + tuple(
+            c.execute("SELECT COUNT(*), COALESCE(MAX(id), 0), TOTAL(LENGTH(path)) FROM photos").fetchone())
+        got = getattr(self, "_scope_ids", None)
+        if got and got[0] == sig:
+            return set(got[1])
+        ids = {pid for pid, path in c.execute("SELECT id, path FROM photos") if self.in_scope(path)}
+        self._scope_ids = (sig, frozenset(ids))
+        return ids
 
     def update_scope_button(self):
         sel = self.scope_folders()

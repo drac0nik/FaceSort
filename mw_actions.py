@@ -21,6 +21,15 @@ from gallery import FolderButton
 
 MAX_BAR_BUTTONS = 300       # (1.45.4) more sections than this: no folder bar (too many to be of use)
 
+
+# what the duplicate sets depend on (read by dup_key)
+DUP_KEY_SQL = """SELECT COUNT(*), TOTAL(phash), TOTAL(discarded), TOTAL(sort_later),
+                        (SELECT COUNT(*) FROM dup_ignore), (SELECT COUNT(*) FROM faces WHERE ignored=2),
+                        (SELECT COUNT(*) FROM dup_checked), (SELECT COUNT(*) FROM faces WHERE confirmed=1),
+                        TOTAL(dup_skip), (SELECT TOTAL(dup_skip) FROM categories),
+                        (SELECT COUNT(*) FROM photo_folders), TOTAL(COALESCE(category_id, 0))
+                 FROM photos WHERE error IS NULL"""
+
 class ActionsMixin:
     """Part of MainWindow (see facesort.py): actions on faces and photos (name, confirm, discard, duplicates…)."""
 
@@ -279,10 +288,11 @@ class ActionsMixin:
         face = engine.face_from_box(eng, path, box, t)
         person = store.get_or_create_person(self.conn, name)
         fid = store.add_manual_face(self.conn, photo_id, face, person, model)
-        try:
-            known.sync_from_library(self.conn)    # remembered right away (survives Clear library)
-        except Exception:
-            pass
+        # (1.51.1) remembered in the background a few seconds later (it was done here and then, and
+        # froze the viewer for 7 seconds on a big library); closing FaceSort saves it at once too
+        self.conn.commit()
+        self._remember_dirty = True
+        self.remember_timer.start(3000)
         self.pix_cache.pop(fid, None)
         self.pix_cache.pop(("rep", fid), None)
         self.statusBar().showMessage(f"Face added: {name}" + ("" if face.get("emb") is not None else
@@ -403,19 +413,31 @@ class ActionsMixin:
         self.update_sort_button()
         self.refresh_grid(keep_selection=True)
 
-    def photo_meta(self):
-        """{path: (size, date taken, date downloaded/created)} for sorting (one read per change)."""
-        # (1.45.1) re-read only when the photos themselves changed - not after every tag or name
+    def photo_meta(self, paths=None):
+        """{path: (size, date taken, date downloaded/created, width, height)} for sorting.
+        (1.51.1) Only the gallery's own pictures are read, and kept until a scan or job changes the
+        photos (they used to be re-read for the whole library - with a check that itself read every
+        photo - each time the gallery was redrawn with a Sort other than Best first)."""
         if self.settings.get("grid_sort") == "downloaded":
-            store.fill_created(self.conn)
-        sig = tuple(self.conn.execute("""SELECT COUNT(*), MAX(id), TOTAL(size), TOTAL(taken), TOTAL(created),
-                                         TOTAL(width), TOTAL(height), TOTAL(LENGTH(path)) FROM photos""").fetchone())
-        key = (self._data_gen, id(self.conn)) + sig
+            gen = (self._data_gen, id(self.conn))
+            if getattr(self, "_created_filled", None) != gen:
+                store.fill_created(self.conn)
+                self._created_filled = gen
+                self._meta = {}
+        key = (self._data_gen, id(self.conn))
         if getattr(self, "_meta_key", None) != key:
-            self._meta = {p: (sz or 0, tk, cr, w or 0, h or 0) for p, sz, tk, cr, w, h in
-                          self.conn.execute("SELECT path, size, taken, created, width, height FROM photos")}
-            self._meta_key = key
-        return self._meta
+            self._meta, self._meta_key = {}, key
+        meta = self._meta
+        if paths is None:
+            return meta
+        want = [p for p in set(paths) if p not in meta]
+        for i in range(0, len(want), 900):
+            part = want[i:i + 900]
+            for p, sz, tk, cr, w, h in self.conn.execute(
+                    f"SELECT path, size, taken, created, width, height FROM photos WHERE path IN "
+                    f"({','.join('?' * len(part))})", part):
+                meta[p] = (sz or 0, tk, cr, w or 0, h or 0)
+        return meta
 
     def smart_kinds(self):
         """The kinds of list row in the Smart Groups tab (groups, Unknown faces, Sort later…)."""
@@ -493,7 +515,7 @@ class ActionsMixin:
         key = self.settings.get("grid_sort", "default")
         if key == "default" or not rows:
             return rows
-        meta = self.photo_meta()
+        meta = self.photo_meta([r[1] for r in rows if r[0]])
         far = float("-inf")
 
         def k(r):
@@ -530,18 +552,41 @@ class ActionsMixin:
         got = getattr(self, "_dup_key_memo", None)
         if got and got[0] == stamp and time.monotonic() - got[1] < 5:
             return got[2]
+        if got and got[2][0] == id(self.conn):
+            # (1.51.1) re-read in the background - it reads every photo, a third of a second each
+            # time the gallery was redrawn after a change; the last answer is used meanwhile, and the
+            # sets are worked out again if it turns out something that matters changed
+            self._dup_key_refresh(stamp)
+            return got[2]
         key = self._dup_key_read()
         self._dup_key_memo = (stamp, time.monotonic(), key)
         return key
 
+    def _dup_key_refresh(self, stamp):
+        w = getattr(self, "_dup_key_worker", None)
+        if w is not None and w.isRunning():
+            return
+        from ui_common import Worker
+        try:
+            if self.conn.in_transaction:
+                self.conn.commit()
+        except Exception:
+            pass
+        w = Worker(lambda conn, progress=None, cancelled=None: tuple(conn.execute(DUP_KEY_SQL).fetchone()))
+
+        def done(vals, stamp=stamp):
+            if getattr(self, "_closing", False) or stamp[0] != id(self.conn):
+                return
+            key = (id(self.conn),) + tuple(vals)
+            self._dup_key_memo = (stamp, time.monotonic(), key)
+            if hasattr(self, "_dups") and getattr(self, "_dup_key", None) != key and not self.dup_timer.isActive():
+                self.dup_timer.start()
+        w.ok.connect(done)
+        self._dup_key_worker = w
+        w.start()
+
     def _dup_key_read(self):
-        return (id(self.conn),) + tuple(self.conn.execute(
-            """SELECT COUNT(*), TOTAL(phash), TOTAL(discarded), TOTAL(sort_later),
-                      (SELECT COUNT(*) FROM dup_ignore), (SELECT COUNT(*) FROM faces WHERE ignored=2),
-                      (SELECT COUNT(*) FROM dup_checked), (SELECT COUNT(*) FROM faces WHERE confirmed=1),
-                      TOTAL(dup_skip), (SELECT TOTAL(dup_skip) FROM categories),
-                      (SELECT COUNT(*) FROM photo_folders), TOTAL(COALESCE(category_id, 0))
-               FROM photos WHERE error IS NULL""").fetchone())
+        return (id(self.conn),) + tuple(self.conn.execute(DUP_KEY_SQL).fetchone())
 
     def dup_sets(self, wait=False):
         """The duplicate sets. Worked out in the background when something that matters changed

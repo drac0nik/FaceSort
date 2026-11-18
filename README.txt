@@ -153,6 +153,23 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.51.2
+- Quicker (from the speed report):
+  - With a Sort other than Best first, each redraw read the details of every photo in the library
+    (68 seconds of freezes in one evening): now only the gallery's own pictures, kept until a scan.
+  - Drawing a face box (Tag Person) froze the viewer for 7 seconds while who's who was saved: it's
+    saved in the background a few seconds later now.
+  - The right-click menu and name box no longer wait for the remembered names (up to 1.7 s).
+  - The name box opens without reading every face for each person's picture and photo count.
+  - With the folder filter on, which photos are in the picked folders is worked out once, not at
+    every redraw; what the duplicate sets depend on is checked in the background.
+- Graphics card helper crashes: a job that crashes it now tries the card again without FP16 first,
+  and only after a second crash moves to the CPU - remembered for 30 days (it used to start over -
+  and crash again - with every update).
+- Fixed: "Open window to this folder" on a person did nothing ('set' object is not subscriptable).
+- facesort.log: Windows' own file and folder pickers no longer fill it with hundreds of lines of
+  harmless "Windows fatal exception: code 0x8001010e" each time one is opened.
+
 1.51.1
 - Fixed: a person's empty folders had disappeared from the folder bar above their gallery when
   only some library folders were shown (the folder filter on the left) or Pictures / Video was
