@@ -862,6 +862,9 @@ class EngineMixin:
             m.addAction(f"Make a JPEG copy of {'this RAW photo' if nraw == 1 else f'these {nraw} RAW photos'}",
                         lambda: self.raw_jpeg_copies(sp))
         if sp:
+            m.addSeparator()
+            self.file_tools_menu(m, n=len(sp))
+            m.addSeparator()
             m.addAction(f"Rescan {'this photo' if len(sp) == 1 else f'these {len(sp)} photos'} (look for faces again)",
                         lambda: self.rescan_photos(sp))
         if idx.isValid():

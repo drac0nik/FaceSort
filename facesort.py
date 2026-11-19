@@ -33,10 +33,11 @@ from mw_albums import AlbumsMixin
 from mw_vaults import VaultsMixin
 from mw_settings import SettingsMixin
 from mw_jobs import JobsMixin
+from mw_files import FilesMixin
 
 
 class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin,
-                 EngineMixin, AlbumsMixin, VaultsMixin, SettingsMixin, JobsMixin, QMainWindow):
+                 EngineMixin, AlbumsMixin, VaultsMixin, SettingsMixin, JobsMixin, FilesMixin, QMainWindow):
     """The main window. Its methods are spread over the mixins (mw_*.py) by topic;
     this file has the window's layout and start-up."""
     def __init__(self):

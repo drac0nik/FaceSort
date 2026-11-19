@@ -153,6 +153,29 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.53.0
+- Rename… (right-click a selection, a person or a folder): new file names from a pattern made of
+  parts - Person, Everyone, Date, Time, Folder, Number, Old name - e.g. "{person} {date} {n}" gives
+  "Anna 2024-07-15 001.jpg". A preview shows every new name before anything changes. Numbers can
+  follow the date taken, the gallery's order or the old names; you choose where they start and how
+  many digits. Files stay in their folders, their .xmp / Google Takeout .json / .aae files are
+  renamed with them, a name that's taken gets (2), and History can undo the whole rename.
+- Sort into folders can rename the files as they go (tick "Rename the files as they're sorted" -
+  it's never ticked to begin with). Numbers count up in each person's folder, and {person} is the
+  person whose folder the file goes in.
+- Export… (right-click a selection, a person or a folder): copies in a folder or one zip file, at
+  the original size, a percentage, or fitting inside a width × height (never made bigger). Strip
+  metadata is on to begin with and remembers your last choice: camera, date, GPS location and the
+  names / tags written in the files come off (the color profile stays). A JPEG or PNG that isn't
+  resized isn't re-compressed. Videos come along - made smaller in a zip (H.264, at most 1280 px),
+  copied as they are in a folder. RAW, HEIC, WebP… become JPEG. The originals are never touched.
+- Contact sheet… (right-click): the photos on pages with a title - the person's name - in any font
+  installed on your PC (bold / italic, with a preview). A4 or Letter, portrait or landscape, as many
+  across as you like, file names under the photos, light or dark. Saved as a PDF or as JPEGs.
+- Videos: click anywhere on the position bar and the video jumps there (you can keep dragging).
+  The volume and mute are remembered between videos and the next time FaceSort opens.
+- "Colour" is spelled "Color" everywhere in FaceSort now.
+
 1.52.1
 - Fixed: when two parts of FaceSort opened an older library at the same moment, one could fail
   while bringing it up to date ("duplicate column name"), and a background job then stopped.
@@ -638,7 +661,7 @@ Duplicates: videos and GIFs; purple GIF border (1.37.5)
 - The duplicate check finds exact copies of videos and GIFs (same file size, then the same
   contents). Videos count only as exact copies now: before, two different clips could be
   called the same because they started on the same frame (those old matches are forgotten
-  once). It also finds exact copies of blank / one-colour pictures it used to skip.
+  once). It also finds exact copies of blank / one-color pictures it used to skip.
 - GIFs have a purple border in the gallery (videos orange, photos blue).
 
 People panel (1.37.4)
@@ -904,7 +927,7 @@ Duplicates (Smart Groups tab, under Other)
   are NOT duplicates - if anything in the picture moved (a hand, a blink, someone
   walking past), they're kept apart. Look-alikes are compared closely in the
   background ("Checking possible duplicates closely..."); this is done once per pair.
-  Heavily edited copies (strong colour changes, crops, filters) aren't counted.
+  Heavily edited copies (strong color changes, crops, filters) aren't counted.
 - A photo of several people is copied under each of them on purpose, so those copies
   aren't duplicates. Two copies under the same person still are.
 - D discards a copy (it goes to ~To Be Discarded when you sort; Restore brings it back).
@@ -1232,8 +1255,8 @@ in-between levels and halves the noise), then scaled back up. The dark floor is 
 place by place - the far side of a room is darker still - so faint shapes in the deepest
 shadows (someone standing in a dark corner) aren't cut off with it. On keeps the blacks clean;
 strong sets black a little lower for the most shadow detail (the darkest areas become a
-dark grey) - E switches between them. Colour, mostly noise this dark, comes from a
-smoothed copy with the colour cast removed. It works on the decoder's own brightness
+dark grey) - E switches between them. Color, mostly noise this dark, comes from a
+smoothed copy with the color cast removed. It works on the decoder's own brightness
 levels, so nothing is lost converting to a picture first. Well-lit videos are left as
 they are. Screenshots (S) are saved the way you see it.
 The save button beside it opens Save an enhanced copy: low light (off / on / strong),
@@ -1281,9 +1304,9 @@ Right-click a video in the gallery > Play video to open it and start playing.
 
 Photo tools (the wand button at the top of the viewer, or W): you see a preview first -
 "Hold to see the original" flips back to compare - and nothing is saved until Save copy,
-which puts the new picture next to the original ("<name> - restored colourized.jpg"),
+which puts the new picture next to the original ("<name> - restored colorized.jpg"),
 tagged like it and added to the library. The original is never changed. Tools add up:
-restore, then colourize, then upscale, all in one copy. Discard (or Esc) throws the
+restore, then colorize, then upscale, all in one copy. Discard (or Esc) throws the
 preview away. Everything runs on this PC.
   Remove red eye: finds the eyes (the face detector's eye points, and the face boxes
     already in the library) and turns red pupils dark, keeping the catch-light. Only
@@ -1296,20 +1319,20 @@ preview away. Everything runs on this PC.
     megapixels aren't offered. Uses the graphics card when there is one.
     (Real-ESRGAN realesr-general-x4v3 by Xintao Wang et al., BSD 3-Clause licence.)
   Auto enhance (light): smooths noise (only as much as the photo has), a gentle white
-    balance and levels, local contrast, livelier colour and a little sharpening.
+    balance and levels, local contrast, livelier color and a little sharpening.
   Restore old / faded photo: takes out dust specks and fine scratches, removes the fade
-    and colour cast (each colour stretched back to full range), smooths film grain, and
-    brings back contrast and colour.
+    and color cast (each color stretched back to full range), smooths film grain, and
+    brings back contrast and color.
   Smooth dark blotches: for dark photos whose shadows look patchy or ringed (a dark JPEG
     keeps only a few shades in its shadows, in 8 x 8 blocks). The shadows are rebuilt as
     smooth gradients - only where it's dark and away from edges, so lit skin, texture and
     outlines stay exactly as they were - with a fine grain so the steps don't come back.
     "Smooth and lift" also brightens the shadows a little (black stays black). Saved as PNG
     (JPEG would put the blocks back). It can't invent detail the file never had.
-  Colourize black & white / sepia: DeOldify guesses the colours; only its colour is used -
+  Colorize black & white / sepia: DeOldify guesses the colors; only its color is used -
     all the detail comes from your photo at full size. Downloaded once (about 243 MB, from
     GitHub) the first time you use it, after asking; then it works offline. Works best on
-    people, skin, sky, trees and clothes; it can't know what colour something really was.
+    people, skin, sky, trees and clothes; it can't know what color something really was.
     (DeOldify by Jason Antic, MIT licence.)
 
 Animated GIFs play in the viewer too (looping, as soon as you open one): Space pauses,

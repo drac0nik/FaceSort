@@ -776,14 +776,21 @@ def _quick_same(a, b):
     return _same_file(a, b)
 
 
-def _free_target(folder, src):
-    """Where src should go in folder: (path, already_there)."""
+def _free_target(folder, src, stem=None):
+    """Where src should go in folder: (path, already_there). stem: a new name for it (1.53: renaming
+    while sorting) - then a photo already in this folder is renamed where it is."""
     base, ext = os.path.splitext(os.path.basename(src))
+    if stem:
+        base = stem
     target = os.path.join(folder, base + ext)
+    here = os.path.normcase(os.path.abspath(src))
     if os.path.normcase(os.path.abspath(folder)) == os.path.normcase(os.path.dirname(os.path.abspath(src))):
-        return os.path.abspath(src), True          # already sitting in this folder: nothing to do
+        if not stem or os.path.normcase(os.path.abspath(target)) == here:
+            return os.path.abspath(src), True      # already sitting in this folder: nothing to do
     i = 2
     while os.path.exists(target):
+        if os.path.normcase(os.path.abspath(target)) == here:
+            return os.path.abspath(src), True
         if _quick_same(target, src):
             return target, True
         target = os.path.join(folder, f"{base} ({i}){ext}")
@@ -1084,7 +1091,7 @@ def misplaced(conn, dest, include_suggestions=False, ai_folder=False):
 
 def export_folders(conn, dest, include_suggestions=False, move=False,
                    progress=lambda d, t, m: None, cancelled=lambda: False, roots=(), convert_webp=True,
-                   cleanup=True, ai_folder=False, include_dropped=False, only=None, imported=()):
+                   cleanup=True, ai_folder=False, include_dropped=False, only=None, imported=(), rename=None):
     r"""Put photos into <dest>\<folder>\<sub-folder...>\<person>\<inner folder...>\<file>.
     - a person you placed in a folder always goes there; others follow the photo's folder
     - a photo's folder that goes inside people's folders ends up inside each person's folder
@@ -1125,6 +1132,10 @@ def export_folders(conn, dest, include_suggestions=False, move=False,
                 conn.commit()
         except Exception as e:
             other_err = ("other files", str(e))
+    namer = None
+    if rename:                       # (1.53) new file names as they're sorted
+        import renamer
+        namer = renamer.sort_namer(conn, list(plan), rename)
     total = sum(len(v[1]) for v in plan.values())
     stats = {"copied": 0, "moved": 0, "skipped": 0, "errors": [], "total": total,
              "discarded": len(discarded), "log": None, "webp": 0, "folders_cleaned": 0}
@@ -1132,7 +1143,8 @@ def export_folders(conn, dest, include_suggestions=False, move=False,
         stats["errors"].append(other_err)
     log_rows = []
     done = 0
-    for pid, (src, folders) in sorted(plan.items(), key=lambda kv: kv[1][0]):
+    order = (lambda kv: (namer.taken(kv[0]), kv[1][0])) if namer else (lambda kv: kv[1][0])
+    for pid, (src, folders) in sorted(plan.items(), key=order):
         if cancelled():
             break
         if not os.path.exists(src):
@@ -1148,7 +1160,7 @@ def export_folders(conn, dest, include_suggestions=False, move=False,
         if plan:
             try:
                 done = _export_converted(conn, pid, src, folders, dest, move, stats, log_rows, done, total,
-                                         progress, plan[0])
+                                         progress, plan[0], namer=namer)
             except Exception as e:
                 stats["errors"].append((src, str(e)))
                 done += len(folders)
@@ -1167,7 +1179,7 @@ def export_folders(conn, dest, include_suggestions=False, move=False,
             folder = os.path.join(dest, folder_name)
             try:
                 os.makedirs(folder, exist_ok=True)
-                target, there = _free_target(folder, current)
+                target, there = _free_target(folder, current, namer(pid, folder_name, src) if namer else None)
                 sc = _sidecar(current)
                 same_place = os.path.normcase(os.path.abspath(target)) == os.path.normcase(os.path.abspath(current))
                 if move and k == 0 and same_place:
@@ -1376,7 +1388,8 @@ def _discard_original(src, dest):
     return wt
 
 
-def _export_converted(conn, pid, src, folders, dest, move, stats, log_rows, done, total, progress, target):
+def _export_converted(conn, pid, src, folders, dest, move, stats, log_rows, done, total, progress, target,
+                      namer=None):
     """A photo saved as a real JPEG or PNG (see convert.py) in each of its folders; when moving,
     the original (and its sidecar) goes to ~To Be Discarded and the library follows the photo
     to its new file. The new file is checked before anything is moved."""
@@ -1399,7 +1412,8 @@ def _export_converted(conn, pid, src, folders, dest, move, stats, log_rows, done
         progress(done, total, f"{folder_name}: {name}")
         folder = os.path.join(dest, folder_name)
         os.makedirs(folder, exist_ok=True)
-        out, there = _free_name(folder, name, data)
+        stem = namer(pid, folder_name, src) if namer else None
+        out, there = _free_name(folder, (stem + os.path.splitext(name)[1]) if stem else name, data)
         store.mark_placed(conn, out)
         if not there:
             with open(out, "wb") as f:

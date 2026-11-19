@@ -38,7 +38,7 @@ def has_transparency(im):
 
 
 def looks_like_graphic(im):
-    """Screenshots, text, logos, drawings: few colours and big flat areas (unlike a photo)."""
+    """Screenshots, text, logos, drawings: few colors and big flat areas (unlike a photo)."""
     s = im.convert("RGB")
     s.thumbnail((256, 256))
     colors = s.getcolors(256 * 256) or []
@@ -47,7 +47,7 @@ def looks_like_graphic(im):
     if n < 1500:
         return True
     top = sum(c for c, _ in sorted(colors, reverse=True)[:32])
-    return top / total > 0.6               # most of it in a handful of exact colours: a screenshot
+    return top / total > 0.6               # most of it in a handful of exact colors: a screenshot
 
 
 def plan_for(path):
@@ -87,7 +87,7 @@ def new_name(path, target):
 
 
 def converted_bytes(path, target):
-    """The file as a real JPEG or PNG: upright, colour profile and EXIF kept, and the names
+    """The file as a real JPEG or PNG: upright, color profile and EXIF kept, and the names
     from its .xmp sidecar (if any) written inside."""
     with open(path, "rb") as f:
         raw = f.read()

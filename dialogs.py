@@ -983,6 +983,16 @@ class ExportDialog(QDialog):
                                  "(not checked yet)")
         lay.addWidget(self.drop_cb)
         self.drop_cb.setVisible(ndrop > 0)
+        # (1.53) new file names as they're sorted - offered every time, never ticked to begin with
+        import rename_ui
+        self.rename_cb = QCheckBox("Rename the files as they're sorted")
+        self.rename_cb.setChecked(False)
+        lay.addWidget(self.rename_cb)
+        self.rename_box = rename_ui.PatternBox(settings.get("sort_rename_pattern") or "{person} {date} {n}")
+        self.rename_box.setContentsMargins(22, 0, 0, 0)
+        self.rename_box.setVisible(False)
+        lay.addWidget(self.rename_box)
+        self.rename_cb.toggled.connect(self.rename_box.setVisible)
         note = QLabel(
             "When moving: a photo with several people is moved to the person with the biggest face in it, "
             "and the others get a copy. Photos marked to discard go to “~To Be Discarded”, and Sort Later "
@@ -1025,6 +1035,10 @@ class ExportDialog(QDialog):
 
     def convert(self):
         return self.conv_cb.isChecked()
+
+    def rename(self):
+        """The rename pattern, or None (files keep their names)."""
+        return (self.rename_box.text() or None) if self.rename_cb.isChecked() else None
 
     def check(self):
         d = self.dest()

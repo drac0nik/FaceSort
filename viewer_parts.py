@@ -34,7 +34,7 @@ def rgb_to_qimage(rgb):
 
 
 def frame_planes(frame):
-    """A video frame's own brightness and colour planes (Y, Cb, Cr as uint8 arrays), straight from
+    """A video frame's own brightness and color planes (Y, Cb, Cr as uint8 arrays), straight from
     the decoder - every dark level kept, nothing lost converting to a picture first. None when the
     frame isn't in a plain YUV format (or can't be read, e.g. kept on the graphics card)."""
     try:
@@ -224,7 +224,7 @@ class CompareView(QWidget):
 
 
 class ToolWorker(QObject):
-    """Runs a photo tool (upscale, colourize …) in the background, one at a time."""
+    """Runs a photo tool (upscale, colorize …) in the background, one at a time."""
     done = Signal(object, object)          # (result, error text)
     step = Signal(float)
 
@@ -269,6 +269,31 @@ class MarkSlider(QSlider):
         span = groove.width() - handle.width()
         pos = QStyle.sliderPositionFromValue(self.minimum(), self.maximum(), int(v), max(1, span))
         return groove.x() + handle.width() / 2 + pos, groove
+
+    def value_at(self, x):
+        """The bar's value under x (pixels)."""
+        from PySide6.QtWidgets import QStyleOptionSlider
+        opt = QStyleOptionSlider()
+        self.initStyleOption(opt)
+        groove = self.style().subControlRect(QStyle.CC_Slider, opt, QStyle.SC_SliderGroove, self)
+        handle = self.style().subControlRect(QStyle.CC_Slider, opt, QStyle.SC_SliderHandle, self)
+        span = max(1, groove.width() - handle.width())
+        return QStyle.sliderValueFromPosition(self.minimum(), self.maximum(),
+                                              int(round(x - groove.x() - handle.width() / 2)), span)
+
+    def mousePressEvent(self, e):
+        """(1.53) Click anywhere on the bar: the video jumps there (and you can keep dragging)."""
+        if e.button() == Qt.LeftButton and self.maximum() > self.minimum():
+            from PySide6.QtWidgets import QStyleOptionSlider
+            opt = QStyleOptionSlider()
+            self.initStyleOption(opt)
+            handle = self.style().subControlRect(QStyle.CC_Slider, opt, QStyle.SC_SliderHandle, self)
+            pt = e.position().toPoint()
+            if not handle.contains(pt):
+                v = self.value_at(pt.x())
+                self.setValue(v)
+                self.sliderMoved.emit(v)
+        super().mousePressEvent(e)
 
     def paintEvent(self, e):
         super().paintEvent(e)

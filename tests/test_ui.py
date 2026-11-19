@@ -191,6 +191,44 @@ def test_backups_tab(window, qapp, tmp_path, monkeypatch):
     d.reject()
 
 
+def test_file_tools(window, qapp, tmp_path, monkeypatch):
+    """1.53: Rename… / Export… / Contact sheet… are on the right-click menus and their windows work."""
+    import contactsheet_ui
+    import export_ui
+    import rename_ui
+    from PySide6.QtWidgets import QDialog
+    w = window
+    alice = w.conn.execute("SELECT id FROM persons WHERE name='Alice'").fetchone()[0]
+    it = w.find_tree_item(("person", alice))
+    m = w.build_tree_menu(it)
+    texts = [a.text() for a in m.actions()]
+    assert "Rename…" in texts and "Export…" in texts and "Contact sheet…" in texts
+    pids = w.person_file_ids(alice)
+    assert pids
+    d = rename_ui.RenameDialog(w, pids, "Alice")
+    d.pattern.box.setEditText("{person} {n}")
+    d.refresh()
+    assert d.rows and all(os.path.basename(n).startswith("Alice ") for _p, _o, n in d.rows)
+    d.reject()
+    monkeypatch.setattr(rename_ui.RenameDialog, "exec", lambda self: (self.refresh(), QDialog.Accepted)[1])
+    w.settings["rename_pattern"] = "{person} {n}"
+    rename_ui.run_rename(w, pids, "Alice")
+    w.idle()
+    paths = [w.conn.execute("SELECT path FROM photos WHERE id=?", (p,)).fetchone()[0] for p in pids]
+    assert all(os.path.basename(p).startswith("Alice ") and os.path.exists(p) for p in paths)
+    assert "Renamed" in w.conn.execute("SELECT text FROM history ORDER BY id DESC LIMIT 1").fetchone()[0]
+    e = export_ui.ExportFilesDialog(w, pids, "Alice")
+    assert e.strip.isChecked()                             # on by default
+    e.strip.setChecked(False)
+    e.dest.setText(str(tmp_path))
+    e.accept()
+    assert w.settings["files_export_strip"] is False       # the last choice is remembered
+    assert not export_ui.ExportFilesDialog(w, pids, "Alice").strip.isChecked()
+    c = contactsheet_ui.ContactSheetDialog(w, len(pids), "Alice")
+    assert c.title.text() == "Alice" and c.font.count() > 0
+    c.reject()
+
+
 def test_same_shoot_list(window, qapp):
     """Suggestions show under Smart Groups > Same shoot; C confirms (the photo gets tagged)."""
     import bodies

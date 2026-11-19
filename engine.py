@@ -408,7 +408,7 @@ def _usable(bgr):
 
 
 def _has_content(bgr):
-    """Something is in the picture: not a black / white / single-colour screen (a face isn't needed)."""
+    """Something is in the picture: not a black / white / single-color screen (a face isn't needed)."""
     g = cv2.cvtColor(cv2.resize(bgr, (160, max(1, 160 * bgr.shape[0] // max(1, bgr.shape[1])))), cv2.COLOR_BGR2GRAY)
     return 14 < float(g.mean()) < 245 and float(g.std()) > 12 and float(cv2.Laplacian(g, cv2.CV_64F).var()) > 8
 
@@ -608,14 +608,14 @@ def low_light(rgb, strength=1, level=None, fast=False):
 
 
 def low_light_yuv(Y, U, V, strength=1, level=None, fast=False):
-    """Low-light recovery from a frame's own brightness and colour planes (Y full size, U = Cb and
+    """Low-light recovery from a frame's own brightness and color planes (Y full size, U = Cb and
     V = Cr any size, all on a 0-255 scale). Returns RGB uint8.
 
     1. the camera's dark floor (and its noise / compression blocks) becomes black, lone sensor
        speckles are removed, and what's above the floor is stretched to the full range;
     2. the noise that shows is smoothed (non-local means: edges kept), then a gamma curve and
        gentle local contrast lift the midtones;
-    3. colour - mostly noise this dark - comes from a heavily smoothed copy, with the colour
+    3. color - mostly noise this dark - comes from a heavily smoothed copy, with the color
        cast taken out, and only modestly boosted.
     level: dark_levels() of the frame (pass a smoothed value while playing so it doesn't pump).
     fast: quicker smoothing for playback."""

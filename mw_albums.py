@@ -666,6 +666,8 @@ class AlbumsMixin:
             if cat:
                 m.addAction(f"Take out of “{self.cat_name(cat)}”", lambda: self.place_people([pid], None))
             m.addAction("Set folder on all their photos…", self.act_category)
+            m.addSeparator()
+            self.file_tools_menu(m, "person", pid)
             if c.execute("SELECT 1 FROM tattoos WHERE person_id=? AND src='mark'", (pid,)).fetchone():
                 m.addAction("Find tattoo matches", lambda: self.start_tattoo_search([pid]))
             m.addSeparator()
@@ -676,6 +678,7 @@ class AlbumsMixin:
             parent = parent[0] if parent else None
             m.addAction("Rename / merge…", lambda: self.rename_category(cid))
             m.addAction("New folder inside…\tCtrl+Shift+N", lambda: self.new_category(cid))
+            self.file_tools_menu(m, "folder", cid)
             da = m.addAction("Leave out of duplicate checks")
             da.setCheckable(True)
             da.setChecked(bool((c.execute("SELECT dup_skip FROM categories WHERE id=?", (cid,)).fetchone() or [0])[0]))

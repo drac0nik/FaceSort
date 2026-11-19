@@ -130,12 +130,12 @@ class PhotoViewer(QWidget):
         self.compare_b.setAutoRaise(True)
         self.compare_b.toggled.connect(self.set_compare)
         top.addWidget(self.compare_b)
-        self.tools_b = QToolButton()               # photo tools: red eye, upscale, enhance, restore, colourize
+        self.tools_b = QToolButton()               # photo tools: red eye, upscale, enhance, restore, colorize
         self.tools_b.setIcon(app_icon("wand"))
         self.tools_b.setIconSize(QSize(22, 22))
         self.tools_b.setAutoRaise(True)
         self.tools_b.setToolTip("Photo tools   (W): remove red eye, upscale, auto enhance, restore an old faded "
-                                "photo, colourize black & white / sepia.\nYou see a preview first; the original is "
+                                "photo, colorize black & white / sepia.\nYou see a preview first; the original is "
                                 "never changed - Save copy puts the new picture next to it.")
         self.tools_b.setPopupMode(QToolButton.InstantPopup)
         self.tools_menu = QMenu(self.tools_b)
@@ -326,7 +326,7 @@ class PhotoViewer(QWidget):
             self.ll_box.addItem(txt)
         self.ll_box.setCurrentIndex(max(0, min(2, int(self.win.settings.get("low_light", 0)))))
         self.ll_box.setToolTip("Low-light recovery   (E)\nBrightens dark videos while they play: lifts the shadows, "
-                               "brings back detail and calms the colour noise. Screenshots are saved the way you see it.")
+                               "brings back detail and calms the color noise. Screenshots are saved the way you see it.")
         self.ll_box.setFocusPolicy(Qt.NoFocus)
         self.ll_box.currentIndexChanged.connect(self.set_low_light)
         vb.addWidget(self.ll_box)
@@ -367,14 +367,15 @@ class PhotoViewer(QWidget):
         self.mute_b.setCheckable(True)
         self.mute_b.setAutoRaise(True)
         self.mute_b.setToolTip("Sound on / off")
-        self.mute_b.toggled.connect(lambda m: (self.mute_b.setText("🔇" if m else "🔊"),
-                                               self.player and self.audio.setMuted(m)))
+        self.mute_b.toggled.connect(self.set_muted)
         vb.addWidget(self.mute_b)
         self.volume = QSlider(Qt.Horizontal)
         self.volume.setRange(0, 100)
-        self.volume.setValue(80)
+        self.volume.setValue(int(win.settings.get("video_volume", 80)))     # (1.53) remembered
         self.volume.setFixedWidth(90)
-        self.volume.valueChanged.connect(lambda v: self.player and self.audio.setVolume(v / 100))
+        self.volume.setToolTip("Volume (remembered)")
+        self.volume.valueChanged.connect(self.set_volume)
+        self.mute_b.setChecked(bool(win.settings.get("video_muted", False)))
         vb.addWidget(self.volume)
         self.video_bar.hide()
         lay.addWidget(self.video_bar)
@@ -598,6 +599,17 @@ class PhotoViewer(QWidget):
         elif self.player:
             self.player.setPosition(v)
 
+    def set_volume(self, v):
+        self.win.settings["video_volume"] = int(v)
+        if self.player:
+            self.audio.setVolume(v / 100)
+
+    def set_muted(self, m):
+        self.mute_b.setText("🔇" if m else "🔊")
+        self.win.settings["video_muted"] = bool(m)
+        if self.player:
+            self.audio.setMuted(m)
+
     def set_speed(self, i):
         if getattr(self, "movie", None) is not None:
             self.movie.setSpeed(int(SPEEDS[i] * 100))
@@ -805,7 +817,7 @@ class PhotoViewer(QWidget):
             self.not_ai_b.hide()
             self.toast.setText("AI badge taken off")
 
-    # ---- photo tools (red eye, upscale, enhance, restore, colourize)
+    # ---- photo tools (red eye, upscale, enhance, restore, colorize)
     def open_tools_menu(self):
         if self.tools_b.isVisible():
             self.tools_b.showMenu()
@@ -846,7 +858,7 @@ class PhotoViewer(QWidget):
         a = sm.addAction("Smooth and lift the shadows a little", lambda: self.run_tool("shadows", True))
         a.setToolTip("The same, and the shadows brightened slightly to show what's in them (black stays black)")
         sm.setEnabled(not busy)
-        m.addAction("Colourize black & white / sepia" + ("" if photo_tools.color_ready() else
+        m.addAction("Colorize black & white / sepia" + ("" if photo_tools.color_ready() else
                                                           f"   (gets a {photo_tools.COLOR_MB} MB model once)"),
                     lambda: self.run_tool("colorize"))
         for act in m.actions():
@@ -858,14 +870,14 @@ class PhotoViewer(QWidget):
 
     TOOL_NAMES = {"redeye": ("Removing red eye", "red eye fixed"), "upscale": ("Upscaling", "x{}"),
                   "enhance": ("Enhancing", "enhanced"), "restore": ("Restoring", "restored"),
-                  "colorize": ("Colourizing", "colourized"), "shadows": ("Smoothing the shadows", "shadows smoothed")}
+                  "colorize": ("Colorizing", "colorized"), "shadows": ("Smoothing the shadows", "shadows smoothed")}
 
     def run_tool(self, kind, arg=None):
         if self.is_video or self.is_anim or not self.path or self.tool.busy:
             return
         self.ensure_picture()
         if kind == "colorize" and not photo_tools.color_ready():
-            if QMessageBox.question(self, "Colourize", f"Colourizing uses a model of about {photo_tools.COLOR_MB} MB "
+            if QMessageBox.question(self, "Colorize", f"Colorizing uses a model of about {photo_tools.COLOR_MB} MB "
                                     "(DeOldify), downloaded once from GitHub. After that it works on this PC only - "
                                     "your photos are never uploaded.\n\nDownload it now?") != QMessageBox.Yes:
                 return
@@ -874,10 +886,10 @@ class PhotoViewer(QWidget):
                 if ok and photo_tools.color_ready():
                     self.run_tool("colorize")
                 else:
-                    self.toast.setText("The colourizing model wasn't downloaded.")
+                    self.toast.setText("The colorizing model wasn't downloaded.")
             if not self.win.run_job("colordl", lambda conn, progress, cancelled: photo_tools.download_color(progress, cancelled),
                                     on_done=got):
-                QMessageBox.information(self, "Colourize", "Wait for the current job to finish first.")
+                QMessageBox.information(self, "Colorize", "Wait for the current job to finish first.")
             return
         base = self.edit_rgb
         path = self.path
@@ -896,7 +908,7 @@ class PhotoViewer(QWidget):
             step(0.02)
             info = ""
             if kind == "colorize" and not photo_tools.is_monochrome(src):
-                info = "this photo already had colour - the model's colours replace it"
+                info = "this photo already had color - the model's colors replace it"
             if kind == "redeye":
                 out, n = photo_tools.red_eye(src, hints)
                 if not n:

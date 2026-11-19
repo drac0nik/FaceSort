@@ -19,7 +19,7 @@ from ui_common import (APP_VERSION, bodies_job, clarity_job, log, log_path, open
                        scan_and_group, stats_job, Worker, bg_job, ProcessWorker)
 from dialogs import ExportDialog, ScanDialog
 
-LOOK_ONLY_JOBS = {"discardlook", "colordl", "facedl", "contentdl", "posedl"}   # jobs that only read or download (no redraw after)
+LOOK_ONLY_JOBS = {"discardlook", "colordl", "facedl", "contentdl", "posedl", "exportfiles", "contactsheet"}   # jobs that only read or download (no redraw after)
 REGROUP_IDLE = 3.0       # (gentle background mode) seconds without a key / click before suggestions update
 
 
@@ -490,7 +490,8 @@ class JobsMixin:
             QTimer.singleShot(6000, self.start_pose)           # and their poses
         if isinstance(res, dict) and res.get("moves"):
             import history
-            history.record_files(f"Moved {len(res['moves']):,} files (Sort into folders)", res["moves"])
+            history.record_files(res.get("history_label") or f"Moved {len(res['moves']):,} files (Sort into folders)",
+                                 res["moves"])
             history.flush(self.conn)
         if isinstance(res, dict) and res.get("engine_status"):
             self._engine_status = tuple(res["engine_status"])
@@ -849,11 +850,13 @@ class JobsMixin:
 
         self.settings["export_ai_folder"] = dlg.ai_folder()
         self.settings["export_convert"] = dlg.convert()
+        if dlg.rename():
+            self.settings["sort_rename_pattern"] = dlg.rename()
         store.save_settings(self.settings)
         self.run_job("export", jobs.export_folders, d, inc, move, on_done=done,
                      roots=list(self.settings["folders"]), imported=list(self.settings.get("imported") or []),
                      ai_folder=dlg.ai_folder(),
-                     include_dropped=dlg.include_dropped(), convert_webp=dlg.convert())
+                     include_dropped=dlg.include_dropped(), convert_webp=dlg.convert(), rename=dlg.rename())
 
     def restart_for_restore(self):
         """Settings > Backups > Restore: close; main() opens FaceSort again, which restores first."""

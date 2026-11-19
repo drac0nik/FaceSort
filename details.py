@@ -112,7 +112,7 @@ def metadata(path):
                 if isinstance(v, (str, bytes)):
                     out.append((str(k), _clean(v, 1200)))
             if im.info.get("icc_profile"):
-                out.append(("Colour profile", "embedded"))
+                out.append(("Color profile", "embedded"))
     except Exception as e:
         out.append(("Couldn't read the metadata", str(e)[:120]))
     return [(k, v) for k, v in out if v not in (None, "")]

@@ -1,5 +1,5 @@
 """Photo tools for the viewer: red-eye removal, upscaling (Real-ESRGAN, shipped), a light
-auto-enhance, restoring old faded photos, and colourizing black & white / sepia photos
+auto-enhance, restoring old faded photos, and colorizing black & white / sepia photos
 (DeOldify, downloaded once). Everything runs on this PC; nothing is uploaded.
 
 All functions take and return RGB uint8 arrays (full size)."""
@@ -141,7 +141,7 @@ def _eye_spots(rgb, hints=()):
 
 
 def red_eye(rgb, hints=()):
-    """(fixed RGB, eyes fixed). Red pupils near each eye are found by colour (much redder than
+    """(fixed RGB, eyes fixed). Red pupils near each eye are found by color (much redder than
     green / blue, a compact blob near the eye centre) and turned dark neutral, with soft edges."""
     out = rgb.copy()
     fixed = 0
@@ -283,7 +283,7 @@ def _local_contrast(rgb, clip=1.6, amount=0.6):
 def _vibrance(rgb, amount=0.18):
     hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV).astype(np.float32)
     s = hsv[:, :, 1] / 255.0
-    hsv[:, :, 1] = np.clip((s + amount * (1 - s) * s * 2.0) * 255, 0, 255)       # dull colours lifted most
+    hsv[:, :, 1] = np.clip((s + amount * (1 - s) * s * 2.0) * 255, 0, 255)       # dull colors lifted most
     return cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB)
 
 
@@ -300,7 +300,7 @@ def _sharpen(rgb, amount=0.45, radius=1.2):
 
 def auto_enhance(rgb, progress=lambda f: None, cancelled=lambda: False):
     """A light, all-round touch-up: noise smoothed (only as much as the photo has), a gentle
-    white balance, levels, local contrast, livelier colour, and a little sharpening."""
+    white balance, levels, local contrast, livelier color, and a little sharpening."""
     out, sigma = _denoise(rgb, 0.8)
     progress(0.4)
     out = _white_balance(out, 0.45)
@@ -321,7 +321,7 @@ def is_monochrome(rgb):
     L, a, b = lab[:, 0], lab[:, 1] - 128, lab[:, 2] - 128
     if float(np.std(a)) < 4.5 and float(np.std(b)) < 6.5:
         return True
-    # a toned print (sepia, cyanotype…): its colour follows the brightness - what's left over is tiny
+    # a toned print (sepia, cyanotype…): its color follows the brightness - what's left over is tiny
     X = np.column_stack([L, L * L / 255.0, np.ones_like(L)])
     left = 0.0
     for ch in (a, b):
@@ -351,8 +351,8 @@ def _dust(rgb):
 
 
 def restore_faded(rgb, progress=lambda f: None, cancelled=lambda: False):
-    """Old, faded photos: dust and specks taken out, the fade and colour cast removed (each colour
-    stretched back to full range), film grain smoothed, contrast and colour brought back."""
+    """Old, faded photos: dust and specks taken out, the fade and color cast removed (each color
+    stretched back to full range), film grain smoothed, contrast and color brought back."""
     mono = is_monochrome(rgb)
     out = _dust(rgb)
     progress(0.25)
@@ -368,7 +368,7 @@ def restore_faded(rgb, progress=lambda f: None, cancelled=lambda: False):
     return out
 
 
-# ------------------------------------------------------------------ colourizing
+# ------------------------------------------------------------------ colorizing
 def color_model_path():
     return os.path.join(engine.store_data_dir(), "models", "colorize", "deoldify.onnx")
 
@@ -378,7 +378,7 @@ def color_ready():
 
 
 def download_color(progress=lambda d, t, m: None, cancelled=lambda: False):
-    """The colourizing model (DeOldify, about 243 MB, once). False if cancelled."""
+    """The colorizing model (DeOldify, about 243 MB, once). False if cancelled."""
     import urllib.request
     dest = color_model_path()
     os.makedirs(os.path.dirname(dest), exist_ok=True)
@@ -398,7 +398,7 @@ def download_color(progress=lambda d, t, m: None, cancelled=lambda: False):
                 break
             f.write(chunk)
             got += len(chunk)
-            progress(got >> 20, COLOR_MB, f"Getting the colourizing model… {got >> 20} / {COLOR_MB} MB")
+            progress(got >> 20, COLOR_MB, f"Getting the colorizing model… {got >> 20} / {COLOR_MB} MB")
     if os.path.getsize(tmp) < 50 << 20:
         os.remove(tmp)
         raise RuntimeError("the download was incomplete")
@@ -407,7 +407,7 @@ def download_color(progress=lambda d, t, m: None, cancelled=lambda: False):
 
 
 def colorize(rgb, progress=lambda f: None, cancelled=lambda: False, vivid=1.25):
-    """Black & white or sepia -> colour. The model guesses colours at 256 x 256; only its colour
+    """Black & white or sepia -> color. The model guesses colors at 256 x 256; only its color
     is used - every bit of detail (the brightness) comes from the original at full size."""
     gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
     a, b = np.percentile(gray, (0.3, 99.7))           # faded prints: full range back first
@@ -424,7 +424,7 @@ def colorize(rgb, progress=lambda f: None, cancelled=lambda: False, vivid=1.25):
     progress(0.7)
     h, w = gray.shape
     col = cv2.resize(y, (w, h), interpolation=cv2.INTER_CUBIC)
-    col = cv2.GaussianBlur(col, (0, 0), max(1.0, max(w, h) / 512))       # colour has no fine detail
+    col = cv2.GaussianBlur(col, (0, 0), max(1.0, max(w, h) / 512))       # color has no fine detail
     lab = cv2.cvtColor(col, cv2.COLOR_RGB2LAB).astype(np.float32)
     lab[:, :, 1:] = np.clip((lab[:, :, 1:] - 128) * vivid + 128, 0, 255)
     lab[:, :, 0] = cv2.cvtColor(g3, cv2.COLOR_RGB2LAB)[:, :, 0]
