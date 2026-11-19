@@ -49,6 +49,9 @@ class SettingsDialog(QDialog):
             scroll.setWidget(body)
             self.tabs.addTab(scroll, app_icon(icon), title)
             pages[key] = (pl, body)
+        import viewer_ui
+        self.viewer_page = viewer_ui.ViewerSettingsPage(self.s)
+        self.tabs.addTab(self.viewer_page, app_icon("search"), "Viewer")
         import backup_ui
         self.backups_page = backup_ui.BackupsPage(win, self.s)
         self.tabs.addTab(self.backups_page, app_icon("folder"), "Backups")
@@ -707,6 +710,7 @@ class SettingsDialog(QDialog):
         s["tag_list"] = self.tags_edit.result_list()
         self.rules_edit.save_to(s)
         self.backups_page.save_to(s)
+        self.viewer_page.save_to(s)
         s["tag_column"] = self.cb_tagcol.isChecked()
         s["safe_suggestive"] = self.cb_safe_sugg.isChecked()
         s["settings_tab"] = self.tabs.currentIndex()       # opens on the same tab next time

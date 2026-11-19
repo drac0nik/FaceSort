@@ -255,6 +255,11 @@ class MarkSlider(QSlider):
     def __init__(self, *a):
         super().__init__(*a)
         self.marks = [None, None]            # seconds; the bar itself is in milliseconds
+        self.cuts = []                       # (1.54) parts to cut out (video edit mode), seconds
+
+    def set_cuts(self, cuts):
+        self.cuts = list(cuts or [])
+        self.update()
 
     def set_marks(self, a, b):
         self.marks = [a, b]
@@ -298,6 +303,13 @@ class MarkSlider(QSlider):
     def paintEvent(self, e):
         super().paintEvent(e)
         a, b = self.marks
+        if self.cuts and self.maximum() > self.minimum():
+            p = QPainter(self)
+            for x, y in self.cuts:
+                xa, groove = self._x(x * 1000)
+                xb, _ = self._x(y * 1000)
+                p.fillRect(QRectF(xa, 1, max(2.0, xb - xa), self.height() - 2), QColor(220, 70, 70, 120))
+            p.end()
         if (a is None and b is None) or self.maximum() <= self.minimum():
             return
         p = QPainter(self)
@@ -461,6 +473,12 @@ class PhotoCanvas(QWidget):
         return self.viewer.marking or (e is not None and e.modifiers() & (Qt.ShiftModifier | Qt.ControlModifier))
 
     def mouseMoveEvent(self, e):
+        if getattr(self, "crop_from", None) is not None:
+            self.crop_to = e.position()
+            self.update()
+            return
+        if getattr(self.viewer, "editing", None) and self.pan_from is None:
+            return
         if self.pan_from is not None:
             self.pan += e.position() - self.pan_from
             self.pan_from = e.position()
@@ -482,7 +500,28 @@ class PhotoCanvas(QWidget):
         self.setCursor(Qt.PointingHandCursor if f else Qt.ArrowCursor)
         self.update()
 
+    def _edit_press(self, e):
+        """Edit mode: the eyedropper and drawing the crop. True when handled."""
+        v = self.viewer
+        if getattr(v, "editing", None) != "photo" or e.button() != Qt.LeftButton:
+            return False
+        ir = self.image_rect()
+        if v.ed_pick:
+            if ir.contains(e.position()):
+                v.ed_picked((e.position().x() - ir.x()) / ir.width(), (e.position().y() - ir.y()) / ir.height())
+            return True
+        if v.ed_crop:
+            self.crop_from = self.crop_to = e.position()
+            return True
+        return False
+
     def mousePressEvent(self, e):
+        if self._edit_press(e):
+            return
+        if getattr(self.viewer, "editing", None):
+            if self.zoom > 1.01 or e.button() == Qt.MiddleButton:
+                self.pan_from = e.position()
+            return
         if e.button() == Qt.RightButton:
             t = self.tattoo_at(e.position())
             if t:
@@ -514,6 +553,15 @@ class PhotoCanvas(QWidget):
                 self.band_from = self.band_to = e.position()     # drag a box round several faces
 
     def mouseReleaseEvent(self, e):
+        if getattr(self, "crop_from", None) is not None:
+            ir = self.image_rect()
+            r = QRectF(self.crop_from, e.position()).normalized().intersected(ir)
+            self.crop_from = self.crop_to = None
+            self.update()
+            if r.width() > 12 and r.height() > 12:
+                self.viewer.ed_crop_drawn(((r.x() - ir.x()) / ir.width(), (r.y() - ir.y()) / ir.height(),
+                                           r.width() / ir.width(), r.height() / ir.height()))
+            return
         if self.pan_from is not None:
             self.pan_from = None
             self.setCursor(Qt.ArrowCursor)
@@ -578,6 +626,32 @@ class PhotoCanvas(QWidget):
             p.drawText(self.rect(), Qt.AlignCenter, self.viewer.error or "Loading…")
             return
         p.drawImage(ir, self.viewer.image)
+        v = self.viewer
+        if getattr(v, "editing", None) == "photo":
+            if v.ed_crop:                           # the crop: outside it shaded
+                c = v.ed_panel.p.get("crop")
+                cr = self.box_rect(*c, ir) if c else QRectF(ir)
+                shade = QColor(0, 0, 0, 150)
+                for rr in (QRectF(ir.left(), ir.top(), ir.width(), cr.top() - ir.top()),
+                           QRectF(ir.left(), cr.bottom(), ir.width(), ir.bottom() - cr.bottom()),
+                           QRectF(ir.left(), cr.top(), cr.left() - ir.left(), cr.height()),
+                           QRectF(cr.right(), cr.top(), ir.right() - cr.right(), cr.height())):
+                    if rr.width() > 0 and rr.height() > 0:
+                        p.fillRect(rr, shade)
+                p.setPen(QPen(QColor(255, 255, 255), 2))
+                p.setBrush(Qt.NoBrush)
+                p.drawRect(cr)
+                p.setPen(QPen(QColor(255, 255, 255, 90), 1))
+                for k in (1, 2):                    # thirds
+                    p.drawLine(QPointF(cr.left() + cr.width() * k / 3, cr.top()),
+                               QPointF(cr.left() + cr.width() * k / 3, cr.bottom()))
+                    p.drawLine(QPointF(cr.left(), cr.top() + cr.height() * k / 3),
+                               QPointF(cr.right(), cr.top() + cr.height() * k / 3))
+            if getattr(self, "crop_from", None) is not None and self.crop_to is not None:
+                p.setPen(QPen(QColor(255, 255, 255), 2, Qt.DashLine))
+                p.setBrush(QColor(255, 255, 255, 30))
+                p.drawRect(QRectF(self.crop_from, self.crop_to).normalized())
+            return
         # tattoos: your marks (solid purple) and matches to check (dashed orange)
         for tid, x, y, w, h, name, src in ([] if self.viewer.hide_boxes else self.viewer.tattoos):
             rr = self.box_rect(x, y, w, h, ir)

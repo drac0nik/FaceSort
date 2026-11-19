@@ -39,6 +39,11 @@ class FilesMixin:
             return self.person_file_ids(ident), name, name, None
         if what == "folder":
             return self.folder_photo_ids(ident), self.cat_name(ident), None, None
+        if what == "ids":                         # (the viewer's ⋯ menu: the photo on screen)
+            ids = list(ident)
+            row = self.conn.execute("SELECT path FROM photos WHERE id=?", (ids[0],)).fetchone() if ids else None
+            label = os.path.splitext(os.path.basename(row[0]))[0] if row else "FaceSort photos"
+            return ids, label, None, ids
         order = self.gallery_photo_order()
         person = self.person_name(self.view[1]) if self.view[0] == "person" else None
         label = person or (self.cat_name(self.view[1]) if self.view[0] == "category" else None) or "FaceSort photos"

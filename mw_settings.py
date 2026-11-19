@@ -24,14 +24,18 @@ class SettingsMixin:
             return []
         return [store.norm_path(u.toLocalFile()) for u in md.urls() if u.isLocalFile() and u.toLocalFile()]
 
+    def _droppable(self, e):
+        import webdrop
+        return bool(self._dropped_paths(e)) or webdrop.has_web(e.mimeData())
+
     def dragEnterEvent(self, e):
-        if self._dropped_paths(e):
+        if self._droppable(e):
             e.acceptProposedAction()
         else:
             e.ignore()
 
     def dragMoveEvent(self, e):
-        if self._dropped_paths(e):
+        if self._droppable(e):
             e.acceptProposedAction()
         else:
             e.ignore()
@@ -41,6 +45,45 @@ class SettingsMixin:
         if paths:
             e.acceptProposedAction()
             QTimer.singleShot(0, lambda: self.handle_drop(paths))   # don't block Explorer while the dialog is open
+            return
+        import webdrop
+        if webdrop.has_web(e.mimeData()):
+            pl = webdrop.payload(e.mimeData())           # (read now: the browser's data is gone after the drop)
+            e.acceptProposedAction()
+            QTimer.singleShot(0, lambda: self.web_drop(pl))
+
+    def web_drop(self, pl):
+        """(1.54) A picture dragged from a web browser: saved in the Web drops folder (downloaded by its
+        address if the browser didn't hand over the file), then added like any drop."""
+        import webdrop
+        from ui_common import Worker
+        if not (pl["files"] or pl["urls"] or pl["image"]):
+            self.statusBar().showMessage("Nothing usable came with that - try dragging the picture itself.", 8000)
+            return
+        dest = webdrop.folder(self.settings)
+        self.statusBar().showMessage("Getting the picture from the web…")
+        w = Worker(lambda conn, progress=None, cancelled=None: webdrop.save_all(pl, dest))
+
+        def done(res):
+            self._web_worker = None
+            if res["saved"]:
+                how = {"file": "", "download": " (downloaded)", "picture": " (as the browser showed it)"}[res["how"][0]]
+                self.statusBar().showMessage(f"Saved {os.path.basename(res['saved'][0])}{how} in {dest}", 10000)
+                self.handle_drop(res["saved"])
+            else:
+                why = res["errors"][0][1] if res["errors"] else "nothing that came with it was a picture"
+                self.statusBar().clearMessage()
+                QMessageBox.information(self, "Dropped from the web", f"Couldn't get the picture: {why}.")
+
+        def failed(tb):
+            self._web_worker = None
+            self.statusBar().clearMessage()
+            QMessageBox.information(self, "Dropped from the web",
+                                    "Couldn't get the picture: " + str(tb).strip().splitlines()[-1])
+        w.ok.connect(done)
+        w.failed.connect(failed)
+        self._web_worker = w
+        w.start()
 
     def handle_drop(self, paths, ask=True, answers=None, watch=False):
         """Photos, videos and folders dropped on the window (or chosen with Add folder): the Add

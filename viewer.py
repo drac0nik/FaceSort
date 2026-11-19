@@ -21,6 +21,7 @@ from viewer_parts import (
     chip, CompareView, EnhancedView, Filmstrip, frame_planes, LowLightWorker, MarkSlider, PhotoCanvas,
     qimage_to_rgb, rgb_to_qimage, TagEdit, ToolWorker)
 from dialogs import EnhanceCopyDialog
+from viewer_edit import ViewerEditMixin
 
 
 _DECODE = ThreadPoolExecutor(max_workers=2, thread_name_prefix="picture")    # (1.44.2) pictures decode off the window
@@ -52,7 +53,7 @@ class _Decoded(QObject):
     done = Signal(object, object, object)          # key, (QImage, w, h) or None, error text
 
 
-class PhotoViewer(QWidget):
+class PhotoViewer(ViewerEditMixin, QWidget):
     """Full photo with every face boxed, and two tag bars along the bottom.
 
     People bar: names the highlighted face, or (no face highlighted) tags the person on the
@@ -110,6 +111,14 @@ class PhotoViewer(QWidget):
             b.setAutoRaise(True)
             b.setToolTip(tip)
             b.clicked.connect(fn)
+            if icon == "fullscreen":                # (1.54) Info sits just left of full screen
+                db = QToolButton()
+                db.setDefaultAction(win.a_details)
+                db.setIconSize(QSize(22, 22))
+                db.setAutoRaise(True)
+                db.setToolButtonStyle(Qt.ToolButtonIconOnly)
+                db.setToolTip("Info - the photo's details   (I in the gallery)")
+                top.addWidget(db)
             top.addWidget(b)
             if icon == "play":
                 self.play_b = b
@@ -156,12 +165,6 @@ class PhotoViewer(QWidget):
         self.zoom_label.setStyleSheet("color: gray;")
         self.zoom_label.setMinimumWidth(44)
         top.addWidget(self.zoom_label)
-        db = QToolButton()                     # the Details panel, from here too
-        db.setDefaultAction(win.a_details)
-        db.setIconSize(QSize(22, 22))
-        db.setAutoRaise(True)
-        db.setToolButtonStyle(Qt.ToolButtonIconOnly)
-        top.addWidget(db)
         lay.addLayout(top)
         self.path_label = path_label()
         lay.addWidget(self.path_label)
@@ -243,7 +246,7 @@ class PhotoViewer(QWidget):
         for item in ("[Enter] People Bar", "C[a]tegory Bar", "[C]onfirm", "[R]emove Face", "[T]ag Person",
                      "[M]ark Tattoo", "[D]iscard", "Sort [L]ater", "[N]ot a Face", "[I]gnore",
                      "[Shift+I] Ignore All Unnamed", "[Drag] Select Several Faces", "[← →] Browse", "[Wheel / + −] Zoom", "[0] Fit · [1] Actual Size", "[[ / ]] Turn Left / Right",
-                     "[Space] Slideshow / Play Video or GIF", "[S]creenshot (Video / GIF)", "[E] Low Light (Video)", "[{ / }] Start / End Marker (Video)",
+                     "[Space] Slideshow / Play Video or GIF", "[S]creenshot (Video / GIF)", "[E]dit Photo / Video", "[Shift+E] Low Light (Video)", "[{ / }] Start / End Marker (Video)",
                      "[F11] Full Screen", "[W] Photo Tools (Red Eye, Upscale, Enhance…)", "[B] Hide / Show Face Boxes", "[Alt+1–5] Quick Category", "[Ctrl+Drag] Tag Person", "[Shift+Drag] Mark Tattoo",
                      "[Right-click] Unassign / Remove", "[Esc] Back to Gallery"):
             lb = QLabel(key_html(item))
@@ -279,6 +282,7 @@ class PhotoViewer(QWidget):
         from tagcolumn import TagColumn
         self.tag_col = TagColumn(self)           # recommended tags, beside the photo
         mid.addWidget(self.tag_col)
+        self.setup_edit(mid)                     # (1.54) edit mode's panels, hidden until E
         lay.addLayout(mid, 1)
         # video controls: play / pause, position, speed, screenshot, sound
         self.video_bar = QWidget()
@@ -430,6 +434,21 @@ class PhotoViewer(QWidget):
             "Searching… (results appear under Tattoo matches)")))
         btns.addWidget(self.find_b)
         btns.addStretch()
+        self.edit_b = QPushButton("Edit  (E)")
+        self.edit_b.setIcon(app_icon("wand"))
+        self.edit_b.setToolTip("Edit mode: light, color, crop, color pop… for photos; trim, cut, turn, low light "
+                               "for videos. Save copy keeps the original.")
+        self.edit_b.setStyleSheet("QPushButton { background: #4c8dff; color: #0b1220; font-weight: bold; "
+                                  "padding: 4px 14px; border-radius: 6px; }  QPushButton:disabled { background: #555; }")
+        self.edit_b.clicked.connect(self.enter_edit)
+        btns.addWidget(self.edit_b)
+        more = QPushButton("⋯")
+        more.setToolTip("More")
+        more.setFixedWidth(36)
+        self.more_menu = QMenu(more)
+        self.more_menu.aboutToShow.connect(self.build_more_menu)
+        more.setMenu(self.more_menu)
+        btns.addWidget(more)
         for text, fn in (("Open in default app", lambda: self.path and open_file(self.path)),
                          ("Open window to this image", lambda: self.path and show_in_folder(self.path))):
             b = QPushButton(text)
@@ -461,7 +480,8 @@ class PhotoViewer(QWidget):
                         ("W", self.open_tools_menu),
                         ("Shift+X", self.clear_marks),
                         ("V", lambda: self.set_compare(not self.compare_on())),
-                        ("E", lambda: self.set_low_light((self.low_light + 1) % 3) if self.is_video else None),
+                        ("E", self.enter_edit),
+                        ("Shift+E", lambda: self.set_low_light((self.low_light + 1) % 3) if self.is_video else None),
                         ("Home", lambda: self.go(-self.pos)), ("End", lambda: self.go(len(self.items) - 1 - self.pos))):
             sc = QShortcut(QKeySequence(key), self)
             sc.setContext(Qt.WidgetWithChildrenShortcut)     # only while the viewer is open
@@ -488,6 +508,12 @@ class PhotoViewer(QWidget):
         self.cat_bar.clear()
         self.people_bar.setPlaceholderText(self.people_placeholder)
         self.toast.setText("")
+        if self.editing:
+            self.exit_edit()
+        self.hide_boxes = bool(self.win.settings.get("viewer_hide_boxes", False))   # (Settings > Viewer)
+        self.boxes_b.blockSignals(True)
+        self.boxes_b.setChecked(self.hide_boxes)
+        self.boxes_b.blockSignals(False)
         self.stop_video()
         self.items, self.pos, self.context, self.person_id = list(items), index, context, person_id
         self.path, self._shown, self.image = None, None, None
@@ -497,6 +523,16 @@ class PhotoViewer(QWidget):
     def keyPressEvent(self, e):
         if e.key() in (Qt.Key_Return, Qt.Key_Enter):
             self.people_bar.setFocus()   # Enter on the photo = start typing a name
+            return
+        if e.key() == Qt.Key_Backslash and self.editing == "photo" and not e.isAutoRepeat():
+            self._ed_compare(True)                 # hold \ to see the original
+            return
+        if e.key() in (Qt.Key_Escape, Qt.Key_Backspace) and self.editing:
+            if self.editing == "photo" and (self.ed_pick or self.ed_crop):
+                self._ed_pick_mode("")
+                self.ed_panel.crop_b.setChecked(False)
+            else:
+                self.exit_edit(ask=True)
             return
         if e.key() in (Qt.Key_Escape, Qt.Key_Backspace):
             if self.marking:
@@ -515,7 +551,28 @@ class PhotoViewer(QWidget):
             return
         super().keyPressEvent(e)
 
+    def keyReleaseEvent(self, e):
+        if e.key() == Qt.Key_Backslash and self.editing == "photo" and not e.isAutoRepeat():
+            self._ed_compare(False)
+            return
+        super().keyReleaseEvent(e)
+
+    def build_more_menu(self):
+        m = self.more_menu
+        m.clear()
+        if not self.is_video and not getattr(self, "is_anim", False):
+            m.addAction("Photo tools…  (W)", self.open_tools_menu)
+        pid, _ = self.photo_id()
+        if pid is not None:
+            m.addAction("Rename…", lambda: self.win.rename_files("ids", [pid]))
+            m.addAction("Export…", lambda: self.win.export_files("ids", [pid]))
+        m.addSeparator()
+        m.addAction("Open in default app", lambda: self.path and open_file(self.path))
+        m.addAction("Open window to this image", lambda: self.path and show_in_folder(self.path))
+
     def close_viewer(self):
+        if self.editing:
+            self.exit_edit()
         self.slideshow.stop()
         self.stop_video()
         self.set_compare(False)
@@ -567,6 +624,8 @@ class PhotoViewer(QWidget):
 
     def boxes_hidden(self):
         """Boxes switched off (B), or a GIF past its first frame (its boxes were found there)."""
+        if getattr(self, "editing", None):
+            return True                            # (edit mode: the picture may be cropped or turned)
         return self.hide_boxes or bool(getattr(self, "is_anim", False) and self.movie is not None
                                        and self.movie.currentFrameNumber() > 0)
 
@@ -590,6 +649,9 @@ class PhotoViewer(QWidget):
             self.toggle_video()
         else:
             self.toggle_slideshow()
+
+    def player_idle(self):
+        return not self.player or self.player.playbackState() != QMediaPlayer.PlayingState
 
     def seek_to(self, v):
         if getattr(self, "is_anim", False) and self.movie is not None:
@@ -934,7 +996,8 @@ class PhotoViewer(QWidget):
         self._tool_kind = doing
         self.toast.setText(f"{doing}…")
         self.edit_label.setText(f"<b>{doing}…</b>")
-        self.edit_bar.show()
+        if not self.editing:
+            self.edit_bar.show()
         for b in (self.edit_save, self.edit_hold, self.edit_more):
             b.setEnabled(False)
         self.tool.submit(work)
@@ -963,7 +1026,8 @@ class PhotoViewer(QWidget):
         shown = cv2.resize(out, (max(1, round(w * k)), max(1, round(h * k))), interpolation=cv2.INTER_AREA) if k < 1 else out
         qimg = QImage(np.ascontiguousarray(shown).data, shown.shape[1], shown.shape[0], 3 * shown.shape[1],
                       QImage.Format_RGB888).copy()
-        self.edit_bar.show()
+        if not self.editing:
+            self.edit_bar.show()
         self._tool_done({"rgb": out, "exif": exif, "qimg": qimg, "label": d.label(),
                          "info": f"{d.fills} change{'s' if d.fills != 1 else ''}", "path": path}, None)
 
@@ -988,6 +1052,9 @@ class PhotoViewer(QWidget):
         self.edit_rgb = res["rgb"]
         self.edit_qimg = res["qimg"]
         self.edit_ops.append(res["label"])
+        if self.editing == "photo":
+            self.ed_tool_applied(res)
+            return
         self.show_edit(True)
         self._edit_label(res["info"])
         self.toast.setText("Preview - not saved yet")
@@ -1129,6 +1196,13 @@ class PhotoViewer(QWidget):
 
     # ---- turning
     def rotate(self, clockwise):
+        if self.editing == "video":                # [ / ] trim in video edit mode
+            vp = self.ved_panel
+            vp.set_end(self.video_now()) if clockwise else vp.set_start(self.video_now())
+            return
+        if self.editing == "photo":
+            self.ed_panel._turn(1 if clockwise else -1)
+            return
         pid, _ = self.photo_id()
         if pid is None:
             return
@@ -1170,6 +1244,7 @@ class PhotoViewer(QWidget):
             self.play_b.setIcon(app_icon("play"))
             self.toast.setText("Slideshow stopped")
         else:
+            self.slideshow.setInterval(int(float(self.win.settings.get("viewer_slideshow_s", 3)) * 1000))
             self.slideshow.start()
             self.play_b.setIcon(app_icon("pause"))
             self.toast.setText("Slideshow - Space stops it")
@@ -1407,6 +1482,9 @@ class PhotoViewer(QWidget):
 
     # ---- navigation
     def go(self, step):
+        if self.editing:
+            self.toast.setText("Save or cancel the edit first")
+            return
         n = self.pos + step
         if 0 <= n < len(self.items):
             self.pos = n
@@ -1419,6 +1497,8 @@ class PhotoViewer(QWidget):
         if self.pending_tattoo or self.pending_face:
             self.cancel_tattoo()
         if path != self.path:
+            if self.editing:
+                self.exit_edit()
             self.stop_video()
             if self.edit_rgb is not None or self.tool.busy:
                 self.discard_edit(quiet=True)
@@ -1440,6 +1520,11 @@ class PhotoViewer(QWidget):
                                              WHERE ph.path=? AND f.id=?""", (path, fid)).fetchone()
                 c = self.win.conn.execute("SELECT cover_t FROM photos WHERE path=?", (path,)).fetchone()
                 self.frame_t = (r[0] if r and r[0] is not None else (c[0] if c else None))
+                if not self.win.settings.get("video_keep_speed", False):
+                    self.speed_box.setCurrentIndex(SPEEDS.index(1.0))     # (1.54) back to 1× for each video
+                if self.win.settings.get("video_autoplay", False) and MEDIA_OK:
+                    QTimer.singleShot(250, lambda p=path: self.path == p and self.isVisible()
+                                      and self.player_idle() and self.toggle_video())
         elif self.is_video and fid > 0:
             r = self.win.conn.execute("SELECT frame_t FROM faces WHERE id=?", (fid,)).fetchone()
             if r and r[0] is not None:

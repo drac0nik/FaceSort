@@ -153,6 +153,39 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.54.0
+- Edit mode in the viewer: press E (or the blue Edit button) on a photo or a video.
+  Photos - a panel beside the picture, with a live preview:
+  - Crop & rotate: turn 90°, flip, straighten (no empty corners), crop shapes (Free, Original, 1:1,
+    4:5, 3:2, 16:9) or draw the crop on the photo.
+  - Light: exposure, brightness, contrast, highlights, shadows, and Auto.
+  - Color: white balance (with an eyedropper - click something white or grey), tint, saturation,
+    vibrance, and B&W.
+  - Color pop: one color is kept and everything else turns grey - pick reds, oranges, yellows,
+    greens, cyans, blues or purples, or click the color with the eyedropper; Sensitivity sets how
+    many shades of it are kept.
+  - Effects: vignette, from -100 (completely black) through 0 (none) to +100 (completely white).
+  - Detail: sharpen and smooth noise.
+  - Fix & restore: the photo tools (red eye, auto enhance, restore, smooth blotches, colorize,
+    touch-up and face clarity brushes, upscale) - the rest of your edit goes on top.
+  - Undo / Redo (Ctrl+Z / Ctrl+Y), Hold to compare (or hold \), Reset.
+  - Save copy is always the default ("<name> (edited)" next to the original, with the same people
+    and tags). Replace original… is in the Save menu: the original is kept as "<name> (original)"
+    and marked to discard, so it goes to ~To Be Discarded when you Sort into folders.
+  Videos - trim (Start here [ / End here ]), cut out parts in the middle, turn 90°, low light
+  (Off / On / Strong), Steady and frame rate, all saved in one go as a new clip, exact to the frame
+  (re-encoded as H.264). Best frames as photos is there too. The original is never changed.
+- The viewer: the Info button sits just left of full screen; ⋯ has the photo tools, Rename…,
+  Export… and the open buttons. E now opens edit mode - low light on a video moved to Shift+E.
+- Settings has a Viewer tab: slideshow speed, face boxes when the viewer opens, the copy name, JPEG
+  quality, whether edited copies keep the people and tags, start playing videos when they open,
+  speed back to 1× for each video (or keep it), and the saved clips' quality.
+- Drag a picture from a web browser onto FaceSort: it's saved in a "Web drops" folder in your
+  library and goes into Recently dropped like any drop. FaceSort uses the file the browser hands
+  over; if there's only the picture's web address, it downloads that one picture (a site that needs
+  you to be signed in may refuse - then the picture as the browser showed it is used, if it came
+  along). Only pictures and videos are kept.
+
 1.53.0
 - Rename… (right-click a selection, a person or a folder): new file names from a pattern made of
   parts - Person, Everyone, Date, Time, Folder, Number, Old name - e.g. "{person} {date} {n}" gives
