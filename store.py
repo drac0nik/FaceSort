@@ -277,6 +277,16 @@ CREATE TABLE IF NOT EXISTS written(            -- keywords FaceSort put in each 
 """
 
 
+def _add_column(conn, sql):
+    """ALTER TABLE ... ADD COLUMN, when two connections open an older library at the same moment:
+    the one that's second finds the column already there, which is fine."""
+    try:
+        conn.execute(sql)
+    except sqlite3.OperationalError as e:
+        if "duplicate column" not in str(e):
+            raise
+
+
 def connect(path=None):
     """A connection to the library. All of them write through one write gate (dbgate): one
     writer at a time, the window first, background writes saved one short statement at a time."""
@@ -297,59 +307,59 @@ def connect(path=None):
     conn.executescript(SCHEMA)
     cols = {r[1] for r in conn.execute("PRAGMA table_info(faces)")}
     if "fhash" not in cols:  # library from version 1.0.x
-        conn.execute("ALTER TABLE faces ADD COLUMN fhash TEXT")
+        _add_column(conn, "ALTER TABLE faces ADD COLUMN fhash TEXT")
         rows = conn.execute("SELECT id, emb FROM faces").fetchall()
         conn.executemany("UPDATE faces SET fhash=? WHERE id=?", [(hashlib.sha1(b).hexdigest(), i) for i, b in rows])
         conn.commit()
     conn.execute("CREATE INDEX IF NOT EXISTS faces_fhash ON faces(fhash)")
     fcols = {r[1] for r in conn.execute("PRAGMA table_info(faces)")}
     if "model" not in fcols:   # library from version 1.7 or older
-        conn.execute("ALTER TABLE faces ADD COLUMN model TEXT DEFAULT 'sface'")
-        conn.execute("ALTER TABLE faces ADD COLUMN face_ok INTEGER DEFAULT 0")
-        conn.execute("ALTER TABLE faces ADD COLUMN quality REAL")
+        _add_column(conn, "ALTER TABLE faces ADD COLUMN model TEXT DEFAULT 'sface'")
+        _add_column(conn, "ALTER TABLE faces ADD COLUMN face_ok INTEGER DEFAULT 0")
+        _add_column(conn, "ALTER TABLE faces ADD COLUMN quality REAL")
         conn.commit()
     conn.execute("CREATE INDEX IF NOT EXISTS faces_model ON faces(model)")
     pcols = {r[1] for r in conn.execute("PRAGMA table_info(photos)")}
     if "discarded" not in pcols:  # library from version 1.3 or older
-        conn.execute("ALTER TABLE photos ADD COLUMN discarded INTEGER DEFAULT 0")
+        _add_column(conn, "ALTER TABLE photos ADD COLUMN discarded INTEGER DEFAULT 0")
         conn.commit()
     if "taken" not in pcols:   # library from version 1.6 or older: dates get read on next scan
-        conn.execute("ALTER TABLE photos ADD COLUMN taken REAL")
-        conn.execute("ALTER TABLE photos ADD COLUMN taken_read INTEGER DEFAULT 0")
+        _add_column(conn, "ALTER TABLE photos ADD COLUMN taken REAL")
+        _add_column(conn, "ALTER TABLE photos ADD COLUMN taken_read INTEGER DEFAULT 0")
         conn.commit()
     if "tags_read" not in pcols:   # keywords on photos scanned by older versions get read on next scan
-        conn.execute("ALTER TABLE photos ADD COLUMN tags_read INTEGER DEFAULT 0")
+        _add_column(conn, "ALTER TABLE photos ADD COLUMN tags_read INTEGER DEFAULT 0")
         conn.commit()
     if "src" not in {r[1] for r in conn.execute("PRAGMA table_info(photo_people)")}:
-        conn.execute("ALTER TABLE photo_people ADD COLUMN src TEXT DEFAULT 'user'")
+        _add_column(conn, "ALTER TABLE photo_people ADD COLUMN src TEXT DEFAULT 'user'")
         conn.commit()
     if "category_id" not in pcols:  # library from version 1.4 or older
-        conn.execute("ALTER TABLE photos ADD COLUMN category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL")
+        _add_column(conn, "ALTER TABLE photos ADD COLUMN category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL")
         conn.commit()
     pecols = {r[1] for r in conn.execute("PRAGMA table_info(persons)")}
     if "last_used" not in pecols:
-        conn.execute("ALTER TABLE persons ADD COLUMN last_used REAL DEFAULT 0")
+        _add_column(conn, "ALTER TABLE persons ADD COLUMN last_used REAL DEFAULT 0")
         conn.commit()
     if "category_id" not in pecols:   # 1.9: a person can be placed in a category (all their photos go there)
-        conn.execute("ALTER TABLE persons ADD COLUMN category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL")
+        _add_column(conn, "ALTER TABLE persons ADD COLUMN category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL")
         conn.commit()
     if "parent_id" not in {r[1] for r in conn.execute("PRAGMA table_info(categories)")}:
-        conn.execute("ALTER TABLE categories ADD COLUMN parent_id INTEGER REFERENCES categories(id) ON DELETE SET NULL")
+        _add_column(conn, "ALTER TABLE categories ADD COLUMN parent_id INTEGER REFERENCES categories(id) ON DELETE SET NULL")
         conn.commit()
     if "sort_later" not in pcols:
-        conn.execute("ALTER TABLE photos ADD COLUMN sort_later INTEGER DEFAULT 0")
+        _add_column(conn, "ALTER TABLE photos ADD COLUMN sort_later INTEGER DEFAULT 0")
         conn.commit()
     if "later_prev" not in {r[1] for r in conn.execute("PRAGMA table_info(faces)")}:
-        conn.execute("ALTER TABLE faces ADD COLUMN later_prev INTEGER")
+        _add_column(conn, "ALTER TABLE faces ADD COLUMN later_prev INTEGER")
         conn.commit()
     if "inside_person" not in {r[1] for r in conn.execute("PRAGMA table_info(categories)")}:   # 1.12
-        conn.execute("ALTER TABLE categories ADD COLUMN inside_person INTEGER DEFAULT 0")
+        _add_column(conn, "ALTER TABLE categories ADD COLUMN inside_person INTEGER DEFAULT 0")
         conn.commit()
     if "batch" not in {r[1] for r in conn.execute("PRAGMA table_info(drop_rules)")}:      # 1.17: Recently dropped
-        conn.execute("ALTER TABLE drop_rules ADD COLUMN batch REAL")
+        _add_column(conn, "ALTER TABLE drop_rules ADD COLUMN batch REAL")
         conn.commit()
     if "dropped" not in {r[1] for r in conn.execute("PRAGMA table_info(photos)")}:
-        conn.execute("ALTER TABLE photos ADD COLUMN dropped REAL")      # in Recently dropped (which drop)
+        _add_column(conn, "ALTER TABLE photos ADD COLUMN dropped REAL")      # in Recently dropped (which drop)
         conn.commit()
     conn.execute("CREATE TABLE IF NOT EXISTS drop_batches(batch REAL PRIMARY KEY, name TEXT)")
     # 1.20: other files that came with a drop (notes, links, documents, archives) - filed with the photos
@@ -357,23 +367,23 @@ def connect(path=None):
                     kind TEXT, root TEXT)""")
     _vault_columns(conn)
     if "vault_prev" not in {r[1] for r in conn.execute("PRAGMA table_info(photos)")}:
-        conn.execute("ALTER TABLE photos ADD COLUMN vault_prev INTEGER")     # its Sort Later state before a vault hid it
+        _add_column(conn, "ALTER TABLE photos ADD COLUMN vault_prev INTEGER")     # its Sort Later state before a vault hid it
     if "vault_prev" not in {r[1] for r in conn.execute("PRAGMA table_info(faces)")}:
-        conn.execute("ALTER TABLE faces ADD COLUMN vault_prev INTEGER")      # its state before a vault hid it
+        _add_column(conn, "ALTER TABLE faces ADD COLUMN vault_prev INTEGER")      # its state before a vault hid it
     conn.commit()
     if "copy_of" not in {r[1] for r in conn.execute("PRAGMA table_info(photos)")}:   # 1.19: JPEG copies of RAWs
-        conn.execute("ALTER TABLE photos ADD COLUMN copy_of INTEGER")    # made from this photo (skipped by Duplicates)
+        _add_column(conn, "ALTER TABLE photos ADD COLUMN copy_of INTEGER")    # made from this photo (skipped by Duplicates)
         conn.commit()
     if "drop_folder" not in {r[1] for r in conn.execute("PRAGMA table_info(photos)")}:
-        conn.execute("ALTER TABLE photos ADD COLUMN drop_folder TEXT")   # 1.26: folder names kept for people tagged later
+        _add_column(conn, "ALTER TABLE photos ADD COLUMN drop_folder TEXT")   # 1.26: folder names kept for people tagged later
     if "structure" not in {r[1] for r in conn.execute("PRAGMA table_info(drop_rules)")}:
-        conn.execute("ALTER TABLE drop_rules ADD COLUMN structure INTEGER")   # NULL = folder names not used
+        _add_column(conn, "ALTER TABLE drop_rules ADD COLUMN structure INTEGER")   # NULL = folder names not used
         conn.commit()
     pc = {r[1] for r in conn.execute("PRAGMA table_info(photos)")}
     for col, decl in (("phash", "INTEGER"), ("ai", "INTEGER DEFAULT 0"), ("ai_info", "TEXT"), ("ai_score", "REAL"),
                       ("extras_read", "INTEGER DEFAULT 0")):     # 1.16: duplicates + AI images
         if col not in pc:
-            conn.execute(f"ALTER TABLE photos ADD COLUMN {col} {decl}")
+            _add_column(conn, f"ALTER TABLE photos ADD COLUMN {col} {decl}")
     conn.execute("""CREATE TABLE IF NOT EXISTS dup_ignore(a INTEGER, b INTEGER, PRIMARY KEY(a, b))""")
     # 1.16.1: a small grey copy of pictures that look alike, for the close duplicate check
     conn.execute("""CREATE TABLE IF NOT EXISTS dup_fine(photo_id INTEGER PRIMARY KEY, size INTEGER,
@@ -382,29 +392,29 @@ def connect(path=None):
                     same INTEGER, PRIMARY KEY(a, b))""")      # close checks already done
     conn.commit()
     if "created" not in {r[1] for r in conn.execute("PRAGMA table_info(photos)")}:   # 1.15: sort by date created
-        conn.execute("ALTER TABLE photos ADD COLUMN created REAL")
+        _add_column(conn, "ALTER TABLE photos ADD COLUMN created REAL")
         conn.commit()
     if "is_video" not in {r[1] for r in conn.execute("PRAGMA table_info(photos)")}:   # 1.10: videos
-        conn.execute("ALTER TABLE photos ADD COLUMN is_video INTEGER DEFAULT 0")
-        conn.execute("ALTER TABLE photos ADD COLUMN cover_t REAL")
+        _add_column(conn, "ALTER TABLE photos ADD COLUMN is_video INTEGER DEFAULT 0")
+        _add_column(conn, "ALTER TABLE photos ADD COLUMN cover_t REAL")
         conn.commit()
     if "frame_t" not in {r[1] for r in conn.execute("PRAGMA table_info(faces)")}:
-        conn.execute("ALTER TABLE faces ADD COLUMN frame_t REAL")
+        _add_column(conn, "ALTER TABLE faces ADD COLUMN frame_t REAL")
         conn.commit()
     if "manual" not in {r[1] for r in conn.execute("PRAGMA table_info(faces)")}:   # 1.13: Tag Person
-        conn.execute("ALTER TABLE faces ADD COLUMN manual INTEGER DEFAULT 0")
+        _add_column(conn, "ALTER TABLE faces ADD COLUMN manual INTEGER DEFAULT 0")
         conn.commit()
     if "later_cluster" not in {r[1] for r in conn.execute("PRAGMA table_info(faces)")}:   # 1.14: groups in Sort Later
-        conn.execute("ALTER TABLE faces ADD COLUMN later_cluster INTEGER")
+        _add_column(conn, "ALTER TABLE faces ADD COLUMN later_cluster INTEGER")
         conn.commit()
     pc2 = {r[1] for r in conn.execute("PRAGMA table_info(photos)")}
     for col, decl in (("bright", "REAL"), ("dark_seen", "INTEGER DEFAULT 0"), ("lat", "REAL"), ("lon", "REAL")):
         if col not in pc2:     # 1.36: brightness (second look at dark photos), GPS position (same shoot)
-            conn.execute(f"ALTER TABLE photos ADD COLUMN {col} {decl}")
+            _add_column(conn, f"ALTER TABLE photos ADD COLUMN {col} {decl}")
     if "is_other" not in pc2:           # 1.37: other files (documents, audio, archives...) - recorded, never opened
-        conn.execute("ALTER TABLE photos ADD COLUMN is_other INTEGER DEFAULT 0")
+        _add_column(conn, "ALTER TABLE photos ADD COLUMN is_other INTEGER DEFAULT 0")
     if "body_done" not in pc2:          # 1.36: same-shoot suggestions (people found by their whole figure)
-        conn.execute("ALTER TABLE photos ADD COLUMN body_done INTEGER DEFAULT 0")
+        _add_column(conn, "ALTER TABLE photos ADD COLUMN body_done INTEGER DEFAULT 0")
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS bodies(id INTEGER PRIMARY KEY, photo_id INTEGER, x REAL, y REAL, w REAL, h REAL,
             score REAL, desc BLOB, face_id INTEGER, person_id INTEGER, thumb BLOB);
@@ -428,16 +438,16 @@ def connect(path=None):
         END;""")
     fc = {r[1] for r in conn.execute("PRAGMA table_info(faces)")}
     if "clarity" not in fc:            # 1.36: how clearly each face can be recognised (0-1)
-        conn.execute("ALTER TABLE faces ADD COLUMN clarity REAL")
+        _add_column(conn, "ALTER TABLE faces ADD COLUMN clarity REAL")
         conn.commit()
     if "outside" not in {r[1] for r in conn.execute("PRAGMA table_info(photos)")}:
         # 1.42: 1 = the scan found this file somewhere new - added or moved outside FaceSort, not
         # put there by Sort into folders (photos already in the library count as known)
-        conn.execute("ALTER TABLE photos ADD COLUMN outside INTEGER DEFAULT 0")
+        _add_column(conn, "ALTER TABLE photos ADD COLUMN outside INTEGER DEFAULT 0")
         conn.commit()
     if "male" not in fc:               # 1.42: looks male (0-1) and head angle in degrees (face_attrs.py)
         for col in ("male", "yaw", "pitch", "roll"):
-            conn.execute(f"ALTER TABLE faces ADD COLUMN {col} REAL")
+            _add_column(conn, f"ALTER TABLE faces ADD COLUMN {col} REAL")
         conn.commit()
     if "sex_guess" not in fc:          # 1.43: your corrections and what FaceSort learned from them
         # male_set: you said (1 looks male, 0 looks female) · male_carried: from a look-alike you
@@ -445,24 +455,24 @@ def connect(path=None):
         # sex_guess: the decision the Men / Unsure groups use (1 male, 0 female, 2 unsure)
         for col, typ in (("male_set", "INTEGER"), ("male_carried", "INTEGER"), ("male_learned", "REAL"),
                          ("sex_guess", "INTEGER")):
-            conn.execute(f"ALTER TABLE faces ADD COLUMN {col} {typ}")
+            _add_column(conn, f"ALTER TABLE faces ADD COLUMN {col} {typ}")
         conn.commit()
     if "tag" not in {r[1] for r in conn.execute("PRAGMA table_info(albums)")}:
-        conn.execute("ALTER TABLE albums ADD COLUMN tag INTEGER DEFAULT 0")   # 1.44: used as a tag (written as a keyword)
+        _add_column(conn, "ALTER TABLE albums ADD COLUMN tag INTEGER DEFAULT 0")   # 1.44: used as a tag (written as a keyword)
         conn.commit()
     if "sex" not in {r[1] for r in conn.execute("PRAGMA table_info(persons)")}:
-        conn.execute("ALTER TABLE persons ADD COLUMN sex INTEGER")      # 1.43: Man (1) / Woman (0), if you set it
+        _add_column(conn, "ALTER TABLE persons ADD COLUMN sex INTEGER")      # 1.43: Man (1) / Woman (0), if you set it
         conn.commit()
     if "pose_done" not in {r[1] for r in conn.execute("PRAGMA table_info(photos)")}:
-        conn.execute("ALTER TABLE photos ADD COLUMN pose_done INTEGER DEFAULT 0")     # 1.46: poses read
+        _add_column(conn, "ALTER TABLE photos ADD COLUMN pose_done INTEGER DEFAULT 0")     # 1.46: poses read
         conn.commit()
     if "sugg_conf" not in fc:          # 1.46: how strongly a suggestion matches (50-100, the rules use it)
-        conn.execute("ALTER TABLE faces ADD COLUMN sugg_conf REAL")
+        _add_column(conn, "ALTER TABLE faces ADD COLUMN sugg_conf REAL")
         conn.commit()
     dc = {r[1] for r in conn.execute("PRAGMA table_info(drop_rules)")}
     if "album" not in dc:              # 1.46: the import panel - a sub-folder as an album, or left out
-        conn.execute("ALTER TABLE drop_rules ADD COLUMN album TEXT")
-        conn.execute("ALTER TABLE drop_rules ADD COLUMN skip INTEGER DEFAULT 0")
+        _add_column(conn, "ALTER TABLE drop_rules ADD COLUMN album TEXT")
+        _add_column(conn, "ALTER TABLE drop_rules ADD COLUMN skip INTEGER DEFAULT 0")
         conn.commit()
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS rules(            -- 1.46: rules for incoming photos (rules.py)
@@ -2474,9 +2484,9 @@ def _vault_columns(conn):
                       ("vault_path", "TEXT"),                   # 1.21: Vaults
                       ("dup_skip", "INTEGER DEFAULT 0")):       # 1.22: left out of duplicate checks
         if col not in ccols:
-            conn.execute(f"ALTER TABLE categories ADD COLUMN {col} {decl}")
+            _add_column(conn, f"ALTER TABLE categories ADD COLUMN {col} {decl}")
     if "dup_skip" not in {r[1] for r in conn.execute("PRAGMA table_info(photos)")}:
-        conn.execute("ALTER TABLE photos ADD COLUMN dup_skip INTEGER DEFAULT 0")
+        _add_column(conn, "ALTER TABLE photos ADD COLUMN dup_skip INTEGER DEFAULT 0")
     conn.commit()
 
 

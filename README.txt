@@ -153,6 +153,10 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.52.1
+- Fixed: when two parts of FaceSort opened an older library at the same moment, one could fail
+  while bringing it up to date ("duplicate column name"), and a background job then stopped.
+
 1.52.0
 - Library backups. Settings has a new Backups tab:
   - A backup is everything FaceSort knows - faces, names, groups, tags, albums, rules, never-track

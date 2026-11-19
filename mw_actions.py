@@ -581,7 +581,7 @@ class ActionsMixin:
         w = Worker(lambda conn, progress=None, cancelled=None: tuple(conn.execute(DUP_KEY_SQL).fetchone()))
 
         def done(vals, stamp=stamp):
-            if getattr(self, "_closing", False) or stamp[0] != self.conn_id():
+            if vals is None or getattr(self, "_closing", False) or stamp[0] != self.conn_id():
                 return
             key = (self.conn_id(),) + tuple(vals)
             self._dup_key_memo = (stamp, time.monotonic(), key)
