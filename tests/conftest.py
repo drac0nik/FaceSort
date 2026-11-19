@@ -23,6 +23,7 @@ os.environ["FACESORT_NO_PROMPT"] = "1"
 os.environ["FACESORT_NO_UPDATE_CHECK"] = "1"
 os.environ["FACESORT_NO_STALLWATCH"] = "1"
 os.environ.setdefault("FACESORT_NO_HELPERS", "1")      # (tests/test_helpers.py turns them on)
+os.environ.setdefault("FACESORT_NO_AUTO_BACKUP", "1")    # (1.52: no backup process when a test window closes)
 os.environ.setdefault("FACESORT_SYNC_LISTS", "1")       # (1.50: side lists redrawn at once; test_lists_async.py reads ahead)
 
 from PIL import Image  # noqa: E402

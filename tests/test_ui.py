@@ -170,6 +170,27 @@ def test_settings_dialog_opens_and_closes(window, qapp, monkeypatch):
     pump(qapp, 0.3)
 
 
+def test_backups_tab(window, qapp, tmp_path, monkeypatch):
+    """1.52: Settings has a Backups tab; Back up now makes one in the background; its choices are saved."""
+    from dialogs import SettingsDialog
+    w = window
+    w.settings["backup_folder"] = str(tmp_path / "bk")
+    d = SettingsDialog(w, w.settings)
+    assert d.tabs.tabText(d.tabs.count() - 1) == "Backups"
+    page = d.backups_page
+    page.freq.setCurrentIndex(page.freq.findData("weekly"))
+    page.keep.setValue(4)
+    page.back_up_now()
+    end = time.time() + 30
+    while page.worker.isRunning() or not page.b_now.isEnabled():
+        pump(qapp, 0.05)
+        assert time.time() < end
+    assert page.list.count() == 1 and page.list.item(0).data(0x0100)
+    s = d.result_settings()
+    assert s["backup_frequency"] == "weekly" and s["backup_keep"] == 4 and s["backup_folder"] == str(tmp_path / "bk")
+    d.reject()
+
+
 def test_same_shoot_list(window, qapp):
     """Suggestions show under Smart Groups > Same shoot; C confirms (the photo gets tagged)."""
     import bodies

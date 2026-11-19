@@ -153,6 +153,22 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.52.0
+- Library backups. Settings has a new Backups tab:
+  - A backup is everything FaceSort knows - faces, names, groups, tags, albums, rules, never-track
+    list, history and settings - in one compressed file (your photos themselves aren't in it; they
+    belong in your normal file backup). Backups go to Documents\FaceSort backups unless you pick
+    another folder (another drive or a synced folder is best).
+  - How often: every time FaceSort closes (the default for now), once a day, once a week, or only
+    when you click Back up now. A backup on close runs by itself after the window has gone, so closing
+    isn't slower, and none is made when nothing changed. The newest 10 are kept (you can change it).
+  - Each backup is checked: every file in it has a checksum, and a damaged one is refused.
+  - Restore…: pick a backup from the list (or Restore from a file…). FaceSort restarts and puts it
+    in place before opening; your library as it was is kept first in "Before restore <date>" in
+    FaceSort's data folder, so a restore can't lose anything. If the backup's photo folders aren't
+    where they were (a new PC, a new drive letter), FaceSort asks where they are now and fixes every
+    path - no rescanning.
+
 1.51.3
 - Quicker (from the speed report):
   - Picking several date / location buckets in Smart Groups worked them all out again for each

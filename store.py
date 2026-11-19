@@ -24,6 +24,9 @@ def data_dir():
 
 # ----------------------------------------------------------------- settings
 DEFAULT_SETTINGS = {
+    "backup_folder": "",          # (1.52) empty = Documents\\FaceSort backups
+    "backup_frequency": "close",  # close / daily / weekly / manual
+    "backup_keep": 10,
     "folders": [],
     "files": [],
     "scan_on_start": False,     # look for new photos every time FaceSort opens                # single photos/videos dropped in from outside your folders

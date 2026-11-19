@@ -855,6 +855,11 @@ class JobsMixin:
                      ai_folder=dlg.ai_folder(),
                      include_dropped=dlg.include_dropped(), convert_webp=dlg.convert())
 
+    def restart_for_restore(self):
+        """Settings > Backups > Restore: close; main() opens FaceSort again, which restores first."""
+        self._restart_after_close = True
+        QTimer.singleShot(0, self.close)
+
     def closeEvent(self, e):
         self._closing = True              # (a timer or job signal still on its way must not start anything)
         getattr(self, "stallwatch", None) and self.stallwatch.stop()
@@ -895,6 +900,14 @@ class JobsMixin:
                 log(f"saving known people on close: {ex}")
         self.conn.close()
         e.accept()
+        try:
+            import backup
+            if backup.pending() is None and backup.due(self.settings) \
+                    and not os.environ.get("FACESORT_NO_AUTO_BACKUP"):
+                backup.run_detached_backup()      # its own process: closing isn't slowed down
+                log("backup on close started")
+        except Exception as ex:
+            log(f"backup on close: {ex}")
         if still:
             # a background job that wouldn't stop in time (deep inside a long video, say): Qt aborts
             # the whole program if its thread is destroyed while running ("Fatal Python error:

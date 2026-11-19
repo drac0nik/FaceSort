@@ -14,7 +14,7 @@ import store
 from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QFont, QIcon, QIntValidator, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QFrame, QHBoxLayout, QHeaderView,
+    QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout, QHeaderView,
     QLabel, QLineEdit, QListView, QListWidget, QMainWindow, QMenu, QMessageBox, QProgressBar, QPushButton,
     QScrollArea, QSizePolicy, QSlider, QSplitter, QStackedWidget, QStyle, QTabBar, QToolBar, QToolButton,
     QTreeWidget, QVBoxLayout, QWidget, QWidgetAction)
@@ -872,10 +872,47 @@ def _quiet_native_dialogs():
             setattr(QFileDialog, name, q)
 
 
+def finish_restore():
+    """A restore asked for in Settings > Backups happens here, before the library is opened. Then, if the
+    backup's photo folders aren't where they were (a new PC, another drive letter), ask where they are now."""
+    import backup
+    path = backup.pending()
+    if not path:
+        return
+    try:
+        backup.restore(path)
+        log(f"restored backup {path}")
+    except Exception as e:
+        log(f"restore failed: {e}")
+        QMessageBox.warning(None, "FaceSort", f"The backup couldn't be restored:\n{e}\n\nYour library wasn't changed.")
+        return
+    settings = store.load_settings()
+    missing = backup.missing_roots(settings)
+    if missing:
+        conn = store.connect()
+        try:
+            for old in missing:
+                if QMessageBox.question(None, "Restored backup - photo folder not found",
+                                        f"The restored library had photos in\n\n{old}\n\nwhich isn't on this PC. "
+                                        "Point FaceSort to where that folder is now?") != QMessageBox.Yes:
+                    continue
+                new = QFileDialog.getExistingDirectory(None, f"Where is \"{os.path.basename(old) or old}\" now?")
+                if new:
+                    backup.remap(conn, settings, old, os.path.normpath(new))
+            conn.commit()
+            store.save_settings(settings)
+        finally:
+            conn.close()
+    QMessageBox.information(None, "FaceSort", "The backup has been restored.")
+
+
 def main():
     global _crash_file
     if len(sys.argv) >= 3 and sys.argv[1] == "--selftest-helpers":
         return selftest_helpers(sys.argv[2])
+    if len(sys.argv) >= 2 and sys.argv[1] == "--backup-now":
+        import backup
+        return backup.backup_now_main()
     sys.excepthook = excepthook
     try:
         import faulthandler
@@ -898,6 +935,7 @@ def main():
     icon_path = engine.resource_path("icon.png")
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))
+    finish_restore()
     try:
         engine.FaceEngine()  # fail early and clearly if the models are missing
     except Exception as e:
@@ -909,6 +947,12 @@ def main():
     import helpers
     if helpers.has_pool():
         helpers.pool().shutdown(3.0)      # the helper processes end with FaceSort
+    if getattr(win, "_restart_after_close", False):
+        try:
+            import backup
+            backup.relaunch()                  # the new FaceSort restores the backup before opening the library
+        except Exception as e:
+            log(f"reopening after restore: {e}")
     return code
 
 
