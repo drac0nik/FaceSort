@@ -55,6 +55,26 @@ def folder(settings):
     return (settings or {}).get("backup_folder") or default_folder()
 
 
+CHUNK = 4 << 20
+
+
+def _how(path):
+    """(1.55.2) How to store a file in the zip: fast compression when it helps, none when it
+    doesn't (an encrypted library, or face pictures and fingerprints that hardly shrink) -
+    level 6 on a multi-gigabyte library took ages for a few percent."""
+    import zlib
+    try:
+        with open(path, "rb") as f:
+            sample = f.read(8 << 20)
+    except OSError:
+        return zipfile.ZIP_DEFLATED, 1
+    if len(sample) < 65536:
+        return zipfile.ZIP_DEFLATED, 6
+    if len(zlib.compress(sample, 1)) > len(sample) * 0.85:
+        return zipfile.ZIP_STORED, None
+    return zipfile.ZIP_DEFLATED, 1
+
+
 def _sha256(path):
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -77,10 +97,12 @@ def _snapshot(src, dst):
             os.replace(dst + "-wal", dst + ".wal-part")      # (kept with it; SQLite reads it back on open)
             os.replace(dst + ".wal-part", dst + "-wal")
         return
-    a = store.open_db(src, timeout=60)       # (only read: SQLite's backup copies page by page)
+    a = store.open_db(src, timeout=60)       # (only read)
     b = store.open_db(dst)                   # (an encrypted library's backup stays encrypted)
     try:
-        a.backup(b, pages=4096)
+        # (1.55.2) in ONE step: copied a bit at a time, SQLite starts the copy over each time FaceSort
+        # writes to the library meanwhile - on a big, busy library it could start over for ever
+        a.backup(b, pages=-1)
     finally:
         b.close()
         a.close()
@@ -180,14 +202,30 @@ def make(settings=None, dest=None, progress=lambda d, t, m: None, cancelled=lamb
                 "files": {}}
         total = sum(os.path.getsize(p) for p, _n in items) or 1
         done = 0
-        with zipfile.ZipFile(part, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6, allowZip64=True) as z:
+        with zipfile.ZipFile(part, "w", allowZip64=True) as z:
             for p, name in items:
                 if cancelled():
                     raise RuntimeError("cancelled")
-                progress(done, total, f"Compressing {name}…")
-                info["files"][name] = {"size": os.path.getsize(p), "sha256": _sha256(p)}
-                z.write(p, name)
-                done += os.path.getsize(p)
+                size = os.path.getsize(p)
+                method, level = _how(p)
+                zi = zipfile.ZipInfo(name, time.localtime(os.path.getmtime(p))[:6])
+                zi.compress_type = method
+                if level is not None:
+                    zi._compresslevel = level
+                h = hashlib.sha256()
+                # one pass: read, check-summed, compressed, written - with progress and Stop
+                with open(p, "rb") as f, z.open(zi, "w", force_zip64=size > 2 ** 31) as out:
+                    while True:
+                        if cancelled():
+                            raise RuntimeError("cancelled")
+                        chunk = f.read(CHUNK)
+                        if not chunk:
+                            break
+                        h.update(chunk)
+                        out.write(chunk)
+                        done += len(chunk)
+                        progress(done, total, f"Backing up {name}…  {done / 1e6:,.0f} of {total / 1e6:,.0f} MB")
+                info["files"][name] = {"size": size, "sha256": h.hexdigest()}
             z.writestr("manifest.json", json.dumps(info, indent=1))
         os.replace(part, final)
         st = state(data)
@@ -412,6 +450,20 @@ def _spawn(args):
                      close_fds=True, env=env, **kw)
 
 
+def _background_priority():
+    """The backup on close runs gently: low CPU and disk priority (Windows)."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        k = ctypes.windll.kernel32
+        k.GetCurrentProcess.restype = ctypes.c_void_p
+        k.SetPriorityClass.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        k.SetPriorityClass(k.GetCurrentProcess(), 0x00100000)    # PROCESS_MODE_BACKGROUND_BEGIN (low disk + CPU)
+    except Exception:
+        pass
+
+
 def backup_now_main():
     """`FaceSort.exe --backup-now`: make a backup (no window) and end."""
     try:
@@ -419,6 +471,7 @@ def backup_now_main():
     except Exception:
         log = print
     try:
+        _background_priority()
         settings = store.load_settings()
         argv = sys.argv
         for flag, key, conv in (("--folder", "backup_folder", str), ("--keep", "backup_keep", int)):

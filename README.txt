@@ -153,6 +153,15 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.55.2
+- Backups of a big library are much quicker and lighter:
+  - The library is copied in one go. Before, SQLite started the copy over every time FaceSort wrote
+    to the library meanwhile - on a big, busy library it could keep starting over.
+  - Fast compression, or none when it wouldn't help (face pictures, fingerprints and encrypted
+    libraries hardly shrink - the old, slow compression spent ages for a few percent).
+  - Read, check-summed and written in one pass, with progress in MB and a working Stop.
+  - The backup on close runs at low CPU and disk priority, so it doesn't slow the PC down.
+
 1.55.1
 - The release build now checks that encryption works in the packaged app before it ships.
 
