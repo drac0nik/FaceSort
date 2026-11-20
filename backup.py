@@ -58,6 +58,36 @@ def folder(settings):
 CHUNK = 4 << 20
 
 
+def _lock_alive(lock):
+    """(1.55.3) Is the backup that left this lock file still running? (One that was cut off - FaceSort
+    closed in the middle - left it behind, and every backup for the next hour said "another backup is
+    being made right now".)"""
+    try:
+        pid = int(open(lock).read().strip() or 0)
+    except (OSError, ValueError):
+        return False
+    if not pid or pid == os.getpid():
+        return False
+    if sys.platform == "win32":
+        import ctypes
+        k = ctypes.windll.kernel32
+        k.OpenProcess.restype = ctypes.c_void_p
+        h = k.OpenProcess(0x1000, False, pid)          # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return False
+        code = ctypes.c_ulong()
+        k.GetExitCodeProcess.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+        k.CloseHandle.argtypes = [ctypes.c_void_p]
+        alive = k.GetExitCodeProcess(h, ctypes.byref(code)) and code.value == 259     # STILL_ACTIVE
+        k.CloseHandle(h)
+        return bool(alive)
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
 def _how(path):
     """(1.55.2) How to store a file in the zip: fast compression when it helps, none when it
     doesn't (an encrypted library, or face pictures and fingerprints that hardly shrink) -
@@ -164,9 +194,10 @@ def make(settings=None, dest=None, progress=lambda d, t, m: None, cancelled=lamb
     os.makedirs(dest, exist_ok=True)
     lock = os.path.join(dest, LOCK)
     try:
-        if os.path.exists(lock) and time.time() - os.path.getmtime(lock) < 3600:
+        if os.path.exists(lock) and time.time() - os.path.getmtime(lock) < 3600 and _lock_alive(lock):
             raise RuntimeError("another backup is being made right now")
-        open(lock, "w").close()
+        with open(lock, "w") as f:
+            f.write(str(os.getpid()))
     except OSError:
         pass
     stamp = time.strftime("%Y-%m-%d %H%M%S")

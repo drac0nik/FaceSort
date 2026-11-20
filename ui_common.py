@@ -29,7 +29,7 @@ try:                                     # video playback (Qt's own player, FFmp
 except Exception:
     MEDIA_OK = False
 SPEEDS = (0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 4.0)
-APP_VERSION = "1.55.2"
+APP_VERSION = "1.55.3"
 IDLE_REDRAW = 1.0       # seconds without a key / click before the sidebar and lists are fully redrawn when they
                         # can't be read ahead (1.45.3: 2.5; 1.50.3: 1.0)
 APPLY_QUIET = 0.35      # (1.50.3) numbers read ahead are swapped into the lists at a pause this long
@@ -484,6 +484,15 @@ def round_pixmap(pm, size, radius=None):
 
 
 # =========================================================================== background work
+def _fit(done, total):
+    """(1.55.3) A Qt signal carries 32-bit numbers: byte counts over 2 GB (a big library's backup)
+    raised OverflowError. Big counts are sent as thousandths instead."""
+    done, total = int(done or 0), int(total or 0)
+    if total > 2_000_000_000 or done > 2_000_000_000:
+        return (min(1000, done * 1000 // total) if total > 0 else 0), 1000
+    return done, total
+
+
 class Worker(QThread):
     """Runs a job on a background thread. Results are read only after the thread has
     completely finished (QThread.finished), so the thread object is never destroyed
@@ -526,7 +535,7 @@ class Worker(QThread):
         now = time.monotonic()
         if now - self._last > 0.06 or done == total:
             self._last = now
-            self.progress.emit(int(done), int(total), str(msg))
+            self.progress.emit(*_fit(done, total), str(msg))
 
     def run(self):
         conn = None
@@ -608,9 +617,9 @@ class ProcessWorker(QObject):
             if self.shards:
                 d = sum(v[0] for v in self.prog.values())
                 t = sum(v[1] for v in self.prog.values())
-                self.progress.emit(d, t, data[2])
+                self.progress.emit(*_fit(d, t), data[2])
             else:
-                self.progress.emit(*data)
+                self.progress.emit(*_fit(data[0], data[1]), data[2])
             return
         if kind == "cancelled":
             self._cancelled = True

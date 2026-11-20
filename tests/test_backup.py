@@ -168,3 +168,23 @@ def test_restore_at_start_asks_for_moved_folder(library, tmp_path, monkeypatch, 
     assert store.load_settings()["folders"][0] == store.norm_path(new)
     library.conn = store.connect()
     assert all(os.path.exists(r[0]) for r in library.conn.execute("SELECT path FROM photos"))
+
+
+def test_left_over_lock_and_big_progress(library, tmp_path, qapp):
+    """1.55.3: a backup cut off in the middle left its lock (every backup for an hour refused); byte
+    counts over 2 GB overflowed the progress signal."""
+    import backup
+    s = _settings(library, tmp_path)
+    os.makedirs(s["backup_folder"])
+    with open(os.path.join(s["backup_folder"], backup.LOCK), "w") as f:
+        f.write("999999")                                # a process that's gone
+    assert backup.make(s)
+    from ui_common import Worker
+    got = []
+    w = Worker(lambda conn, progress=None, cancelled=None: progress(3_000_000_000, 6_000_000_000, "big"))
+    w.progress.connect(lambda d, t, m: got.append((d, t)))
+    w.start()
+    w.wait(10000)
+    from conftest import pump
+    pump(qapp, 0.3)
+    assert got == [(500, 1000)] and not w.error

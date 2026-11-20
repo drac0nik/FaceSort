@@ -153,6 +153,14 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.55.3
+- Fixed for real: Back up now on a library over 2 GB still stopped with "OverflowError" - the
+  background job sent its progress in bytes, and Qt's signals only carry numbers up to about
+  2 billion. Big counts are now sent as thousandths (any job, not only backups).
+- Fixed: a backup cut off in the middle (FaceSort closed while it ran) left its lock behind, and
+  every backup for the next hour refused with "another backup is being made right now". FaceSort
+  now checks whether that backup is really still running.
+
 1.55.2
 - Backups of a big library are much quicker and lighter:
   - The library is copied in one go. Before, SQLite started the copy over every time FaceSort wrote
