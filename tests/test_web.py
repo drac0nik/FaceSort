@@ -121,20 +121,20 @@ def test_gallery_watcher_downloads_whats_new(library, qapp, site, monkeypatch):
     wid = watcher.save_watch(w.conn, {"url": base + "/gallery", "name": "Test", "mode": "gallery",
                                       "people": ["Alice"], "category": None, "later": 0, "ask": 0})
     ww = w.open_gallery_watcher()
-    ww.check(None)
-    _wait(qapp, lambda: ww.checker is None)
+    ww.panel.check(None)
+    _wait(qapp, lambda: ww.panel.checker is None)
     assert len(got) == 1 and len(got[0][0]) == 4 and got[0][1]["people"] == ["Alice"]
     assert all(os.path.exists(p) and p.startswith(watcher.base_folder(w.settings)) for p in got[0][0])
     first = watcher.get_watch(w.conn, wid)
     assert first["last_new"] == 4 and first["last_check"]
     # two more pictures on the site: only those come next time
     state["n"] = 6
-    ww.check(None)
-    _wait(qapp, lambda: ww.checker is None)
+    ww.panel.check(None)
+    _wait(qapp, lambda: ww.panel.checker is None)
     assert len(got) == 2 and len(got[1][0]) == 2
     assert {os.path.basename(p) for p in got[1][0]} == {"big4.jpg", "big5.jpg"}
-    ww.check(None)
-    _wait(qapp, lambda: ww.checker is None)
+    ww.panel.check(None)
+    _wait(qapp, lambda: ww.panel.checker is None)
     assert len(got) == 2 and "Nothing new" in watcher.get_watch(w.conn, wid)["last_msg"]
     # a site rule applies to its galleries without their own tagging
     watcher.save_site_rule(w.conn, {"host": "127.0.0.1", "mode": "all", "people": ["Bob"], "category": "Shoots",
@@ -176,7 +176,13 @@ def test_browser_saves_and_fills_logins(library, qapp, site, monkeypatch):
     assert "u=mj" in state["logins"][-1] and "p=pa55" in state["logins"][-1]
     _wait(qapp, lambda: offered, 10)
     assert offered[-1] == ("127.0.0.1", "mj", "pa55")
+    # 1.57.1: one window - the browser on the left, the watched galleries on the right
+    assert w.open_gallery_watcher() is b and b.panel.table is not None
+    assert b.windowTitle().startswith("Gallery Watcher") and w.a_browser.text() == "Gallery Watcher"
+    texts = [a.text() for a in b.findChildren(__import__("PySide6.QtWidgets", fromlist=["QToolBar"]).QToolBar)[0].actions()]
+    assert texts.index("Watch this page") < texts.index("🔑 Fill login") < texts.index("Logins…")
     b.close()
+    assert w.web_window is None
     w.close()
     pump(qapp, 0.3)
     import store
@@ -208,3 +214,44 @@ def test_watch_name_is_the_tag(library, qapp):
     d2 = watcher_ui.WatchDialog(W(), watcher.get_watch(library.conn, wid), parent=host)
     assert d2.fields.people.text() == "Kim"
     d2.reject()
+
+
+def test_site_read_modes_and_tags(library, tmp_path, monkeypatch):
+    """1.57.1: a site's own Max Image Saver reading (MM+, SuicideGirls sets, P+…) is under "Read:" for
+    that site, and is what its galleries use unless set otherwise; MM+'s credited names become keywords."""
+    import io
+    import misbridge
+    import watcher
+    import xmp
+    from PIL import Image
+    keys = [k for k, _l in watcher.modes_for("www.modelmayhem.com".removeprefix("www."))]
+    assert keys[0] == "mm" and "all" in keys and "gallery" in keys
+    assert [k for k, _l in watcher.modes_for("suicidegirls.com")][0] == "sg"
+    assert [k for k, _l in watcher.modes_for("example.com")] == ["all", "gallery"]
+    w = {"url": "https://www.modelmayhem.com/123456", "mode": None}
+    assert watcher.effective(library.conn, w)["mode"] == "mm"
+    assert watcher.js_mode("mm") == "mm" and watcher.js_mode("flickr") == "all"
+    buf = io.BytesIO()
+    Image.new("RGB", (20, 20), "red").save(buf, "JPEG")
+    monkeypatch.setattr(misbridge, "request", lambda *a, **k: (200, a[0], "image/jpeg", buf.getvalue()))
+    path, _d = misbridge.save_item({"url": "https://x.example/p.jpg", "filename": "Modelmayhem/Ann/p.jpg",
+                                    "tags": ["Ann Lee", "Bo Chen"], "datePrefix": False}, str(tmp_path))
+    doc = xmp.XmpDoc(xmp.read_xmp(path))
+    assert doc.get_bag(xmp.q("dc", "subject")) == ["Ann Lee", "Bo Chen"]
+
+
+def test_read_list_follows_the_address(library, qapp):
+    import watcher_ui
+
+    class W:
+        conn = library.conn
+        settings = library.settings
+    from PySide6.QtWidgets import QWidget
+    host = QWidget()
+    d = watcher_ui.WatchDialog(W(), parent=host, url="https://example.com/g")
+    items = [d.fields.mode.itemData(i) for i in range(d.fields.mode.count())]
+    assert items == [None, "all", "gallery"]
+    d.url.setText("https://www.modelmayhem.com/portfolio/123456")
+    items = [d.fields.mode.itemData(i) for i in range(d.fields.mode.count())]
+    assert items == [None, "mm", "all", "gallery"]
+    assert "MM+" in d.fields.mode.itemText(1)

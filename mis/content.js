@@ -1577,9 +1577,9 @@
   const postIdFrom = (h) => (String(h || '').match(/\/posts\/(?:[^/?#]*-)?(\d{4,})(?:[/?#]|$)/) || [])[1] || null;
 
   function patreonPostId(el) {
-    if (!el || !IS_PATREON) return null;
+    if (!IS_PATREON) return null;
     // 1) A post card in a feed: its own link to the post.
-    const card = el.closest && el.closest('[data-tag="post-card"]');
+    const card = el && el.closest && el.closest('[data-tag="post-card"]');
     if (card) {
       const a = card.querySelector('a[href*="/posts/"]');
       const id = a && postIdFrom(a.getAttribute('href'));
@@ -1589,7 +1589,7 @@
     const here = postIdFrom(location.pathname);
     if (here) return here;
     // 3) Nearest container that links to exactly one post.
-    let n = el.parentElement;
+    let n = el && el.parentElement;
     for (let d = 0; n && d < 14; d++, n = n.parentElement) {
       const ids = new Set([...n.querySelectorAll('a[href*="/posts/"]')].map((a) => postIdFrom(a.getAttribute('href'))).filter(Boolean));
       if (ids.size === 1) return [...ids][0];
@@ -1725,6 +1725,17 @@
     return { items, title };
   }
 
+  async function patreonStart(el) {
+    const { items, title } = await patreonGalleryItems(el);
+    bulk.mode = 'patreon';
+    bulk.kind = 'page';
+    bulk.items = items;
+    bulk.title = title;
+    bulk.missed = 0;
+    startBulk();
+    return items;
+  }
+
   btnP.addEventListener('click', async (e) => {
     e.preventDefault(); e.stopPropagation();
     if (busy || !target) return;
@@ -1734,13 +1745,7 @@
     clearTimeout(resetTimer);
     setState('busy', 'Reading post gallery…');
     try {
-      const { items, title } = await patreonGalleryItems(el);
-      bulk.mode = 'patreon';
-      bulk.kind = 'page';
-      bulk.items = items;
-      bulk.title = title;
-      bulk.missed = 0;
-      startBulk();
+      const items = await patreonStart(el);
       setState('done', `Downloading ${items.length} image${items.length === 1 ? '' : 's'}`);
     } catch (err) {
       setState('error', (err && err.message) || 'Couldn’t read this post');
@@ -1979,6 +1984,25 @@
     return { items: all, added };
   }
 
+  // MM+: the member's whole portfolio + their credited photos, tagged, into one folder.
+  async function mmPlusStart(id, onProgress) {
+    if (!id) throw new Error('Not a ModelMayhem member page');
+    const [port, credits, folder] = await Promise.all([
+      mmPortfolio(id).catch(() => ({ urls: [], pids: {} })), mmCredits(id), mmFolder(id)]);
+    const credOnly = credits.filter((c) => !port.urls.includes(c.url));
+    const list = [...port.urls.map((url) => ({ url, pid: port.pids[url] || null, own: true })), ...credOnly];
+    if (!list.length) throw new Error('No portfolio or credited photos found');
+    const items = mmItems(list, folder);
+    await mmApplyTags(items, id, onProgress);
+    bulk.mode = 'mm';
+    bulk.kind = 'page';
+    bulk.items = items;
+    bulk.title = folder;
+    bulk.missed = 0;
+    startBulk();
+    return { own: port.urls.length, credited: credOnly.length };
+  }
+
   btnMM.addEventListener('click', async (e) => {
     e.preventDefault(); e.stopPropagation();
     if (busy || !target) return;
@@ -1989,20 +2013,8 @@
     clearTimeout(resetTimer);
     setState('busy', 'Reading portfolio and credits…');
     try {
-      const [port, credits, folder] = await Promise.all([
-        mmPortfolio(id).catch(() => ({ urls: [], pids: {} })), mmCredits(id), mmFolder(id)]);
-      const credOnly = credits.filter((c) => !port.urls.includes(c.url));
-      const list = [...port.urls.map((url) => ({ url, pid: port.pids[url] || null, own: true })), ...credOnly];
-      if (!list.length) throw new Error('No portfolio or credited photos found');
-      const items = mmItems(list, folder);
-      await mmApplyTags(items, id, (n, total) => setState('busy', `Reading photo credits for tags… ${n} / ${total}`));
-      bulk.mode = 'mm';
-      bulk.kind = 'page';
-      bulk.items = items;
-      bulk.title = folder;
-      bulk.missed = 0;
-      startBulk();
-      setState('done', `Downloading ${port.urls.length} portfolio + ${credOnly.length} credited`);
+      const r = await mmPlusStart(id, (n, total) => setState('busy', `Reading photo credits for tags… ${n} / ${total}`));
+      setState('done', `Downloading ${r.own} portfolio + ${r.credited} credited`);
     } catch (err) {
       setState('error', (err && err.message) || 'Couldn’t read this profile');
     } finally {
@@ -3402,11 +3414,38 @@
   }
 
   // ── FaceSort: the gallery watcher drives the same listing as the ALL / GALLERY buttons ──
+  // FaceSort's gallery watcher: run a reading by name, as if its button were clicked.
+  // (1.57.1) "mm" = MM+, "patreon" = P+, "sg" = the set / every set on a model's page.
+  const fsRun = { busy: false, msg: '' };
+  async function fsSpecial(mode) {
+    if (bulk.phase !== 'idle' || fsRun.busy) return;
+    fsRun.busy = true;
+    fsRun.msg = '';
+    try {
+      if (mode === 'mm') {
+        if (!IS_MODELMAYHEM) throw new Error('Not a ModelMayhem page');
+        fsRun.msg = 'Reading portfolio and credits…';
+        await mmPlusStart(mmCurrentId(), (n, total) => { fsRun.msg = `Reading photo credits for tags… ${n} / ${total}`; });
+      } else {
+        fsRun.msg = 'Reading post gallery…';
+        await patreonStart(null);
+      }
+      fsRun.msg = '';
+    } catch (err) {
+      fsRun.msg = (err && err.message) || 'Couldn’t read this page';
+    } finally {
+      fsRun.busy = false;
+    }
+  }
   window.__fsMIS = {
-    run: (mode) => { onBulkClick(mode === 'gallery' ? 'gallery' : 'all'); return true; },
-    state: () => bulk.phase,
+    run: (mode) => {
+      if (mode === 'mm' || mode === 'patreon') { fsSpecial(mode); return true; }
+      onBulkClick(mode === 'gallery' ? 'gallery' : 'all');   // ("sg": ALL already reads the set / every set)
+      return true;
+    },
+    state: () => (fsRun.busy ? 'listing' : bulk.phase),
     stop: () => { bulk.abort = true; if (bulk.phase === 'running') cancelBulk(); return true; },
-    message: () => (dockChip && dockChip.textContent) || (chip && chip.textContent) || '',
+    message: () => fsRun.msg || (dockChip && dockChip.textContent) || (chip && chip.textContent) || '',
     flickr: () => IS_FLICKR,
   };
 })();

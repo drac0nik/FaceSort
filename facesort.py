@@ -185,8 +185,8 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
                             "Answer yes/no questions that sort the most faces per keypress")
         self.a_galleries = act("Check galleries", QStyle.SP_ArrowDown, self.check_galleries,
                                "Gallery watcher: download what's new in the galleries you watch (and set them up)")
-        self.a_browser = act("Browser", QStyle.SP_ComputerIcon, lambda: self.open_browser(),
-                             "FaceSort's web browser - stays signed in, with Max Image Saver built in")
+        self.a_browser = act("Gallery Watcher", QStyle.SP_ComputerIcon, lambda: self.open_gallery_watcher(),
+                             "The browser (stays signed in, Max Image Saver built in) and the galleries you watch")
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         tb.addWidget(spacer)

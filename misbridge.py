@@ -300,6 +300,15 @@ def save_item(item, base, referer=None):
     with open(path + ".part", "wb") as f:
         f.write(data)
     os.replace(path + ".part", path)
+    tags = [str(x).strip() for x in (item.get("tags") or []) if str(x).strip()]
+    if tags and ext == "jpg":
+        # (1.57.1) e.g. MM+'s credited names - written as the photo's keywords, like the extension does,
+        # so FaceSort reads them when the picture comes in
+        try:
+            import xmp
+            xmp.update_file(path, tags, [], keep_mtime=False)
+        except Exception:
+            pass
     return path, dated
 
 

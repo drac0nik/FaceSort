@@ -153,6 +153,28 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.57.1
+- The browser and the gallery watcher are now one window, "Gallery Watcher" (the toolbar button
+  that was "Browser"):
+  - Along the top: back / forward / reload, the web address, "Watch this page", "Fill login" and
+    "Logins".
+  - Left: the browser. A second tab, "Being checked", shows the gallery a check is reading (it has
+    a ● while a check runs).
+  - Right: your watched galleries - Add / Edit / Remove / Open, Check all now / Check selected /
+    Stop, how often to check, where downloads go, and Site settings… (was "Sites…"), with what each
+    check found underneath. Double-click a gallery to open it in the browser.
+  - Check galleries (beside Quick review) still checks them all and opens the same window.
+- "Read:" now lists the site's own Max Image Saver reading for sites that have one, and new galleries
+  on those sites use it unless you pick otherwise:
+  - ModelMayhem: the whole portfolio + credited photos (MM+) - now works in the gallery watcher too.
+  - SuicideGirls: the set, or every set on a model's page (Download all sets).
+  - Patreon: the post's whole gallery, full size (P+).
+  - Flickr, YouPic and Model Society: their own readings (largest size, date taken, whole gallery).
+  The list follows the address you type, and Site settings… shows the same choices for each site.
+- Fixed: the names MM+ reads from photo credits weren't written into the pictures FaceSort's browser
+  saved (Chrome's extension writes them as the photo's keywords). They are now, so the people are
+  tagged when the pictures come in.
+
 1.57.0
 - Suggested folders: in a person's gallery, the photos of theirs that aren't in one of their
   folders are grouped by the folder they're in on disk, and each of those is suggested as a folder

@@ -4,8 +4,8 @@ import time
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
                                QFileDialog, QFormLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
-                               QMainWindow, QMessageBox, QPlainTextEdit, QPushButton, QSplitter, QTableWidget,
-                               QTableWidgetItem, QVBoxLayout, QWidget)
+                               QMessageBox, QPlainTextEdit, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout,
+                               QWidget)
 
 import watcher
 
@@ -30,17 +30,14 @@ def _names(text):
 class RuleFields(QWidget):
     """How to read and how to tag - for one gallery (with "as the site says") or for a site."""
 
-    def __init__(self, win, values, inherit=False, parent=None):
+    def __init__(self, win, values, inherit=False, parent=None, host=""):
         super().__init__(parent)
         self.inherit = inherit
         f = QFormLayout(self)
         f.setContentsMargins(0, 0, 0, 0)
         self.mode = QComboBox()
-        if inherit:
-            self.mode.addItem("As set for the site", None)
-        for key, label in watcher.MODES:
-            self.mode.addItem(label, key)
-        self.mode.setCurrentIndex(max(0, self.mode.findData(values.get("mode"))))
+        self._host = None
+        self.set_host(host, values.get("mode"))
         f.addRow("Read:", self.mode)
         note = QLabel("Signed-in pages, Flickr, SuicideGirls, Patreon, ModelMayhem, YouPic… are read the way Max Image "
                       "Saver reads them (whole albums, full size, date taken).")
@@ -74,6 +71,23 @@ class RuleFields(QWidget):
             self.own.toggled.connect(self._own)
             self._own(self.own.isChecked())
 
+    def set_host(self, host, mode=Ellipsis):
+        """(1.57.1) The Read: list for this site - its own Max Image Saver way of reading first."""
+        host = (host or "").lower()
+        if host == self._host:
+            return
+        self._host = host
+        keep = self.mode.currentData() if mode is Ellipsis else mode
+        self.mode.clear()
+        if self.inherit:
+            self.mode.addItem("As set for the site", None)
+        for key, label in watcher.modes_for(host):
+            self.mode.addItem(label, key)
+        i = self.mode.findData(keep)
+        if i < 0 and not self.inherit:
+            i = self.mode.findData(watcher.site_default(host))
+        self.mode.setCurrentIndex(max(0, i))
+
     def _own(self, on):
         for w in (self.people, self.category, self.later, self.ask):
             w.setEnabled(on)
@@ -106,8 +120,9 @@ class WatchDialog(QDialog):
         self.enabled.setChecked(bool(self.w.get("enabled", 1)))
         f.addRow("", self.enabled)
         lay.addLayout(f)
-        self.fields = RuleFields(win, self.w, inherit=True)
+        self.fields = RuleFields(win, self.w, inherit=True, host=watcher.host_of(self.w.get("url") or ""))
         lay.addWidget(self.fields)
+        self.url.textChanged.connect(lambda u: self.fields.set_host(watcher.host_of(u.strip())))
         # (1.56.1) the name is who they're tagged as, unless you type other names under "Tag them as"
         self._synced = not self.fields.people.text().strip() or \
             self.fields.people.text().strip() == (self.w.get("name") or "").strip()
@@ -141,8 +156,9 @@ class WatchDialog(QDialog):
 def edit_watch(win, parent=None, w=None, url="", name=""):
     d = WatchDialog(win, w, parent, url, name)
     if d.exec() == QDialog.Accepted:
-        if getattr(win, "watcher_window", None) is not None:
-            win.watcher_window.fill()
+        ww = getattr(win, "web_window", None)
+        if ww is not None:
+            ww.panel.fill()
         return d.w["id"]
     return None
 
@@ -196,7 +212,7 @@ class SiteRulesDialog(QDialog):
         if not host:
             return
         self.title.setText(f"<b>{host}</b> - for every gallery there that doesn't have its own settings")
-        self.fields = RuleFields(self.win, watcher.site_rule(self.win.conn, host))
+        self.fields = RuleFields(self.win, watcher.site_rule(self.win.conn, host), host=host)
         self.box.addWidget(self.fields)
 
     def save(self):
@@ -293,31 +309,29 @@ class LoginsDialog(QDialog):
             self.fill()
 
 
-class WatcherWindow(QMainWindow):
-    """The watched galleries, checking them (the page being checked is shown), and their settings."""
+class WatcherPanel(QWidget):
+    """(1.57.1) The watched galleries, checking them, and their settings - the right side of the
+    Gallery Watcher window (the browser is on its left; the page being checked shows in its own tab)."""
 
-    def __init__(self, win):
-        super().__init__(None)
-        from PySide6.QtWebEngineWidgets import QWebEngineView
-        self.win = win
+    def __init__(self, win, view, host):
+        super().__init__(host)
+        self.win, self.view, self.host = win, view, host
         self.checker = None
-        self.setWindowTitle("Gallery watcher")
-        self.setWindowIcon(win.windowIcon())
-        self.resize(1300, 820)
-        split = QSplitter(Qt.Horizontal)
-        left = QWidget()
-        lay = QVBoxLayout(left)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(6, 0, 0, 0)
+        head = QLabel("<b>Watched galleries</b>")
+        lay.addWidget(head)
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["Gallery", "Site", "Last checked", "Last time"])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.doubleClicked.connect(lambda _i: self.edit())
+        self.table.doubleClicked.connect(lambda _i: self.open_in_browser())   # (double-click: open it on the left)
         lay.addWidget(self.table, 1)
         row = QHBoxLayout()
         for text, fn in (("Add…", self.add), ("Edit…", self.edit), ("Remove", self.remove),
-                         ("Open in browser", self.open_in_browser)):
+                         ("Open", self.open_in_browser)):
             b = QPushButton(text)
             b.clicked.connect(fn)
             row.addWidget(b)
@@ -357,8 +371,7 @@ class WatcherWindow(QMainWindow):
         f.addRow("Download into:", frow)
         lay.addLayout(f)
         row = QHBoxLayout()
-        for text, fn in (("Sites…", lambda: SiteRulesDialog(win, self).exec()),
-                         ("Logins…", lambda: LoginsDialog(win, self).exec())):
+        for text, fn in (("Site settings…", lambda: SiteRulesDialog(win, self).exec()),):
             b = QPushButton(text)
             b.clicked.connect(fn)
             row.addWidget(b)
@@ -369,12 +382,10 @@ class WatcherWindow(QMainWindow):
         self.log.setMaximumBlockCount(500)
         self.log.setPlaceholderText("What each check found shows here.")
         lay.addWidget(self.log, 1)
-        split.addWidget(left)
-        self.view = QWebEngineView()
-        split.addWidget(self.view)
-        split.setSizes([520, 780])
-        self.setCentralWidget(split)
         self.fill()
+
+    def statusBar(self):
+        return self.host.statusBar()
 
     def fill(self):
         ws = watcher.watches(self.win.conn)
@@ -413,7 +424,7 @@ class WatcherWindow(QMainWindow):
     def open_in_browser(self):
         ids = self._sel()
         if ids:
-            self.win.open_browser(watcher.get_watch(self.win.conn, ids[0])["url"])
+            self.host.browse(watcher.get_watch(self.win.conn, ids[0])["url"])
 
     def pick_folder(self):
         d = QFileDialog.getExistingDirectory(self, "Download galleries into…", self.folder.text())
@@ -435,6 +446,7 @@ class WatcherWindow(QMainWindow):
                                                              "FaceSort's browser.")
             return
         self.checker = watcher.Checker(self.win, self.view, ids)
+        self.host.checking(True)
         self.checker.status.connect(lambda s: self.statusBar().showMessage(s))
         self.checker.gallery_done.connect(self._gallery_done)
         self.checker.finished.connect(self._finished)
@@ -455,6 +467,7 @@ class WatcherWindow(QMainWindow):
 
     def _finished(self, total):
         self.checker = None
+        self.host.checking(False)
         self.check_b.setEnabled(True)
         self.check_sel_b.setEnabled(True)
         self.stop_b.setEnabled(False)
@@ -464,9 +477,7 @@ class WatcherWindow(QMainWindow):
         self.win.statusBar().showMessage("Gallery watcher: " + msg, 15000)
         self.fill()
 
-    def closeEvent(self, e):
+    def shutdown(self):
         if self.checker is not None:
             self.checker.stop()
         self.view.setPage(None)
-        self.win.watcher_window = None
-        super().closeEvent(e)

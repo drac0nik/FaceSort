@@ -23,7 +23,33 @@ CREATE TABLE IF NOT EXISTS site_rules(host TEXT PRIMARY KEY, mode TEXT, people T
 """
 MODES = [("all", "Pictures on the page (like the ALL button)"),
          ("gallery", "Each thumbnail's own page (like the GALLERY button)")]
+# (1.57.1) Max Image Saver's own ways of reading particular sites - listed under "Read:" for those sites.
+SITE_MODES = [("mm", "modelmayhem.com", "ModelMayhem: whole portfolio + credited photos (like MM+)"),
+              ("sg", "suicidegirls.com", "SuicideGirls: the set, or every set on a model's page (like Download all sets)"),
+              ("patreon", "patreon.com", "Patreon: the post's whole gallery, full size (like P+)"),
+              ("flickr", "flickr.com", "Flickr: the photostream or album, largest size, with date taken"),
+              ("youpic", "youpic.com", "YouPic: the photos, with date taken and name tags"),
+              ("ms", "modelsociety.com", "Model Society: the owner's whole gallery, every page")]
 SCROLLS = 25
+
+
+def _on(host, site):
+    host = (host or "").lower()
+    return host == site or host.endswith("." + site)
+
+
+def modes_for(host):
+    """The site's own ways of reading first (if any), then the two general ones."""
+    return [(k, label) for k, site, label in SITE_MODES if _on(host, site)] + MODES
+
+
+def site_default(host):
+    return next((k for k, site, _l in SITE_MODES if _on(host, site)), "all")
+
+
+def js_mode(mode):
+    """What __fsMIS.run is asked for: the site modes Max Image Saver doesn't run by name read like ALL."""
+    return mode if mode in ("all", "gallery", "mm", "patreon", "sg") else "all"
 LIST_TIMEOUT = 60 * 60
 
 
@@ -106,9 +132,10 @@ def remove_site_rule(conn, host):
 
 def effective(conn, w):
     """The gallery's own settings, else its site's, else the defaults."""
-    rule = site_rule(conn, host_of(w["url"]))
+    host = host_of(w["url"])
+    rule = site_rule(conn, host)
     out = {}
-    for k, dflt in (("mode", "all"), ("people", []), ("category", None), ("later", 0), ("ask", 0)):
+    for k, dflt in (("mode", site_default(host)), ("people", []), ("category", None), ("later", 0), ("ask", 0)):
         v = w.get(k)
         if v is None:
             v = rule.get(k)
@@ -294,7 +321,7 @@ class Checker(QObject):
             self._js("window.scrollTo(0, 0)")
             self.phase, self.t0, self.started = "listing", time.time(), False
             self.status.emit(f"Finding pictures on {self.w['name']}…")
-            self._js(f"window.__fsMIS ? __fsMIS.run({json.dumps(self.rule['mode'])}) : false")
+            self._js(f"window.__fsMIS ? __fsMIS.run({json.dumps(js_mode(self.rule['mode']))}) : false")
         else:
             self.phase = "scroll"
 

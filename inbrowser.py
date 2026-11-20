@@ -10,8 +10,8 @@ import os
 import re
 import threading
 
-from PySide6.QtCore import QFile, QIODevice, QObject, QUrl, Signal, Slot
-from PySide6.QtWidgets import QLineEdit, QMainWindow, QMessageBox, QToolBar, QVBoxLayout, QWidget
+from PySide6.QtCore import QFile, QIODevice, QObject, Qt, QUrl, Signal, Slot
+from PySide6.QtWidgets import QLineEdit, QMainWindow, QMessageBox, QToolBar
 
 import misbridge
 import store
@@ -236,16 +236,19 @@ class BrowserHost:
 
 
 class BrowserWindow(QMainWindow):
+    """(1.57.1) The Gallery Watcher window: the browser on the left (with a tab for the page being
+    checked), the watched galleries and their settings on the right."""
     saved = Signal(list)
 
     def __init__(self, win, url=None):
         super().__init__(None)
-        from PySide6.QtWebEngineWidgets import QWebEngineView
-        from icons import app_icon
+        from PySide6.QtWebEngineWidgets import QWebEngineView  # noqa: F401
+        from PySide6.QtWidgets import QSplitter, QTabWidget
+        import watcher_ui
         self.win = win
-        self.setWindowTitle("FaceSort browser")
+        self.setWindowTitle("Gallery Watcher")
         self.setWindowIcon(win.windowIcon())
-        self.resize(1280, 860)
+        self.resize(1500, 900)
         self.host = BrowserHost(win, self)
         self.view = QWebEngineView()
         self.page = make_page(self.host, self.view)
@@ -262,25 +265,38 @@ class BrowserWindow(QMainWindow):
         self.addr.setPlaceholderText("Web address")
         self.addr.returnPressed.connect(self.go)
         tb.addWidget(self.addr)
+        self.a_watch = tb.addAction("Watch this page", self.watch_page)
+        self.a_watch.setToolTip("Add this page to the watched galleries (checked for new pictures and videos)")
         self.a_fill = tb.addAction("🔑 Fill login", self.fill_login)
         self.a_fill.setToolTip("Fill in the login saved for this site (you press Sign in)")
-        self.a_watch = tb.addAction(app_icon("search"), "Watch this gallery…", self.watch_page)
-        self.a_watch.setToolTip("Check this page for new pictures and videos (Gallery watcher)")
-        tb.addAction("Gallery watcher…", lambda: self.win.open_gallery_watcher())
         tb.addAction("Logins…", self.manage_logins)
-        body = QWidget()
-        lay = QVBoxLayout(body)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.addWidget(self.view)
-        self.setCentralWidget(body)
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self.view, "Browse")
+        self.check_view = QWebEngineView()
+        self.tabs.addTab(self.check_view, "Being checked")
+        self.panel = watcher_ui.WatcherPanel(win, self.check_view, self)
+        split = QSplitter(Qt.Horizontal)
+        split.addWidget(self.tabs)
+        split.addWidget(self.panel)
+        split.setStretchFactor(0, 3)
+        split.setStretchFactor(1, 1)
+        split.setSizes([1040, 460])
+        self.setCentralWidget(split)
         self.view.urlChanged.connect(self._url_changed)
-        self.view.titleChanged.connect(lambda t: self.setWindowTitle(f"{t} - FaceSort browser" if t else "FaceSort browser"))
+        self.view.titleChanged.connect(lambda t: self.setWindowTitle(f"Gallery Watcher - {t}" if t else "Gallery Watcher"))
         self.view.loadFinished.connect(self._loaded)
         self.saved.connect(self._saved)
         self._batch, self._timer = [], None
         self.profile = profile()
         self.profile.downloadRequested.connect(self._download_requested)
         self.view.setUrl(QUrl(url or "https://www.google.com/"))
+
+    def browse(self, url):
+        self.tabs.setCurrentIndex(0)
+        self.view.setUrl(QUrl(url))
+
+    def checking(self, on):
+        self.tabs.setTabText(1, "Being checked  ●" if on else "Being checked")
 
     def go(self):
         t = self.addr.text().strip()
@@ -372,6 +388,9 @@ class BrowserWindow(QMainWindow):
         d.isFinishedChanged.connect(done)
 
     def closeEvent(self, e):
+        self.panel.shutdown()
+        if getattr(self.win, "web_window", None) is self:
+            self.win.web_window = None
         try:
             self.profile.downloadRequested.disconnect(self._download_requested)
         except (RuntimeError, TypeError):
