@@ -471,7 +471,8 @@ def backup_now_main():
     except Exception:
         log = print
     try:
-        _background_priority()
+        if "--backup-now" in sys.argv:            # (only its own process - never a window or the tests)
+            _background_priority()
         settings = store.load_settings()
         argv = sys.argv
         for flag, key, conv in (("--folder", "backup_folder", str), ("--keep", "backup_keep", int)):
