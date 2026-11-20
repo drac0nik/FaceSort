@@ -29,7 +29,7 @@ try:                                     # video playback (Qt's own player, FFmp
 except Exception:
     MEDIA_OK = False
 SPEEDS = (0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 4.0)
-APP_VERSION = "1.56.1"
+APP_VERSION = "1.57.0"
 IDLE_REDRAW = 1.0       # seconds without a key / click before the sidebar and lists are fully redrawn when they
                         # can't be read ahead (1.45.3: 2.5; 1.50.3: 1.0)
 APPLY_QUIET = 0.35      # (1.50.3) numbers read ahead are swapped into the lists at a pause this long
@@ -745,6 +745,9 @@ ROLE_AI = Qt.UserRole + 9
 
 
 ROLE_RES = Qt.UserRole + 10          # "1080p": the picture's smaller side, in pixels
+
+
+ROLE_HINT = Qt.UserRole + 12         # (1.57) in a suggested folder (heading or thumbnail)
 
 
 AI_COL = QColor(168, 85, 247)        # the "AI" badge

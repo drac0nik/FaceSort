@@ -720,6 +720,15 @@ class EngineMixin:
         m = QMenu(self)
         faces = [k for k in ids if k > 0]
         photos = [-k for k in ids if k < 0]
+        hint = self.hint_of_row(idx.row()) if idx.isValid() else None
+        if hint:                         # (1.57) in a suggested folder
+            n = len(ids)
+            m.addAction(f"Put {'this' if n == 1 else f'these {n:,}'} in “{hint[3]}” (make the folder)",
+                        lambda h=hint: (store.set_photo_folder(self.conn, self.sel_photos(),
+                                                               store.hint_folder(self.conn, h[2], h[3])),
+                                        self.conn.commit(), self.quick_change(regroup=False)))
+            m.addAction(f"Not part of “{hint[3]}”", lambda h=hint: self.hint_leave_out(self.selected_ids(), h[2]))
+            m.addSeparator()
         sp1 = self.sel_photos()
         if len(sp1) == 1:
             vrow = self.conn.execute("SELECT path, is_video FROM photos WHERE id=?", (sp1[0],)).fetchone()

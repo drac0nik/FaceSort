@@ -514,13 +514,13 @@ class GalleryMixin:
                 shown = shown or vis
             return shown
         for top in self.top_items():
-            # (1.50.5) the Smart Groups stay listed: there, what you type narrows the gallery to the
-            # photos whose file or folder name matches (see search_filter_rows)
-            walk(top, top.treeWidget() is self.tree2)
+            # (1.57) the side search only looks in the side lists (Smart Groups too); the gallery
+            # has its own filter box
+            walk(top, False)
 
     def search_changed(self, text):
         self.filter_tree(text)
-        if self.view and self.view[0] in self.search_filter_kinds():
+        if False:                                # (1.57: the side search no longer filters the gallery)
             if getattr(self, "_search_timer", None) is None:
                 from PySide6.QtCore import QTimer
                 self._search_timer = QTimer(self, singleShot=True, interval=250)
@@ -731,7 +731,10 @@ class GalleryMixin:
                                   + (f" · {nmarks} tattoo{'s' if nmarks != 1 else ''} marked" if nmarks else "")
                                   + (f" · {len(tsug)} tattoo match{'es' if len(tsug) != 1 else ''} to check" if tsug else "")
                                   + (" · saved under " + " › ".join(store.category_paths(c).get(pcat, []))
-                                     if pcat else ""))
+                                     if pcat else "")
+                                  + ((lambda n: f" · {n} folder{'s' if n != 1 else ''} suggested" if n else "")(
+                                      sum(1 for r in rows if r[0] == 0 and isinstance(r[2], tuple) and r[2]
+                                          and r[2][0] == "sugg"))))
             self.set_buttons([("Rename…", self.rename_person),
                               (("Confirm suggestion" if sugg == 1 else f"Confirm all {sugg} suggestions"), self.confirm_all) if sugg else None,
                               (f"Confirm {len(tsug)} tattoo match{'es' if len(tsug) != 1 else ''}",
@@ -1163,8 +1166,6 @@ class GalleryMixin:
         self.zoom_row.setVisible(kind != "errors")
         self._search_shown = None
         typed = []
-        if kind in self.search_filter_kinds() and self.search_words():
-            typed.append(self.search.text().strip())   # (1.50.5) the side search box, in Smart Groups
         gf = getattr(self, "gallery_filter", None)
         if gf is not None and gf.text().strip() and kind not in ("dupes", "same"):
             typed.append(gf.text().strip())             # (1.50.6) the gallery's own file name filter

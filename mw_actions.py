@@ -11,7 +11,7 @@ import jobfuncs
 import store
 from PySide6.QtCore import QPoint, Qt, QTimer
 from PySide6.QtGui import QResizeEvent
-from PySide6.QtWidgets import QAbstractItemView, QInputDialog, QMenu, QMessageBox, QStyle, QTreeWidgetItem
+from PySide6.QtWidgets import QAbstractItemView, QInputDialog, QLabel, QMenu, QMessageBox, QStyle, QTreeWidgetItem
 from icons import app_icon
 from ui_common import (
     bg_job, copies_job, dup_check_job, dup_sets_job, FOLDER_BAR_MIN, generic_names, IDLE_REDRAW, key_of, log, misplaced_job,
@@ -960,9 +960,33 @@ class ActionsMixin:
             self.folder_bar_area.hide()
             return
         skipped = store.dup_skipped_folders(self.conn)
+        hint_title = False
         for i, r in heads:
             label = r[1]
             target = r[2] if isinstance(r[2], tuple) else None
+            if target and target[0] == "sugg":       # (1.57) a suggested folder: orange, ✓ / ✕
+                from gallery import HintButton
+                if not hint_title:
+                    hint_title = True
+                    lab = QLabel("SUGGESTED FOLDERS")
+                    lab.setToolTip("From the folders on disk their photos are in - ✓ makes the folder, ✕ not a folder")
+                    lab.setWordWrap(True)
+                    lab.setMinimumWidth(10)
+                    lab.setStyleSheet("color: #b07000; font-size: 10px; font-weight: bold; padding: 8px 8px 2px;")
+                    self.folder_bar.addWidget(lab)
+                b = HintButton(label.replace("   ·   ", "  ·  "), lambda _=False, t=target, i=i: self.hint_yes(t, i),
+                               lambda _=False, t=target: self.hint_no(t),
+                               on_menu=lambda pos, t=target, i=i: self.folder_bar_menu(t, i, pos))
+                b.setIcon(std_icon(QStyle.SP_DirIcon))
+                b.setToolTip(f"Suggested from the folder they were in:\n{target[4]}\n\n✓ makes “{target[3]}” for "
+                             f"{self.person_name(target[2])} and puts these photos in it · ✕ not a folder\n"
+                             "Click to jump to them · right-click for more")
+                b.clicked.connect(lambda _=False, i=i: (self.grid.scrollTo(self.model.index(i),
+                                                                          QAbstractItemView.PositionAtTop),
+                                                        self.mark_folder_bar()))
+                self.folder_bar.addWidget(b)
+                self._bar_heads.append((i, b))
+                continue
             fid = target[1] if target and target[0] in ("pf", "cat") else None
             if target and target[0] == "pf":
                 drop = lambda ids, t=target: self.file_into(ids, t)
@@ -1017,10 +1041,63 @@ class ActionsMixin:
             out.append(r[0])
         return sorted({-k for k in out if k < 0} | set(self.photos_of_faces([k for k in out if k > 0])))
 
+    # ---------------------------------------------------------------- (1.57) suggested folders
+    def hint_yes(self, target, row, name=None):
+        """✓: the person's folder of that name (made if needed) gets the suggestion's photos."""
+        _k, _dkey, person, hname, _hdir = target
+        photos = self.section_photos(row)
+        if not photos:
+            return
+        cid = store.hint_folder(self.conn, person, name or hname)
+        store.set_photo_folder(self.conn, photos, cid)
+        self.conn.commit()
+        self.quick_change(regroup=False)
+        self.statusBar().showMessage(f"✓ {len(photos):,} photo{'s' if len(photos) != 1 else ''} → "
+                                     f"{self.person_name(person)} › {name or hname}", 8000)
+
+    def hint_no(self, target):
+        """✕: not a folder - not suggested for this person again."""
+        _k, dkey, person, hname, _hdir = target
+        self.conn.execute("INSERT OR IGNORE INTO folder_hint_no(person_id, dir) VALUES(?,?)", (person, dkey))
+        self.conn.commit()
+        self.quick_change(regroup=False)
+        self.statusBar().showMessage(f"“{hname}” won't be suggested for {self.person_name(person)} again.", 6000)
+
+    def hint_rename(self, target, row):
+        name, ok = QInputDialog.getText(self, "Make the folder", f"Folder name for {self.person_name(target[2])}:",
+                                        text=target[3])
+        if ok and name.strip():
+            self.hint_yes(target, row, " ".join(name.split()))
+
+    def hint_leave_out(self, ids, person):
+        """Photos taken out of a suggestion: they stay in "Not in a folder"."""
+        photos = sorted({-k for k in ids if k < 0} | set(self.photos_of_faces([k for k in ids if k > 0])))
+        self.conn.executemany("INSERT OR IGNORE INTO folder_hint_out(person_id, photo_id) VALUES(?,?)",
+                              [(person, p) for p in photos])
+        self.conn.commit()
+        self.quick_change(regroup=False)
+
+    def hint_of_row(self, row):
+        """The suggested folder a gallery row is in (its heading's target), or None."""
+        for r in reversed(self.model.rows[:row + 1]):
+            if r[0] == 0:
+                t = r[2] if isinstance(r[2], tuple) else None
+                return t if t and t[0] == "sugg" else None
+        return None
+
     def folder_bar_menu(self, target, row, pos):
         """Right-click a folder in the folder bar: manage it right there."""
         c = self.conn
         m = QMenu(self)
+        if target and target[0] == "sugg":
+            n = len(self.section_photos(row))
+            m.addAction(f"✓ Make the folder “{target[3]}” ({n:,})", lambda: self.hint_yes(target, row))
+            m.addAction("Rename and make…", lambda: self.hint_rename(target, row))
+            m.addAction("✕ Not a folder", lambda: self.hint_no(target))
+            m.addSeparator()
+            m.addAction("Open the folder on disk", lambda: open_file(target[4]))
+            m.exec(pos)
+            return
         fid = target[1] if target and target[0] in ("pf", "cat") else None
         if fid is not None:
             self.folder_actions(m, fid)
@@ -1341,8 +1418,6 @@ class ActionsMixin:
         paths = store.category_paths(c)
         tree = store.folder_tree(c)
         mine = {k: store.PATH_SEP.join(paths.get(k, [])) for k, v in tree.items() if v[2] == person_id}
-        if not mine:                     # (no folders of their own: nothing to split by)
-            return rows
         face_photo = {}
         fids = [r[0] for r in rows if r[0] > 0]
         for i in range(0, len(fids), 900):
@@ -1357,11 +1432,28 @@ class ActionsMixin:
                     sub[pid] = inner
         groups = {k: [] for k in mine}
         groups[None] = []
+        loose = []
         for r in rows:
             pid = face_photo.get(r[0]) if r[0] > 0 else -r[0]
-            groups.setdefault(sub.get(pid), []).append(r)
+            key = sub.get(pid)
+            groups.setdefault(key, []).append(r)
+            if key is None:
+                loose.append((r, pid))
+        # (1.57) the photos in none of their folders: a folder suggested for each place on disk they came from
+        hints = store.folder_hints(c, person_id, loose) if loose else {}
+        if not mine and not hints:       # (no folders, nothing to suggest: nothing to split by)
+            return rows
+        if hints:
+            hinted = {id(r) for _n, _d, rs in hints.values() for r in rs}
+            groups[None] = [r for r in groups[None] if id(r) not in hinted]
         out = []
-        for key in sorted(groups, key=lambda k: (k is not None, (mine.get(k) or "").casefold())):
+        for key in sorted(groups, key=lambda k: (k is None, (mine.get(k) or "").casefold())):
+            if key is None:
+                for dkey, (hname, hdir, hrows) in sorted(hints.items(), key=lambda kv: (kv[1][0].casefold(), kv[0])):
+                    out.append((0, f"{hname}   ·   {len(hrows):,}?", ("sugg", dkey, person_id, hname, hdir), 1))
+                    out += hrows
+                if not groups[None] and hints and not mine:
+                    continue
             label = mine.get(key) or (" › ".join(paths.get(key, [])) if key else "Not in a folder")
             out.append((0, f"{label}   ·   {len(groups[key]):,}", ("pf", key, person_id), 1))
             out += groups[key]

@@ -11,7 +11,7 @@ from PySide6.QtGui import QColor, QDrag, QFont, QFontMetrics, QImage, QPainter, 
 from PySide6.QtWidgets import (
     QApplication, QListView, QProxyStyle, QPushButton, QStyle, QStyledItemDelegate, QWidget)
 from icons import app_icon
-from ui_common import (
+from ui_common import (ROLE_HINT, 
     AI_COL, FOLDER_MIME, GRID_MIME, HEAD_COL, PHOTO_COL, ROLE_AI, ROLE_HEADER, ROLE_ID, ROLE_LABEL, ROLE_RES,
     ROLE_SUGGESTED, ROLE_VIDEO, SUGGEST, VIDEO_COL, GIF_COL)
 
@@ -21,6 +21,18 @@ class FaceModel(QAbstractListModel):
         super().__init__()
         self.win = win
         self.rows = []  # (face_id, path, person_name, confirmed)
+
+    def hint_rows(self):
+        """(1.57) The rows in a suggested folder's section (worked out once per list)."""
+        if getattr(self, "_hint_for", None) is not self.rows:
+            out, inside = set(), False
+            for i, r in enumerate(self.rows):
+                if r[0] == 0:
+                    inside = isinstance(r[2], tuple) and bool(r[2]) and r[2][0] == "sugg"
+                elif inside:
+                    out.add(i)
+            self._hint_for, self._hint_rows = self.rows, out
+        return self._hint_rows
 
     def rowCount(self, parent=QModelIndex()):
         return 0 if parent.isValid() else len(self.rows)
@@ -32,7 +44,11 @@ class FaceModel(QAbstractListModel):
         if fid == 0:                       # a section heading (e.g. a sub-category or person)
             if role in (Qt.DisplayRole, ROLE_HEADER):
                 return path
+            if role == ROLE_HINT:
+                return isinstance(name, tuple) and bool(name) and name[0] == "sugg"
             return None
+        if role == ROLE_HINT:
+            return idx.row() in self.hint_rows()
         if role == Qt.DecorationRole:
             pm = self.win.face_pixmap(fid, path)
             return self.win.safe_pixmap(fid, pm) if getattr(self.win, "safe_on", False) else pm
@@ -312,6 +328,49 @@ class FolderButton(QPushButton):
         QTimer.singleShot(0, lambda: self.on_drop(ids))
 
 
+
+class HintButton(QPushButton):
+    """(1.57) A suggested folder in the folder bar: orange like other suggestions, with ✓ (make the
+    folder and file the photos) and ✕ (not a folder) at its right."""
+
+    def __init__(self, text, on_yes, on_no, on_menu=None):
+        super().__init__(text)
+        self.full = text
+        self.on_menu = on_menu
+        self.setFocusPolicy(Qt.NoFocus)
+        self.setCheckable(True)
+        self.setStyleSheet("QPushButton { text-align: left; padding: 5px 62px 5px 8px; border: none; border-radius: 6px;"
+                           " color: #b07000; font-weight: bold; }"
+                           "QPushButton:hover { background: rgba(232,160,32,0.16); }"
+                           "QPushButton:checked { background: rgba(232,160,32,0.26); border: 1px solid #e8a020; }")
+        self.setFixedHeight(round(super().sizeHint().height() * 1.2))
+        from PySide6.QtWidgets import QToolButton
+        self.yes = QToolButton(self)
+        self.yes.setText("✓")
+        self.yes.setToolTip("Make this folder and put these photos in it")
+        self.yes.setStyleSheet("QToolButton { background: #2e9e5b; color: white; border-radius: 4px; font-weight: bold; }")
+        self.no = QToolButton(self)
+        self.no.setText("✕")
+        self.no.setToolTip("Not a folder - don't suggest it again")
+        self.no.setStyleSheet("QToolButton { background: palette(base); border: 1px solid #c4c7cc; border-radius: 4px; }")
+        for b, fn in ((self.yes, on_yes), (self.no, on_no)):
+            b.setFocusPolicy(Qt.NoFocus)
+            b.setCursor(Qt.PointingHandCursor)
+            b.clicked.connect(fn)
+
+    def contextMenuEvent(self, e):
+        if self.on_menu:
+            self.on_menu(e.globalPos())
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        s = self.height() - 10
+        self.no.setGeometry(self.width() - s - 4, 5, s, s)
+        self.yes.setGeometry(self.width() - 2 * s - 8, 5, s, s)
+        fm = self.fontMetrics()
+        room = self.width() - 2 * s - 34 - (self.iconSize().width() + 6 if not self.icon().isNull() else 0)
+        self.setText(fm.elidedText(self.full, Qt.ElideMiddle, max(20, room)))
+
 class FaceDelegate(QStyledItemDelegate):
     def __init__(self, win, parent=None):
         super().__init__(parent)
@@ -332,13 +391,14 @@ class FaceDelegate(QStyledItemDelegate):
             f.setBold(True)
             f.setPointSizeF(f.pointSizeF() * 1.4)
             p.setFont(f)
-            p.setPen(HEAD_COL)                     # section titles stand out in the app's blue
+            hint = index.data(ROLE_HINT)            # (1.57) a suggested folder: orange, like other suggestions
+            p.setPen(SUGGEST if hint else HEAD_COL)    # section titles stand out in the app's blue
             fm = p.fontMetrics()
             text = fm.elidedText(title, Qt.ElideMiddle, r.width() - 20)
             p.drawText(r, Qt.AlignLeft | Qt.AlignVCenter, text)
             line_y = r.center().y()
             x0 = r.left() + fm.horizontalAdvance(text) + 12
-            c = QColor(HEAD_COL)
+            c = QColor(SUGGEST if hint else HEAD_COL)
             c.setAlpha(110)
             p.setPen(QPen(c, 1.5))
             if x0 < r.right():
@@ -434,6 +494,24 @@ class FaceDelegate(QStyledItemDelegate):
             f.setBold(True)
             p.setFont(f)
             p.drawText(badge, Qt.AlignCenter, "?")
+        if index.data(ROLE_HINT) and not index.data(ROLE_SUGGESTED):
+            # (1.57) in a suggested folder: dashed orange, and a small folder mark
+            p.setPen(QPen(SUGGEST, 2.5, Qt.DashLine))
+            p.drawRoundedRect(r.adjusted(1.5, 1.5, -1.5, -1.5), radius - 1, radius - 1)
+            if r.width() >= 64:
+                f = QFont(option.font)
+                f.setBold(True)
+                f.setPointSizeF(max(7.0, f.pointSizeF() * 0.8))
+                p.setFont(f)
+                fm = p.fontMetrics()
+                bw, bh = fm.horizontalAdvance("▭?") + 10, fm.height() + 4
+                badge = QRectF(r.left() + 5, r.top() + 5 + (21 if index.data(ROLE_VIDEO) else 0), bw, bh)
+                p.setPen(Qt.NoPen)
+                p.setBrush(QColor(176, 112, 0, 230))
+                p.drawRoundedRect(badge, 4, 4)
+                p.setPen(Qt.white)
+                p.drawText(badge, Qt.AlignCenter, "▭?")
+                p.setBrush(Qt.NoBrush)
         label = index.data(ROLE_LABEL)
         if label:
             fm = p.fontMetrics()

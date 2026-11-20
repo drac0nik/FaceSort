@@ -153,6 +153,22 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.57.0
+- Suggested folders: in a person's gallery, the photos of theirs that aren't in one of their
+  folders are grouped by the folder they're in on disk, and each of those is suggested as a folder
+  for them - in orange, like other suggestions ("Holiday 2019 · 46?"), in the gallery and in the
+  folder bar under "Suggested folders". One photo is enough, and the folder's own name is kept even
+  when it's generic (DCIM, 2019…), so what you had sorted already stays sorted.
+  - ✓ makes the folder for that person (or uses the one of that name they have) and puts the photos
+    in it. ✕: not a folder - it isn't suggested for them again. Right-click for "Rename and make…"
+    and to open the folder on disk.
+  - Right-click photos in a suggestion: put just those in it, or "Not part of …" (they stay in Not
+    in a folder).
+  - Only FaceSort's folders change; nothing moves on disk until you Sort into folders.
+- The two search boxes work on their own now: the one over People / Folders / Albums / Smart Groups
+  only filters those lists (Smart Groups too), and the gallery's "Filter by file name" box only
+  filters the gallery.
+
 1.56.1
 - Fixed: a big download (a 900-picture gallery) only partly showed up in FaceSort - what you drop or
   download was held back by the toolbar's Import limit, and the rest waited for the next Scan.

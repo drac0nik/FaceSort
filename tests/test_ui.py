@@ -758,3 +758,31 @@ def test_remove_empty_library_folders(window, tmp_path, monkeypatch):
     w.remove_empty_library_folders()
     assert str(empty) not in w.settings["folders"] and not empty.exists()
     assert (tmp_path / "Sorted" / "~To Be Discarded" / "Done with").is_dir()
+
+
+def test_suggested_folders_in_the_gallery(window, qapp, tmp_path):
+    from gallery import HintButton
+    from ui_common import ROLE_HINT
+    w, c = window, window.conn
+    alice = c.execute("SELECT id FROM persons WHERE name='Alice'").fetchone()[0]
+    w.view = ("person", alice)
+    w.refresh_grid()
+    heads = [(i, r) for i, r in enumerate(w.model.rows) if r[0] == 0 and isinstance(r[2], tuple) and r[2][0] == "sugg"]
+    assert heads, [r[1] for r in w.model.rows if r[0] == 0]
+    i, r = heads[0]
+    name = r[2][3]
+    assert r[1].endswith("?") and w.model.data(w.model.index(i), ROLE_HINT)
+    assert w.model.data(w.model.index(i + 1), ROLE_HINT)                # its photos are marked too
+    assert "suggested" in w.subtitle.text()
+    w.build_folder_bar()
+    btns = [b for _i, b in w._bar_heads if isinstance(b, HintButton)]
+    assert btns
+    n = len(w.section_photos(i))
+    btns[0].yes.click()                                                 # ✓
+    import store
+    cid = store.find_child(c, name, None, alice)
+    assert cid and n
+    w.refresh_grid()
+    assert not any(r[0] == 0 and isinstance(r[2], tuple) and r[2][0] == "sugg" and r[2][3] == name
+                   and r[2][1] == heads[0][1][2][1] for r in w.model.rows)
+    assert any(r[0] == 0 and isinstance(r[2], tuple) and r[2][0] == "pf" and r[2][1] == cid for r in w.model.rows)

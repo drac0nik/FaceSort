@@ -531,6 +531,10 @@ def connect(path=None):
         CREATE TABLE IF NOT EXISTS same_people(a INTEGER, b INTEGER, score REAL, why TEXT);   -- 1.49: possibly the same
         CREATE TABLE IF NOT EXISTS not_same_people(a INTEGER, b INTEGER, at REAL, PRIMARY KEY(a, b));
         CREATE TABLE IF NOT EXISTS never_hits(face_id INTEGER PRIMARY KEY, entry_id INTEGER);  -- 1.51: set aside by Never track
+        CREATE TABLE IF NOT EXISTS folder_hint_no(person_id INTEGER NOT NULL, dir TEXT NOT NULL,
+                                                  PRIMARY KEY(person_id, dir));   -- 1.57: "Not a folder"
+        CREATE TABLE IF NOT EXISTS folder_hint_out(person_id INTEGER NOT NULL, photo_id INTEGER NOT NULL,
+                                                   PRIMARY KEY(person_id, photo_id));   -- left out of a suggestion
         CREATE TRIGGER IF NOT EXISTS photos_gone_pose AFTER DELETE ON photos BEGIN
             DELETE FROM photo_pose WHERE photo_id=OLD.id;
             DELETE FROM photo_points WHERE photo_id=OLD.id;
@@ -2106,6 +2110,35 @@ def folder_owner(conn, cid):
 def is_inside(conn, cid):
     """A person's folder (saved inside that person's folder)."""
     return folder_owner(conn, cid) is not None
+
+
+def folder_hints(conn, person_id, rows):
+    """(1.57) Folders to suggest for a person, from where their photos (not in one of their folders
+    yet) sit on disk: {dir key: (folder name, the folder on disk, [rows])}. Every folder counts, one
+    photo is enough, and a folder's own name is kept even when it's generic ("DCIM", "2019") -
+    you may have sorted things that way already. Left out: folders you said aren't one, photos you
+    took out of a suggestion, a folder named after the person, and FaceSort's own ~folders."""
+    name = (conn.execute("SELECT name FROM persons WHERE id=?", (person_id,)).fetchone() or [""])[0] or ""
+    no = {d for (d,) in conn.execute("SELECT dir FROM folder_hint_no WHERE person_id=?", (person_id,))}
+    out_photos = {p for (p,) in conn.execute("SELECT photo_id FROM folder_hint_out WHERE person_id=?", (person_id,))}
+    out = {}
+    for r, pid in rows:
+        if pid in out_photos:
+            continue
+        d = os.path.dirname(r[1] or "")
+        base = os.path.basename(d.rstrip("\\/"))
+        if not base or base.startswith("~") or base.casefold() == name.casefold():
+            continue
+        key = os.path.normcase(d)
+        if key in no:
+            continue
+        out.setdefault(key, (base, d, []))[2].append(r)
+    return out
+
+
+def hint_folder(conn, person_id, name):
+    """The person's folder of that name (made when it isn't there yet)."""
+    return find_child(conn, name, None, person_id) or create_category(conn, name, None, person_id)
 
 
 def find_child(conn, name, parent=None, owner=None):
