@@ -181,3 +181,30 @@ def test_browser_saves_and_fills_logins(library, qapp, site, monkeypatch):
     pump(qapp, 0.3)
     import store
     library.conn = store.connect()
+
+
+def test_watch_name_is_the_tag(library, qapp):
+    """1.56.1: the gallery's name is who its pictures are tagged as (unless other names are typed)."""
+    import watcher_ui
+
+    class W:
+        conn = library.conn
+        settings = library.settings
+    from PySide6.QtWidgets import QWidget
+    host = QWidget()
+    d = watcher_ui.WatchDialog(W(), parent=host, url="https://example.com/g")
+    d.name.setText("")
+    d.name.textEdited.emit("Jane Doe")
+    assert d.fields.people.text() == "Jane Doe" and d.fields.own.isChecked()
+    d.fields.people.setText("Jane Doe, Ann")
+    d.fields.people.textEdited.emit("Jane Doe, Ann")
+    d.name.textEdited.emit("Jane D")
+    assert d.fields.people.text() == "Jane Doe, Ann"                  # typed names stay
+    d.ok()
+    import watcher
+    assert watcher.get_watch(library.conn, d.w["id"])["people"] == ["Jane Doe", "Ann"]
+    # an existing gallery with no names gets its name as the tag when opened
+    wid = watcher.save_watch(library.conn, {"url": "https://example.com/h", "name": "Kim", "mode": "all"})
+    d2 = watcher_ui.WatchDialog(W(), watcher.get_watch(library.conn, wid), parent=host)
+    assert d2.fields.people.text() == "Kim"
+    d2.reject()

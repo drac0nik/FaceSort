@@ -100,6 +100,7 @@ class WatchDialog(QDialog):
         self.url.setPlaceholderText("https://… (a gallery, album, profile or model page)")
         f.addRow("Address:", self.url)
         self.name = QLineEdit(self.w.get("name") or "")
+        self.name.setPlaceholderText("e.g. the model's name")
         f.addRow("Name:", self.name)
         self.enabled = QCheckBox("Included when galleries are checked")
         self.enabled.setChecked(bool(self.w.get("enabled", 1)))
@@ -107,10 +108,24 @@ class WatchDialog(QDialog):
         lay.addLayout(f)
         self.fields = RuleFields(win, self.w, inherit=True)
         lay.addWidget(self.fields)
+        # (1.56.1) the name is who they're tagged as, unless you type other names under "Tag them as"
+        self._synced = not self.fields.people.text().strip() or \
+            self.fields.people.text().strip() == (self.w.get("name") or "").strip()
+        if not self.fields.people.text().strip() and self.name.text().strip():
+            self._name_changed(self.name.text())
+        self.name.textEdited.connect(self._name_changed)
+        self.fields.people.textEdited.connect(lambda _t: setattr(self, "_synced", False))
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(self.ok)
         bb.rejected.connect(self.reject)
         lay.addWidget(bb)
+
+    def _name_changed(self, text):
+        if not self._synced:
+            return
+        self.fields.people.setText(text.strip())
+        if self.fields.own is not None and text.strip():
+            self.fields.own.setChecked(True)
 
     def ok(self):
         u = self.url.text().strip()

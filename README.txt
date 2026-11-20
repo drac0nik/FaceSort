@@ -153,6 +153,15 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.56.1
+- Fixed: a big download (a 900-picture gallery) only partly showed up in FaceSort - what you drop or
+  download was held back by the toolbar's Import limit, and the rest waited for the next Scan.
+  Drops and downloads are now always added in full. Two drops while FaceSort was busy also only
+  scanned the second one; now both are.
+- Gallery watcher: the gallery's name is who its pictures are tagged as (it fills in "Tag them
+  as" - type other names there to change it). Opening a gallery that has no names to tag fills
+  in its name too.
+
 1.56.0
 - FaceSort has its own web browser (Browser, on the toolbar).
   - It keeps you signed in: your session is saved, and when you sign in to a site FaceSort offers to

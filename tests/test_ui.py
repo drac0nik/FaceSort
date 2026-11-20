@@ -643,6 +643,15 @@ def test_drop_scans_only_the_dropped_paths(window, qapp, tmp_path, monkeypatch):
     monkeypatch.setattr(w, "busy", lambda: False)
     assert w.handle_drop([str(d)], answers=((), None, False))
     assert got and got[0]["opts"]["roots"] == [str(d)]
+    assert got[0]["opts"]["limit"] == 0                # (1.56.1) a drop isn't held back by the Import limit
+    e = tmp_path / "Second"
+    write_photo(str(e / "y.jpg"), 802)
+    monkeypatch.setattr(w, "busy", lambda: True)           # two drops while busy: both get scanned
+    w._scan_after = False
+    w.handle_drop([str(d)], answers=((), None, False))
+    w.handle_drop([str(e)], answers=((), None, False))
+    assert w._scan_after["roots"] == [str(d), str(e)]
+    monkeypatch.setattr(w, "busy", lambda: False)
     w._scan_after = {"roots": [str(d)]}             # dropped while busy: the same drop-only scan afterwards
     w._after_job("other")
     pump(qapp, 0.4)

@@ -195,8 +195,14 @@ class SettingsMixin:
         self.statusBar().showMessage(msg, 12000)
         self.refresh_all()
         # only what you dropped is scanned (not the rest of your folders - that's for the next Scan)
-        drop = {"roots": dirs + files, "mode": "both", "shoot_after": True, "exclude": skip}
+        # (1.56.1) all of what you dropped, whatever the toolbar's Import limit says (a 900-picture gallery
+        # stopped at the limit and the rest waited, untagged, for the next Scan)
+        drop = {"roots": dirs + files, "mode": "both", "shoot_after": True, "exclude": skip, "limit": 0}
         if self.busy():
+            prev = self._scan_after if isinstance(self._scan_after, dict) else None
+            if prev and prev.get("roots"):   # (two drops while busy: both scanned, not just the last one)
+                drop["roots"] = list(dict.fromkeys(list(prev["roots"]) + drop["roots"]))
+                drop["exclude"] = list(dict.fromkeys(list(prev.get("exclude") or []) + list(skip)))
             self._scan_after = drop          # scans as soon as the current job ends
         else:
             self.start_scan(videos_only=False, opts=drop)
