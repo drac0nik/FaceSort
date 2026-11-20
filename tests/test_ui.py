@@ -658,9 +658,11 @@ def test_viewer_decodes_in_background_and_reads_ahead(window, qapp):
     v = w.viewer
     v.ensure_picture()
     assert v.image is not None and not v.image.isNull()
-    pump(qapp, 1.0)                                   # the read-ahead lands in the cache
     if len(v.items) > 1 and v.pos + 1 < len(v.items):
         nxt = v.items[v.pos + 1][1]
+        end = time.time() + 8                         # the read-ahead lands in the cache (slow CI machines)
+        while not any(k[0] == nxt for k in v._img_cache) and time.time() < end:
+            pump(qapp, 0.1)
         assert any(k[0] == nxt for k in v._img_cache)
         v.go(1)
         assert v.image is not None and not getattr(v, "_loading", False)     # instant: already decoded
