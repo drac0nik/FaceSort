@@ -246,7 +246,7 @@ class PhotoViewer(ViewerEditMixin, QWidget):
         for item in ("[Enter] People Bar", "C[a]tegory Bar", "[C]onfirm", "[R]emove Face", "[T]ag Person",
                      "[M]ark Tattoo", "[D]iscard", "Sort [L]ater", "[N]ot a Face", "[I]gnore",
                      "[Shift+I] Ignore All Unnamed", "[Drag] Select Several Faces", "[← →] Browse", "[Wheel / + −] Zoom", "[0] Fit · [1] Actual Size", "[[ / ]] Turn Left / Right",
-                     "[Space] Slideshow / Play Video or GIF", "[S]creenshot (Video / GIF)", "[E]dit Photo / Video", "[Shift+E] Low Light (Video)", "[{ / }] Start / End Marker (Video)",
+                     "[Space] Slideshow / Play Video or GIF", "[S]creenshot (Video / GIF)", "[E]dit Photo / Video / GIF", "[Shift+E] Low Light (Video)", "[{ / }] Start / End Marker (Video)",
                      "[F11] Full Screen", "[W] Photo Tools (Red Eye, Upscale, Enhance…)", "[B] Hide / Show Face Boxes", "[Alt+1–5] Quick Category", "[Ctrl+Drag] Tag Person", "[Shift+Drag] Mark Tattoo",
                      "[Right-click] Unassign / Remove", "[Esc] Back to Gallery"):
             lb = QLabel(key_html(item))
@@ -437,7 +437,8 @@ class PhotoViewer(ViewerEditMixin, QWidget):
         self.edit_b = QPushButton("Edit  (E)")
         self.edit_b.setIcon(app_icon("wand"))
         self.edit_b.setToolTip("Edit mode: light, color, crop, color pop… for photos; trim, cut, turn, low light "
-                               "for videos. Save copy keeps the original.")
+                               "for videos; all the photo edits plus frames, speed and direction for animated GIFs. "
+                               "Save copy keeps the original.")
         self.edit_b.setStyleSheet("QPushButton { background: #4c8dff; color: #0b1220; font-weight: bold; "
                                   "padding: 4px 14px; border-radius: 6px; }  QPushButton:disabled { background: #555; }")
         self.edit_b.clicked.connect(self.enter_edit)
@@ -614,7 +615,11 @@ class PhotoViewer(ViewerEditMixin, QWidget):
         if mv is None:
             return
         img = mv.currentImage()
-        if not img.isNull():
+        if getattr(self, "editing", None) == "photo" and getattr(self, "ed_gif", None):
+            if mv.state() == QMovie.Running:
+                mv.setPaused(True)                 # (it doesn't play while you edit)
+            self.gif_edit_frame(img)               # (1.57.2) editing: the edits shown on this frame
+        elif not img.isNull():
             self.image = img
             self.canvas.update()
         if not self.seek.isSliderDown():
@@ -695,6 +700,8 @@ class PhotoViewer(ViewerEditMixin, QWidget):
 
     def toggle_video(self):
         if getattr(self, "is_anim", False) and self.movie is not None:
+            if getattr(self, "editing", None):
+                return                             # (editing a GIF: the bar picks the frame)
             mv = self.movie
             if mv.state() == QMovie.Running:
                 mv.setPaused(True)
@@ -1212,7 +1219,12 @@ class PhotoViewer(ViewerEditMixin, QWidget):
         if self.edit_rgb is not None or self.tool.busy:
             self.toast.setText("Save or discard the photo-tools preview first")
             return
+        anim = bool(getattr(self, "is_anim", False))
+        if anim:
+            self.stop_gif()                        # (1.57.2) let go of the GIF while every frame is turned
         done, skipped = self.win.rotate_photos([pid], clockwise)
+        if anim:
+            self.setup_gif(self.path)
         if skipped:
             self.toast.setText(f"Couldn't turn this one: {skipped[0][1]}")
             return

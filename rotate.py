@@ -158,8 +158,14 @@ def rotate_pixels(path, clockwise):
     except Exception:
         pass
     with Image.open(path) as im:
-        if getattr(im, "n_frames", 1) > 1:
+        animated = getattr(im, "n_frames", 1) > 1
+        if animated and (im.format or "").upper() != "GIF":
             raise ValueError("animated pictures can't be turned")
+    if animated:                                       # (1.57.2) an animated GIF: every frame turned
+        import gifedit
+        gifedit.turn(path, clockwise)
+        return
+    with Image.open(path) as im:
         fmt = im.format
         ext = {"PNG": ".png", "WEBP": ".webp", "TIFF": ".tif", "GIF": ".gif", "BMP": ".bmp",
                "HEIF": ".heic", "AVIF": ".avif"}.get((fmt or "").upper(), "")

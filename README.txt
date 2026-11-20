@@ -153,6 +153,26 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.57.2
+- Animated GIFs can be edited. Open one in the viewer and press E (or Edit):
+  - Every edit-mode tool works and is done to every frame: crop, turn, flip, straighten, light,
+    color, white balance (with the eyedropper), color pop, vignette, sharpen and smooth noise.
+  - The new "Animated GIF" section at the top of the panel:
+    - First / last frame - keep only part of it ("◀ Here" uses the frame on screen). The kept part
+      is marked on the bar under the picture.
+    - Speed: ¼× to 3×.
+    - Play backwards, and Bounce (forwards, then back).
+    - Save every frame as a picture… - each kept frame as its own PNG (see-through kept), with your
+      edits, in a "<name> frames" folder next to the GIF. The frames aren't added to FaceSort
+      automatically, so a long GIF doesn't fill your people with near-identical pictures.
+  - The bar under the picture picks which frame you see while editing (it doesn't play while you
+    edit).
+  - Save copy makes "<name> (edited).gif"; Replace original works as it does for photos.
+  - Fix & restore (red eye, restore, upscale, touch-up…) is for single photos: save the frames to
+    use it on them.
+- The turn buttons (in the viewer and the gallery) now turn animated GIFs - every frame, colors kept.
+  Before, they were refused.
+
 1.57.1
 - The browser and the gallery watcher are now one window, "Gallery Watcher" (the toolbar button
   that was "Browser"):

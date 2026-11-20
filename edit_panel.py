@@ -5,8 +5,8 @@ import threading
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QListWidget,
-                               QListWidgetItem, QMenu, QPushButton, QScrollArea, QSlider, QToolButton, QVBoxLayout,
-                               QWidget)
+                               QListWidgetItem, QMenu, QPushButton, QScrollArea, QSlider, QSpinBox, QToolButton,
+                               QVBoxLayout, QWidget)
 
 import photoedit
 
@@ -166,11 +166,16 @@ class EditPanel(QWidget):
     redo = Signal()
     compare = Signal(bool)
     auto = Signal()
+    gif_changed = Signal()                         # (1.57.2) the GIF's frames / speed / direction
+    gif_mark = Signal(str)                         # "start" / "end": use the frame on screen
+    gif_frames = Signal()                          # save every frame as a picture
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedWidth(340)
         self.p = photoedit.defaults()
+        self.gif = None                            # None = a photo; else the GIF's own settings
+        self.gif_n = 0
         self._quiet = False
         self.ratio = None
         self.size_wh = (1, 1)
@@ -210,6 +215,56 @@ class EditPanel(QWidget):
             return r
 
         # crop & rotate
+        # (1.57.2) animated GIFs: everything below is done to every frame; these are the GIF's own
+        self.gif_sec = Section("Animated GIF")
+        self.gif_info = QLabel("")
+        self.gif_info.setWordWrap(True)
+        self.gif_sec.add(self.gif_info)
+        self.gif_spins = {}
+        for key, label in (("start", "First frame:"), ("end", "Last frame:")):
+            row = QHBoxLayout()
+            lab = QLabel(label)
+            lab.setMinimumWidth(72)
+            sp = QSpinBox()
+            sp.setRange(1, 1)
+            sp.valueChanged.connect(self._gif_spin)
+            here = _btn("◀ Here", "Use the frame on screen (pick it with the bar under the picture)")
+            here.clicked.connect(lambda _=False, k=key: self.gif_mark.emit(k))
+            row.addWidget(lab)
+            row.addWidget(sp, 1)
+            row.addWidget(here)
+            self.gif_sec.add(row)
+            self.gif_spins[key] = sp
+        row = QHBoxLayout()
+        lab = QLabel("Speed:")
+        lab.setMinimumWidth(72)
+        self.gif_speed = QComboBox()
+        import gifedit
+        for v, label in gifedit.SPEEDS:
+            self.gif_speed.addItem(label, v)
+        self.gif_speed.currentIndexChanged.connect(self._gif_opts)
+        row.addWidget(lab)
+        row.addWidget(self.gif_speed, 1)
+        self.gif_sec.add(row)
+        row = QHBoxLayout()
+        self.gif_rev = QCheckBox("Play backwards")
+        self.gif_bounce = QCheckBox("Bounce")
+        self.gif_bounce.setToolTip("Plays forwards, then back again")
+        for c in (self.gif_rev, self.gif_bounce):
+            c.toggled.connect(self._gif_opts)
+            row.addWidget(c)
+        self.gif_sec.add(row)
+        fb = _btn("Save every frame as a picture…",
+                  "Each kept frame as its own PNG, with your edits, in a folder next to the GIF")
+        fb.clicked.connect(self.gif_frames.emit)
+        self.gif_sec.add(fb)
+        note = QLabel("Crop, turn, light, color and the rest are done to every frame. The bar under the picture "
+                      "picks which frame you see. (Fix & restore works on single photos - save the frames to use it.)")
+        note.setWordWrap(True)
+        note.setStyleSheet("color: gray; font-size: 11px;")
+        self.gif_sec.add(note)
+        self.gif_sec.hide()
+        bl.addWidget(self.gif_sec)
         sec = Section("Crop && rotate", open_=False)
         row = QHBoxLayout()
         for text, tip, fn in (("⟲ 90°", "Turn left", lambda: self._turn(-1)), ("⟳ 90°", "Turn right", lambda: self._turn(1)),
@@ -329,6 +384,7 @@ class EditPanel(QWidget):
             b.clicked.connect(lambda _=False, k=kind: self.tool.emit(k, None))
             sec.add(b)
         bl.addWidget(sec)
+        self.fix_sec = sec
         bl.addStretch()
         # bottom
         bot = QHBoxLayout()
@@ -352,6 +408,53 @@ class EditPanel(QWidget):
         bot.addStretch()
         bot.addWidget(self.save_b)
         outer.addLayout(bot)
+
+    # ---------------------------------------------------------------- animated GIFs
+    def set_gif(self, n, text=""):
+        """n frames (None = editing a photo, not a GIF)."""
+        import gifedit
+        self.gif_n = n or 0
+        self.gif = gifedit.gif_defaults(n) if n else None
+        self.gif_sec.setVisible(bool(n))
+        self.fix_sec.setVisible(not n)
+        if not n:
+            return
+        self.gif_info.setText(text)
+        self._quiet = True
+        for sp in self.gif_spins.values():
+            sp.setRange(1, max(1, n))
+        self.gif_spins["start"].setValue(1)
+        self.gif_spins["end"].setValue(n)
+        self.gif_speed.setCurrentIndex(self.gif_speed.findData(1.0))
+        self.gif_rev.setChecked(False)
+        self.gif_bounce.setChecked(False)
+        self._quiet = False
+
+    def set_gif_mark(self, which, frame):
+        if self.gif is not None:
+            self.gif_spins[which].setValue(frame + 1)
+
+    def _gif_spin(self, _v):
+        if self._quiet or self.gif is None:
+            return
+        a, b = self.gif_spins["start"].value(), self.gif_spins["end"].value()
+        if self.sender() is self.gif_spins["start"] and a > b:
+            self._quiet = True
+            self.gif_spins["end"].setValue(a)
+            self._quiet = False
+        elif self.sender() is self.gif_spins["end"] and b < a:
+            self._quiet = True
+            self.gif_spins["start"].setValue(b)
+            self._quiet = False
+        self._gif_opts()
+
+    def _gif_opts(self, *_a):
+        if self._quiet or self.gif is None:
+            return
+        self.gif = {"start": self.gif_spins["start"].value() - 1, "end": self.gif_spins["end"].value() - 1,
+                    "speed": float(self.gif_speed.currentData()), "reverse": self.gif_rev.isChecked(),
+                    "bounce": self.gif_bounce.isChecked()}
+        self.gif_changed.emit()
 
     # ---------------------------------------------------------------- values
     def _set(self, key, v):

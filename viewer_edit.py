@@ -29,10 +29,10 @@ def _small(rgb, side=PREVIEW_SIDE):
     return cv2.resize(rgb, (max(1, round(w * k)), max(1, round(h * k))), interpolation=cv2.INTER_AREA)
 
 
-def copy_path(src, pattern, png=False):
+def copy_path(src, pattern, png=False, ext=None):
     folder = os.path.dirname(src)
-    stem, ext = os.path.splitext(os.path.basename(src))
-    ext = ".png" if png or ext.lower() == ".png" else ".jpg"
+    stem, own = os.path.splitext(os.path.basename(src))
+    ext = ext or (".png" if png or own.lower() == ".png" else ".jpg")
     import renamer
     base = renamer.clean((pattern or "{name} (edited)").replace("{name}", stem)) or f"{stem} (edited)"
     out, n = os.path.join(folder, base + ext), 2
@@ -63,6 +63,10 @@ class ViewerEditMixin:
         ep.redo.connect(self.ed_redo)
         ep.compare.connect(self._ed_compare)
         ep.auto.connect(lambda: self.ed_base is not None and ep.set_auto(AutoLight.of(self.ed_base)))
+        ep.gif_changed.connect(self._gif_changed)
+        ep.gif_mark.connect(lambda k: self.movie is not None and ep.set_gif_mark(k, self.movie.currentFrameNumber()))
+        ep.gif_frames.connect(self.gif_save_frames)
+        self.ed_gif = None
         vp = self.ved_panel
         vp.start_b.clicked.connect(lambda: vp.set_start(self.video_now()))
         vp.end_b.clicked.connect(lambda: vp.set_end(self.video_now()))
@@ -92,13 +96,14 @@ class ViewerEditMixin:
             return
         if self.is_video:
             return self.enter_video_edit()
-        if getattr(self, "is_anim", False):
-            self.toast.setText("Animated GIFs can't be edited here")
-            return
         if self.tool.busy:
             self.toast.setText("Wait for the photo tool to finish first")
             return
         self.slideshow.stop()
+        self.ed_gif = None
+        if getattr(self, "is_anim", False) and self.movie is not None:
+            return self.enter_gif_edit()
+        self.ed_panel.set_gif(None)
         self.ensure_picture()
         if self.edit_rgb is not None:                 # the photo tools were used first: edit on top of that
             base = self.edit_rgb
@@ -118,6 +123,68 @@ class ViewerEditMixin:
         self.edit_bar.hide()
         self._ed_rerender()
         self._ed_status()
+
+    def enter_gif_edit(self):
+        """(1.57.2) An animated GIF: the frame on screen is the preview; saving does every frame."""
+        import gifedit
+        mv = self.movie
+        if mv.state() == mv.MovieState.Running:
+            mv.setPaused(True)
+        img = mv.currentImage()
+        if img.isNull():                           # (not started yet)
+            mv.jumpToFrame(0)
+            img = mv.currentImage()
+        if img.isNull():
+            self.toast.setText("Couldn't read this GIF")
+            return
+        try:
+            n, loop, total = gifedit.info(self.path)
+        except Exception as e:
+            self.toast.setText(f"Couldn't read this GIF: {e}")
+            return
+        self.ed_gif = self.path
+        self.ed_base = _small(qimage_to_rgb(img))
+        self.ed_orig_qimg = rgb_to_qimage(self.ed_base)
+        self.ed_view_qimg = img
+        self.ed_undo_stack, self.ed_redo_stack = [photoedit.defaults()], []
+        h, w = self.ed_base.shape[:2]
+        self.ed_panel.load(photoedit.defaults(), (w, h))
+        self.ed_panel.reset_aspect = None
+        loops = "loops for ever" if not loop else f"plays {loop + 1} times"
+        self.ed_panel.set_gif(n, f"{n} frames · {total / 1000:.1f} s · {loops}")
+        self.editing = "photo"
+        self._edit_chrome(True)
+        self.edit_bar.hide()
+        self._gif_changed()
+        self._ed_rerender()
+
+    def gif_edit_frame(self, img):
+        """The bar under the picture picked another frame while editing: preview the edits on it."""
+        if img.isNull():
+            return
+        self.ed_base = _small(qimage_to_rgb(img))
+        self.ed_orig_qimg = rgb_to_qimage(self.ed_base)
+        self._ed_rerender()
+
+    def _gif_changed(self):
+        g = self.ed_panel.gif
+        if g is not None:
+            self.seek.set_marks(g["start"], g["end"])
+        self._ed_status()
+
+    def gif_save_frames(self):
+        if not self.ed_gif or self.ed_saver.busy:
+            return
+        import gifedit
+        src, p, g = self.ed_gif, dict(self.ed_panel.p), dict(self.ed_panel.gif or {})
+        folder = gifedit.frame_folder(src)
+
+        def work(step, cancelled):
+            paths = gifedit.save_frames(src, folder, p if photoedit.changed(p) else None, g, step, cancelled)
+            return {"frames": paths, "folder": folder}
+        self.ed_panel.setEnabled(False)
+        self.toast.setText("Saving every frame…")
+        self.ed_saver.submit(work)
 
     def enter_video_edit(self):
         import jobs
@@ -163,6 +230,12 @@ class ViewerEditMixin:
                 self.discard_edit(quiet=True)
             self.image = self.ed_view_qimg
             self.ed_base = self.ed_geo = self.ed_qimg = None
+            if self.ed_gif:
+                self.seek.set_marks(None, None)
+                self.ed_gif = None
+                if self.movie is not None and not self.movie.currentImage().isNull():
+                    self.image = self.movie.currentImage()
+            self.ed_panel.set_gif(None)
         else:
             self.ved_panel.hide()
             self.seek.set_marks(None, None)
@@ -212,7 +285,14 @@ class ViewerEditMixin:
 
     def _ed_status(self):
         n = len(photoedit.changed(self.ed_panel.p)) + (len(self.edit_ops) if self.edit_rgb is not None else 0)
-        self.state.setText(f"EDITING · {n} change{'s' if n != 1 else ''} · Save copy keeps the original")
+        g = self.ed_panel.gif
+        if self.ed_gif and g is not None:
+            import gifedit
+            n += sum(1 for k, v in g.items() if v != gifedit.gif_defaults(self.ed_panel.gif_n)[k])
+            self.state.setText(f"EDITING GIF · {n} change{'s' if n != 1 else ''} · done to every frame · "
+                               "Save copy keeps the original")
+        else:
+            self.state.setText(f"EDITING · {n} change{'s' if n != 1 else ''} · Save copy keeps the original")
         self.ed_panel.undo_b.setEnabled(len(self.ed_undo_stack) > 1)
         self.ed_panel.redo_b.setEnabled(bool(self.ed_redo_stack))
 
@@ -301,7 +381,14 @@ class ViewerEditMixin:
         if self.editing != "photo" or self.ed_saver.busy:
             return
         p = dict(self.ed_panel.p)
-        if not photoedit.changed(p) and self.edit_rgb is None:
+        gif = self.ed_gif
+        g = dict(self.ed_panel.gif or {})
+        if gif:
+            import gifedit
+            if not photoedit.changed(p) and not gifedit.gif_changed(g, self.ed_panel.gif_n):
+                self.toast.setText("Nothing has changed yet")
+                return
+        elif not photoedit.changed(p) and self.edit_rgb is None:
             self.toast.setText("Nothing has changed yet")
             return
         src = self.path
@@ -316,6 +403,19 @@ class ViewerEditMixin:
         png = any(op.startswith("x") or op.startswith("shadows") for op in self.edit_ops) if base is not None else False
         quality = int(st.get("edit_jpeg_quality", 95))
         pattern = st.get("edit_copy_name") or "{name} (edited)"
+
+        def gif_work(step, cancelled):
+            import gifedit
+            if replace:
+                tmp = os.path.join(os.path.dirname(src), f".fsedit-{os.getpid()}.gif")
+                if gifedit.save_gif(src, tmp, p, g, step, cancelled) is None:
+                    raise RuntimeError("stopped")
+                return {"replace": True, "tmp": tmp, "src": src,
+                        "geometry": photoedit.geometry_changed(p) or g.get("start", 0) > 0}
+            dest = copy_path(src, pattern, ext=".gif")
+            if gifedit.save_gif(src, dest, p, g, step, cancelled) is None:
+                raise RuntimeError("stopped")
+            return {"replace": False, "dest": dest, "src": src}
 
         def work(step, cancelled):
             full, ex = (base, exif) if base is not None else photo_tools.load_full(src)
@@ -332,8 +432,8 @@ class ViewerEditMixin:
             _save(out, dest, ex, quality)
             return {"replace": False, "dest": dest, "src": src}
         self.ed_panel.setEnabled(False)
-        self.toast.setText("Saving…")
-        self.ed_saver.submit(work)
+        self.toast.setText("Saving every frame…" if gif else "Saving…")
+        self.ed_saver.submit(gif_work if gif else work)
 
     def _ed_saved(self, res, err):
         self.ed_panel.setEnabled(True)
@@ -341,6 +441,12 @@ class ViewerEditMixin:
             QMessageBox.warning(self, "Save", f"Couldn't save the edited picture:\n{err}")
             return
         win = self.win
+        if "frames" in res:
+            n = len(res["frames"])
+            msg = f"✓ Saved {n} frame{'s' if n != 1 else ''} as pictures in “{os.path.basename(res['folder'])}”"
+            self.toast.setText(msg)
+            win.statusBar().showMessage(msg + f" ({res['folder']})", 12000)
+            return
         src = res["src"]
         if not res["replace"]:
             out = win.add_derived(src, res["dest"], copy_of=True)

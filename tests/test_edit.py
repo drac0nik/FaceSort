@@ -225,3 +225,93 @@ def test_viewer_settings_tab(edit_window):
     s = d.result_settings()
     assert s["viewer_slideshow_s"] == 5 and s["video_keep_speed"] is True and s["edit_copy_name"] == "{name} - mine"
     d.reject()
+
+
+def _gif(path, n=6, clear=False):
+    from PIL import Image
+    frames = []
+    for i in range(n):
+        im = Image.new("RGBA", (40, 30), (40 * i % 255, 120, 200, 255))
+        if clear:
+            im.paste((0, 0, 0, 0), (0, 0, 10, 10))
+        frames.append(im)
+    frames[0].save(path, save_all=True, append_images=frames[1:], duration=100, loop=0, disposal=2)
+    return path
+
+
+def test_gif_edit_math(tmp_path):
+    """1.57.2: every frame edited; frames kept / speed / backwards / bounce; see-through kept; frames saved."""
+    import gifedit
+    from PIL import Image
+    src = _gif(str(tmp_path / "a.gif"), clear=True)
+    assert gifedit.info(src)[:2] == (6, 0)
+    assert gifedit.order(6, {"start": 1, "end": 3, "speed": 1, "reverse": True, "bounce": False}) == [3, 2, 1]
+    assert gifedit.order(6, {"start": 0, "end": 3, "speed": 1, "reverse": False, "bounce": True}) == [0, 1, 2, 3, 2, 1]
+    p = dict(photoedit.defaults(), turn=1, bw=True)
+    g = {"start": 1, "end": 4, "speed": 2.0, "reverse": False, "bounce": False}
+    out = gifedit.save_gif(src, str(tmp_path / "b.gif"), p, g)
+    with Image.open(out) as im:
+        assert im.n_frames == 4 and im.size == (30, 40)                        # 4 frames kept, turned
+        assert im.info.get("duration") == 50 and im.info.get("loop") == 0       # twice as fast
+        im.seek(2)
+        fr = im.convert("RGBA")
+        r, gg, b, _a = fr.getpixel((15, 30))
+        assert max(r, gg, b) - min(r, gg, b) <= 6                               # black & white
+        assert fr.getpixel((29, 0))[3] == 0                                     # the clear corner turned with it
+    paths = gifedit.save_frames(src, gifedit.frame_folder(src), None, None)
+    assert len(paths) == 6 and os.path.basename(paths[0]) == "a frame 001.png"
+    assert os.path.basename(os.path.dirname(paths[0])) == "a frames"
+    assert gifedit.frame_folder(src).endswith("a frames (2)")
+    assert not [f for f in os.listdir(tmp_path) if f.endswith(".part")]
+
+
+def test_gif_edit_mode(edit_window, qapp):
+    w = edit_window
+    v = _open_viewer(w, qapp)
+    src = v.path
+    gif = _gif(os.path.join(os.path.dirname(src), "anim.gif"))
+    out = w.add_derived(src, gif, scan=False)
+    v.open_items([(0, out or gif)], 0)
+    _wait(qapp, lambda: v.is_anim and v.movie is not None)
+    v.enter_edit()
+    assert v.editing == "photo" and v.ed_gif and v.ed_panel.gif_sec.isVisibleTo(v.ed_panel)
+    assert not v.ed_panel.fix_sec.isVisibleTo(v.ed_panel)
+    v.ed_panel.gif_spins["end"].setValue(3)
+    v.ed_panel.gif_rev.setChecked(True)
+    assert v.ed_panel.gif["end"] == 2 and "GIF" in v.state.text()
+    v.ed_panel.rows["exposure"].set_value(30)
+    v.toggle_video()                                    # (doesn't play while editing)
+    v.ed_save(False)
+    _wait(qapp, lambda: v.editing is None)
+    from PIL import Image
+    copy = os.path.join(os.path.dirname(gif), "anim (edited).gif")
+    with Image.open(copy) as im:
+        assert im.n_frames == 3
+    v.open_items([(0, gif)], 0)
+    _wait(qapp, lambda: v.is_anim and v.movie is not None)
+    v.enter_edit()
+    v.gif_save_frames()
+    _wait(qapp, lambda: not v.ed_saver.busy and v.ed_panel.isEnabled())
+    folder = os.path.join(os.path.dirname(gif), "anim frames")
+    assert len(os.listdir(folder)) == 6
+    v.exit_edit()
+    assert v.ed_gif is None and not v.ed_panel.gif_sec.isVisibleTo(v.ed_panel)
+    v.close_viewer()
+
+
+def test_turning_an_animated_gif(tmp_path):
+    """1.57.2: the turn buttons turn every frame of an animated GIF (colors kept exactly)."""
+    import rotate
+    from PIL import Image
+    src = _gif(str(tmp_path / "t.gif"), n=4)
+    with Image.open(src) as im:
+        im.seek(2)
+        before = im.convert("RGB").getpixel((0, 0))
+    rotate.rotate_file(src, clockwise=True)
+    with Image.open(src) as im:
+        assert im.n_frames == 4 and im.size == (30, 40) and im.info.get("loop") == 0
+        im.seek(2)
+        assert im.convert("RGB").getpixel((29, 0)) == before
+    rotate.rotate_file(src, clockwise=False)
+    with Image.open(src) as im:
+        assert im.size == (40, 30)
