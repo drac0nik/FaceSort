@@ -186,6 +186,8 @@ def test_backups_tab(window, qapp, tmp_path, monkeypatch):
         pump(qapp, 0.05)
         assert time.time() < end
     assert page.list.count() == 1 and page.list.item(0).data(0x0100)
+    page._progress(3_000_000_000, 6_000_000_000, "big")         # (1.55.2: over 2 GB overflowed the bar)
+    assert page.progress.value() == 500
     s = d.result_settings()
     assert s["backup_frequency"] == "weekly" and s["backup_keep"] == 4 and s["backup_folder"] == str(tmp_path / "bk")
     d.reject()

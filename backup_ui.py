@@ -133,8 +133,10 @@ class BackupsPage(QWidget):
         self.worker.start()
 
     def _progress(self, done, total, msg):
-        self.progress.setRange(0, max(1, int(total)))
-        self.progress.setValue(int(done))
+        # (1.55.2) a progress bar only counts to about 2 billion: a library over 2 GB in bytes overflowed it
+        total, done = max(1, int(total)), max(0, int(done))
+        self.progress.setRange(0, 1000)
+        self.progress.setValue(min(1000, done * 1000 // total))
         self.progress.setFormat(msg)
 
     def _done(self, path):

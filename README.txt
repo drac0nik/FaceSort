@@ -161,6 +161,8 @@ Import limit (toolbar)
     libraries hardly shrink - the old, slow compression spent ages for a few percent).
   - Read, check-summed and written in one pass, with progress in MB and a working Stop.
   - The backup on close runs at low CPU and disk priority, so it doesn't slow the PC down.
+  - Fixed: Back up now on a library over 2 GB stopped with "OverflowError" (its progress bar
+    counted bytes, and a progress bar only goes up to about 2 billion).
 
 1.55.1
 - The release build now checks that encryption works in the packaged app before it ships.

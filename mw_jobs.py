@@ -441,8 +441,10 @@ class JobsMixin:
             self.prog.setRange(0, 0)
             self.prog_label.setText(msg)
         else:
-            self.prog.setRange(0, total)
-            self.prog.setValue(done)
+            if total > 2_000_000_000:                  # (a progress bar counts to about 2 billion)
+                done, total = int(done * 1000 // total), 1000
+            self.prog.setRange(0, int(total))
+            self.prog.setValue(int(min(done, total)))
             label = {"scan": "Scanning", "tags": "Writing tags", "export": "Copying",
                      "tattoo": "Tattoo search", "download": "", "dupes": "Duplicates", "recycle": "Recycle Bin", "rawcopy": "JPEG copies"}.get(self._job, "")
             if self._job == "download":
