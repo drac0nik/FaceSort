@@ -10,7 +10,7 @@ import known
 import store
 from PySide6.QtCore import QEvent, QSize, Qt
 from PySide6.QtGui import QColor, QIcon, QPixmap
-from PySide6.QtWidgets import QDialog
+from PySide6.QtWidgets import QApplication, QDialog
 from viewer_parts import PersonPicker
 from ui_common import blurred_pixmap, round_pixmap
 
@@ -349,12 +349,31 @@ class DataMixin:
         self.apply_grid_layout()
         self.grid.doItemsLayout()
 
+    def poll_input(self):
+        """You're using FaceSort: housekeeping in the helpers eases off while you work."""
+        import privacy_ui
+        idle = privacy_ui._system_idle()
+        if idle is None:                          # (not Windows: the mouse moving over FaceSort)
+            from PySide6.QtGui import QCursor
+            pos = QCursor.pos()
+            last = getattr(self, "_last_cursor", None)
+            self._last_cursor = pos
+            if last is None or pos == last:
+                return
+            idle = 0.0
+        if idle > 0.6 or QApplication.activeWindow() is None:
+            return
+        self._mark_input(time.monotonic() - idle)
+
+    def _mark_input(self, t=None):
+        self._last_input = t or time.monotonic()
+        import helpers
+        if helpers.has_pool():
+            helpers.pool().touch()
+
     def eventFilter(self, obj, ev):
         if ev.type() in (QEvent.KeyPress, QEvent.MouseButtonPress, QEvent.Wheel):
-            self._last_input = time.monotonic()
-            import helpers
-            if helpers.has_pool():
-                helpers.pool().touch()           # housekeeping in the helpers eases off while you work
+            self._mark_input()
         # Ctrl + mouse wheel resizes the thumbnails
         if ev.type() == QEvent.Wheel and getattr(self, "grid", None) is not None and obj is self.grid.viewport() \
                 and ev.modifiers() & Qt.ControlModifier:

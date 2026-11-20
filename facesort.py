@@ -34,10 +34,11 @@ from mw_vaults import VaultsMixin
 from mw_settings import SettingsMixin
 from mw_jobs import JobsMixin
 from mw_files import FilesMixin
+from mw_web import WebMixin
 
 
 class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin,
-                 EngineMixin, AlbumsMixin, VaultsMixin, SettingsMixin, JobsMixin, FilesMixin, QMainWindow):
+                 EngineMixin, AlbumsMixin, VaultsMixin, SettingsMixin, JobsMixin, FilesMixin, WebMixin, QMainWindow):
     """The main window. Its methods are spread over the mixins (mw_*.py) by topic;
     this file has the window's layout and start-up."""
     def __init__(self):
@@ -104,7 +105,11 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         self.remember_timer.timeout.connect(self.start_remember)
         self.remember_worker = None
         self._last_input = 0.0
-        QApplication.instance().installEventFilter(self)     # notices when you're busy clicking / typing
+        # notices when you're busy clicking / typing (1.56: from Windows' own last-input time - an
+        # application-wide event filter crashed with the built-in browser's own objects)
+        self.input_timer = QTimer(self, interval=300)
+        self.input_timer.timeout.connect(self.poll_input)
+        self.input_timer.start()
         self.dup_timer = QTimer(self, singleShot=True, interval=1200)     # duplicates: worked out in the background
         self.dup_timer.timeout.connect(self.start_dup_sets)
         self._remember_dirty = False
@@ -178,6 +183,10 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         tb.addSeparator()
         self.a_review = act("Quick review", QStyle.SP_MediaPlay, self.quick_review,
                             "Answer yes/no questions that sort the most faces per keypress")
+        self.a_galleries = act("Check galleries", QStyle.SP_ArrowDown, self.check_galleries,
+                               "Gallery watcher: download what's new in the galleries you watch (and set them up)")
+        self.a_browser = act("Browser", QStyle.SP_ComputerIcon, lambda: self.open_browser(),
+                             "FaceSort's web browser - stays signed in, with Max Image Saver built in")
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         tb.addWidget(spacer)
@@ -564,6 +573,7 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         self.model = FaceModel(self)
         self.hires.ready.connect(self.hires_ready)
         self.grid = GalleryView()
+        self.grid.viewport().installEventFilter(self)          # (Ctrl + wheel: thumbnail size)
         self.grid.setModel(self.model)
         self.grid.setItemDelegate(FaceDelegate(self, self.grid))
         self.grid.setViewMode(QListView.IconMode)
@@ -746,6 +756,9 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         sc.activated.connect(self.new_folder_here)
         import privacy_ui
         self.locker = privacy_ui.LockController(self)           # (1.55) idle / minimized locking
+        self.gallery_timer = QTimer(self, interval=5 * 60 * 1000)   # (1.56) gallery checks that are due
+        self.gallery_timer.timeout.connect(self.gallery_timer_tick)
+        self.gallery_timer.start()
         sc = QShortcut(QKeySequence("Ctrl+Shift+L"), self)       # lock now
         sc.setContext(Qt.ApplicationShortcut)
         sc.activated.connect(self.locker.lock_now)
@@ -832,6 +845,19 @@ def selftest_helpers(out_path):
             ok = ok and enc
             cryptbox.lock()
             os.remove(t)
+        try:                             # (1.56) the built-in browser is packaged
+            import inbrowser
+            import PySide6.QtWebEngineCore as _wec
+            ok_web = inbrowser.available() and bool(inbrowser._read("content.js")) and bool(inbrowser._read("shim.js"))
+            if getattr(sys, "frozen", False):
+                base = os.path.dirname(sys.executable)
+                found = any("QtWebEngineProcess" in f for _r, _d, fs in os.walk(base) for f in fs)
+                ok_web = ok_web and found
+            lines.append(f"browser: {'ok' if ok_web else 'MISSING'} ({_wec.__name__})")
+            ok = ok and ok_web
+        except Exception as e:
+            lines.append(f"browser: FAILED {e}")
+            ok = False
         for role_ in ("cpu", "gpu"):
             p.submit("jobfuncs:ping_job", (), {"write": 3}, role_, helpers.NOW,
                      cb=lambda kind, data, r=role_: done.__setitem__(r, (kind, data)) if kind != "progress" else None)
@@ -960,6 +986,7 @@ def main():
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("FaceSort.App")
         except Exception:
             pass
+    QApplication.setAttribute(Qt.AA_ShareOpenGLContexts)    # (1.56) needed by the built-in browser
     app = QApplication(sys.argv)
     app.setApplicationName("FaceSort")
     app.setStyle("Fusion")

@@ -153,6 +153,31 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.56.0
+- FaceSort has its own web browser (Browser, on the toolbar).
+  - It keeps you signed in: your session is saved, and when you sign in to a site FaceSort offers to
+    save the login - encrypted on this PC (with your profile's key when it has a password, else
+    with Windows' protection for your account). "Fill login" fills it in on that site; it's never
+    filled in anywhere else. Logins… lists them (Add / Forget).
+  - Max Image Saver runs inside it, exactly as in Chrome: the download button on every picture
+    (largest version), and the ALL / GALLERY / Flickr / SuicideGirls / Patreon / ModelMayhem /
+    YouPic buttons. What it saves goes into a "Web drops" folder and Recently dropped.
+- Gallery watcher: watch galleries, albums, profiles or model pages for anything new.
+  - Add an address, or "Watch this gallery…" in the browser. Each gallery is read like the ALL
+    button (the pictures on the page) or the GALLERY button (each thumbnail's own page), with the
+    page scrolled to the end first so everything loads.
+  - Check galleries (beside Quick review) checks them all now; the Gallery watcher can also check
+    by itself every so many hours while FaceSort is open. You watch each check happen in its window.
+  - Only pictures and videos new since the last check are downloaded (into "Web galleries" in your
+    library, in the folders Max Image Saver makes - e.g. Flickr/<owner>/<album>), with the date
+    taken written into the file where the site gives it.
+  - Sites…: how each site is read and tagged - the people to tag, a FaceSort folder, Sort Later,
+    or "ask me each time". A gallery can have its own settings instead of its site's.
+  - A gallery that needs signing in: FaceSort uses the browser's saved session, or fills in and
+    sends your saved login for that site when the page asks for it.
+- Fixed: "Lock after X minutes" and the helpers easing off while you work now go by Windows' own
+  last-input time (the way 1.55 watched for input could crash together with the browser).
+
 1.55.3
 - Fixed for real: Back up now on a library over 2 GB still stopped with "OverflowError" - the
   background job sent its progress in bytes, and Qt's signals only carry numbers up to about

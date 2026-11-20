@@ -181,7 +181,7 @@ def test_lock_screen_and_settings_page(library, qapp, monkeypatch):
     w.locker.lock_now()
     assert seen == [False] and w.isVisible()
     # idle: locks by itself after the minutes set
-    w.locker.last -= 11 * 60
+    monkeypatch.setattr(w.locker, "idle", lambda: 11 * 60)
     w.locker.check()
     assert len(seen) == 2
     w.close()

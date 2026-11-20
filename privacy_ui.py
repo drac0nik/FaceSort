@@ -2,7 +2,7 @@
 import os
 import time
 
-from PySide6.QtCore import QEvent, QObject, Qt, QTimer
+from PySide6.QtCore import QObject, Qt, QTimer
 from PySide6.QtGui import QFont, QGuiApplication
 from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
                                QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox, QVBoxLayout,
@@ -234,29 +234,57 @@ def finish_pending():
                             "Your library isn't encrypted any more.")
 
 
+def _system_idle():
+    """Seconds since the last key press or mouse move on this PC (Windows), else None."""
+    import sys
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class LII(ctypes.Structure):
+            _fields_ = [("cbSize", wintypes.UINT), ("dwTime", wintypes.DWORD)]
+        li = LII()
+        li.cbSize = ctypes.sizeof(LII)
+        if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(li)):
+            return None
+        return ((ctypes.windll.kernel32.GetTickCount() - li.dwTime) & 0xFFFFFFFF) / 1000.0
+    except Exception:
+        return None
+
+
 class LockController(QObject):
-    """Locks the window after a while without use, or when it's minimized (Settings > Privacy)."""
+    """Locks the window after a while without use, or when it's minimized (Settings > Privacy).
+    (1.56: "without use" comes from Windows' own idle time - an application-wide event filter, the
+    way 1.55 watched for input, could crash with the built-in browser.)"""
 
     def __init__(self, win):
         super().__init__(win)
         self.win = win
         self.last = time.monotonic()
         self.locked = False
-        QApplication.instance().installEventFilter(self)
+        self._cursor = None
         self.timer = QTimer(self, interval=15000)
         self.timer.timeout.connect(self.check)
         self.timer.start()
 
-    def eventFilter(self, obj, ev):
-        if ev.type() in (QEvent.MouseButtonPress, QEvent.KeyPress, QEvent.Wheel, QEvent.MouseMove):
+    def idle(self):
+        s = _system_idle()
+        if s is not None:
+            return min(s, time.monotonic() - self.last)
+        from PySide6.QtGui import QCursor
+        pos = QCursor.pos()
+        if pos != self._cursor:
+            self._cursor = pos
             self.last = time.monotonic()
-        return False
+        return time.monotonic() - self.last
 
     def check(self):
         if self.locked or not cryptbox.has_password():
             return
         mins = cryptbox.options().get("idle_minutes") or 0
-        if mins and time.monotonic() - self.last > mins * 60:
+        if mins and self.idle() > mins * 60:
             self.lock_now()
 
     def minimized(self):

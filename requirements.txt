@@ -12,3 +12,4 @@ send2trash>=1.8
 imageio-ffmpeg>=0.5
 cryptography>=42
 sqlcipher3-wheels>=0.5.4
+PySide6-WebEngine>=6.10
