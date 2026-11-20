@@ -659,6 +659,8 @@ class JobsMixin:
         """Scan with "keep them, and show me the list": the files that weren't there any more."""
         p = os.path.join(store.data_dir(), "Missing files.txt")
         try:
+            if store.encrypted_now():
+                raise OSError("encrypted library: no list on disk")
             with open(p, "w", encoding="utf-8") as f:
                 f.write(f"{len(paths):,} files in the library weren't found by the scan on "
                         f"{time.strftime('%Y-%m-%d %H:%M')} (kept in the library):\n\n")
@@ -905,9 +907,10 @@ class JobsMixin:
         e.accept()
         try:
             import backup
-            if backup.pending() is None and backup.due(self.settings) \
+            import privacy
+            if backup.pending() is None and not privacy.pending() and backup.due(self.settings) \
                     and not os.environ.get("FACESORT_NO_AUTO_BACKUP"):
-                backup.run_detached_backup()      # its own process: closing isn't slowed down
+                backup.run_detached_backup(self.settings)      # its own process: closing isn't slowed down
                 log("backup on close started")
         except Exception as ex:
             log(f"backup on close: {ex}")

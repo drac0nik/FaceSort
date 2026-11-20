@@ -1,7 +1,6 @@
 """The window's file tools (1.53): Rename…, Export… and Contact sheet… for a selection, a person or a folder."""
 import os
 
-import store
 
 
 class FilesMixin:

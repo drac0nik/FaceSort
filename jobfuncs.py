@@ -17,7 +17,8 @@ __all__ = ['dup_sets_job', 'misplaced_job', 'clip_index_job', 'clip_download_job
 def log(msg):
     try:
         with open(os.path.join(store.data_dir(), "facesort.log"), "a", encoding="utf-8") as f:
-            f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + str(msg) + "\n")
+            import cryptbox
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + cryptbox.scrub(str(msg)) + "\n")
     except Exception:
         pass
 

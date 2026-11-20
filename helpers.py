@@ -190,6 +190,9 @@ def helper_main(role_, slot, task_q, result_q, cancel, ui_active, xlock, xui, xo
             break
         tid, func, args, kw, pri, data_dir = task[:6]
         opts = task[6] if len(task) > 6 else {}
+        if opts.get("mk"):
+            import cryptbox
+            cryptbox.set_master(opts["mk"])
         if opts.get("nofp16"):
             os.environ["FACESORT_NO_FP16"] = "1"
         else:
@@ -432,7 +435,11 @@ class Pool:
                 continue
             h.tid, t["helper"] = tid, h
             h.cancel.value = 0
-            h.task_q.put((tid, func, args, kw, pri, data_dir, t.get("opts") or {}))
+            opts = dict(t.get("opts") or {})
+            import cryptbox
+            if cryptbox.unlocked():
+                opts["mk"] = cryptbox.master()       # (1.55) an encrypted library: the helper needs its key
+            h.task_q.put((tid, func, args, kw, pri, data_dir, opts))
         for item in skipped:
             heapq.heappush(self.waiting, item)
         # something you're waiting for (a scan, say) and its helper is busy with housekeeping: the

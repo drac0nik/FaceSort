@@ -25,7 +25,7 @@ How it works
 """
 import os
 import re
-import sqlite3
+from dbshim import sqlite3
 import sys
 import threading
 import time
@@ -63,7 +63,8 @@ def _log(msg):
     try:
         import store
         with open(os.path.join(store.data_dir(), "facesort.log"), "a", encoding="utf-8") as f:
-            f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + msg + "\n")
+            import cryptbox
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + cryptbox.scrub(msg) + "\n")
     except Exception:
         print(msg, file=sys.stderr)
 

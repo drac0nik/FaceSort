@@ -97,8 +97,9 @@ class StallWatch:
 
     def _write(self, line):
         try:
+            import cryptbox
             with open(self.path, "a", encoding="utf-8") as f:
-                f.write(line + "\n")
+                f.write(cryptbox.scrub(line) + "\n")
             self._lines += 1
             if self._lines % 200 == 0:
                 with open(self.path, encoding="utf-8") as f:

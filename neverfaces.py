@@ -33,9 +33,9 @@ def _path():
 def load():
     """[{"id", "label", "added", "embs": {model: [vectors]}, "seen": [(photo path, box)], "thumb": bytes}]"""
     try:
-        with open(_path(), encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, ValueError):
+        import cryptbox
+        data = json.loads(cryptbox.read_private(_path(), "never track").decode("utf-8"))
+    except Exception:
         return []
     out = []
     for e in data.get("entries", []):
@@ -55,10 +55,8 @@ def save(entries):
                  for m, vecs in e["embs"].items()},
         "seen": [list(s) for s in e["seen"]][:20],
         "thumb": base64.b64encode(e["thumb"]).decode() if e.get("thumb") else None} for e in entries]}
-    tmp = _path() + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f)
-    os.replace(tmp, _path())
+    import cryptbox
+    cryptbox.write_private(_path(), json.dumps(data).encode("utf-8"), "never track")   # (encrypted with the library)
 
 
 def _unit(v):

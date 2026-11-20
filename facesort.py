@@ -744,6 +744,17 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         sc = QShortcut(QKeySequence("Ctrl+Shift+N"), self)       # new folder, as in Windows Explorer
         sc.setContext(Qt.WindowShortcut)
         sc.activated.connect(self.new_folder_here)
+        import privacy_ui
+        self.locker = privacy_ui.LockController(self)           # (1.55) idle / minimized locking
+        sc = QShortcut(QKeySequence("Ctrl+Shift+L"), self)       # lock now
+        sc.setContext(Qt.ApplicationShortcut)
+        sc.activated.connect(self.locker.lock_now)
+
+    def changeEvent(self, e):
+        from PySide6.QtCore import QEvent
+        if e.type() == QEvent.WindowStateChange and self.isMinimized() and getattr(self, "locker", None):
+            self.locker.minimized()
+        super().changeEvent(e)
 
     def _build_status(self):
         sb = self.statusBar()
@@ -936,6 +947,10 @@ def main():
     icon_path = engine.resource_path("icon.png")
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))
+    import privacy_ui
+    if not privacy_ui.gate():                # (1.55) a locked profile opens only with its password
+        return 0
+    privacy_ui.finish_pending()              # encrypting / decrypting asked for in Settings
     finish_restore()
     try:
         engine.FaceEngine()  # fail early and clearly if the models are missing

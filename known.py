@@ -10,7 +10,7 @@ cover different angles, ages and lighting.
 import hashlib
 import os
 import time
-import sqlite3
+from dbshim import sqlite3
 from contextlib import contextmanager
 
 import numpy as np
@@ -86,7 +86,7 @@ _READY = set()          # files whose tables are already up to date (checked onc
 def connect(p=None):
     p = p or path()
     fresh = not os.path.exists(p)
-    c = sqlite3.connect(p, timeout=30)
+    c = store.open_db(p, timeout=30)
     if p in _READY and not fresh:
         return c
     c.executescript(SCHEMA)  # also adds tables introduced in newer versions
@@ -133,7 +133,7 @@ def counts():
     if not os.path.exists(p):
         return (0, 0)
     try:
-        k = sqlite3.connect(f"file:{p}?mode=ro", uri=True, timeout=2)
+        k = store.open_db(f"file:{p}?mode=ro", uri=True, timeout=2)
         try:
             v = (k.execute("SELECT COUNT(*) FROM people").fetchone()[0],
                  k.execute("SELECT COUNT(*) FROM samples").fetchone()[0])
@@ -361,7 +361,7 @@ def export_to(dest):
 
 def import_from(src):
     """Merge another known-people file in. Returns the number of people in it."""
-    s = sqlite3.connect(src)
+    s = store.open_db(src, plain=True)            # (a file from outside)
     try:
         fmt = s.execute("SELECT v FROM info WHERE k='format'").fetchone()
         if not fmt or not str(fmt[0]).startswith("facesort-known-people"):
@@ -429,7 +429,7 @@ def export_root(root, conn=None):
     ref = os.path.join(root, REF_NAME)
     pre = root.rstrip("\\/") + os.sep
     try:
-        r = sqlite3.connect(ref, timeout=30)
+        r = store.open_db(ref, timeout=30)
         r.executescript(SCHEMA)
         if "inside" not in {x[1] for x in r.execute("PRAGMA table_info(cat_tree)")}:
             r.execute("ALTER TABLE cat_tree ADD COLUMN inside INTEGER DEFAULT 0")
@@ -474,7 +474,7 @@ def import_root(root):
     if not os.path.exists(ref):
         return 0
     try:
-        r = sqlite3.connect(ref, timeout=30)
+        r = store.open_db(ref, timeout=30)
         r.executescript(SCHEMA)
     except sqlite3.Error:
         return 0

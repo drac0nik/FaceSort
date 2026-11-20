@@ -1,5 +1,5 @@
 """The single-writer gate: one writer at a time, the window first, no "database is locked"."""
-import sqlite3
+from dbshim import sqlite3
 import threading
 import time
 

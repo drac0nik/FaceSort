@@ -4,7 +4,7 @@ import json
 import os
 import re
 import time
-import sqlite3
+from dbshim import sqlite3
 import sys
 
 import numpy as np
@@ -98,8 +98,9 @@ def threshold(settings, model=None):
 def load_settings():
     s = dict(DEFAULT_SETTINGS)
     try:
-        with open(os.path.join(data_dir(), "settings.json"), "r", encoding="utf-8") as f:
-            saved = json.load(f)
+        import cryptbox
+        saved = json.loads(cryptbox.read_private(os.path.join(data_dir(), "settings.json"), "settings")
+                           .decode("utf-8"))
         if saved.get("settings_version", 1) < 2 and saved.get("min_face_px") == 32:
             saved["min_face_px"] = 20  # old default skipped small faces in group photos
         s.update(saved)
@@ -110,11 +111,11 @@ def load_settings():
 
 
 def save_settings(s):
+    import cryptbox
+    if encrypted_now() and not cryptbox.unlocked():
+        return                                  # (locked: the encrypted settings are left as they are)
     path = os.path.join(data_dir(), "settings.json")
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(s, f, indent=2)
-    os.replace(tmp, path)
+    cryptbox.write_private(path, json.dumps(s, indent=2).encode("utf-8"), "settings")
 
 
 # ----------------------------------------------------------------- database
@@ -287,12 +288,48 @@ def _add_column(conn, sql):
             raise
 
 
+_ENC_CACHE = [None, None]
+
+
+def encrypted_now():
+    """(1.55) Is this profile's library encrypted? (the lock file, read again only when it changes)"""
+    import cryptbox
+    p = cryptbox.lock_path()
+    try:
+        m = os.path.getmtime(p)
+    except OSError:
+        return False
+    if _ENC_CACHE[0] != (p, m):
+        _ENC_CACHE[0], _ENC_CACHE[1] = (p, m), cryptbox.data_encrypted()
+    return _ENC_CACHE[1]
+
+
+class LockedError(RuntimeError):
+    pass
+
+
+def open_db(target, timeout=30, uri=False, factory=None, plain=False):
+    """sqlite3.connect for FaceSort's own databases: with the key when the library is encrypted.
+    plain=True: a file from outside (always opened as it is)."""
+    kw = {"timeout": timeout, "uri": uri}
+    if factory is not None:
+        kw["factory"] = factory
+    c = sqlite3.connect(target, **kw)
+    if not plain and encrypted_now():
+        import cryptbox
+        k = cryptbox.db_key()
+        if not k:
+            c.close()
+            raise LockedError("FaceSort is locked")
+        sqlite3.Connection.execute(c, f"PRAGMA key = {k}")
+    return c
+
+
 def connect(path=None):
     """A connection to the library. All of them write through one write gate (dbgate): one
     writer at a time, the window first, background writes saved one short statement at a time."""
     import dbgate
-    conn = sqlite3.connect(path or os.path.join(data_dir(), "library.db"), timeout=30,
-                           factory=dbgate.GatedConnection)
+    conn = open_db(path or os.path.join(data_dir(), "library.db"), timeout=30, factory=dbgate.GatedConnection)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA synchronous=NORMAL")

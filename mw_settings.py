@@ -333,6 +333,7 @@ class SettingsMixin:
             return
         old = dict(self.settings)
         new = dlg.result_settings()
+        QTimer.singleShot(0, lambda: dlg.privacy_page.apply_after(self))   # (1.55) encrypt / decrypt at a restart
         QTimer.singleShot(0, self.sync_match_slider)       # (the header slider follows Settings)
         QTimer.singleShot(0, lambda: self.update_scope_button())
         removed = [f for f in old["folders"] if f not in new["folders"]]

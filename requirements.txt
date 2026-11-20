@@ -10,3 +10,5 @@ onnxconverter-common>=1.14
 rawpy>=0.21
 send2trash>=1.8
 imageio-ffmpeg>=0.5
+cryptography>=42
+sqlcipher3-wheels>=0.5.4

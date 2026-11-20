@@ -153,6 +153,24 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.55.0
+- Settings has a new Privacy tab. Everything here is off unless you turn it on.
+  - Password: set one, change it, or remove it. When you set it you're given a recovery key
+    (25 characters) - write it down or save it off this PC: if you forget the password, it's the
+    only way back in. "New recovery key…" makes a fresh one (the old one stops working).
+  - Locking: ask for the password when FaceSort opens, lock after so many minutes without use,
+    lock when minimized, and Lock now (Ctrl+Shift+L). Locking hides every FaceSort window until the
+    password is typed; FaceSort always locks when it closes.
+  - Encrypt the library: everything FaceSort keeps about your photos - names, faces, tags, folders,
+    albums, history, thumbnails, settings and the never-track list - is encrypted on this PC and can
+    only be read with your password or recovery key. Paths and file names are kept out of the logs
+    (and the move logs aren't written). Backups of an encrypted library are encrypted too; when you
+    turn it on, FaceSort offers to delete the older, unencrypted backups. Turning it on or off
+    happens when FaceSort restarts (each database is copied, checked table by table, then swapped
+    in). Encrypting the photo and video files themselves comes in the next version.
+- The groundwork for more than one profile (each with its own library) is in place; adding and
+  switching profiles comes later.
+
 1.54.0
 - Edit mode in the viewer: press E (or the blue Edit button) on a photo or a video.
   Photos - a panel beside the picture, with a live preview:

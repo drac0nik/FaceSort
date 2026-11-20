@@ -49,6 +49,12 @@ class SettingsDialog(QDialog):
             scroll.setWidget(body)
             self.tabs.addTab(scroll, app_icon(icon), title)
             pages[key] = (pl, body)
+        import privacy_ui
+        self.privacy_page = privacy_ui.PrivacyPage(win)
+        a_scroll = QScrollArea()
+        a_scroll.setWidgetResizable(True)
+        a_scroll.setWidget(self.privacy_page)
+        self.tabs.addTab(a_scroll, app_icon("lock"), "Privacy")
         import viewer_ui
         self.viewer_page = viewer_ui.ViewerSettingsPage(self.s)
         self.tabs.addTab(self.viewer_page, app_icon("search"), "Viewer")
@@ -711,6 +717,7 @@ class SettingsDialog(QDialog):
         self.rules_edit.save_to(s)
         self.backups_page.save_to(s)
         self.viewer_page.save_to(s)
+        self.privacy_page.save_to(s)
         s["tag_column"] = self.cb_tagcol.isChecked()
         s["safe_suggestive"] = self.cb_safe_sugg.isChecked()
         s["settings_tab"] = self.tabs.currentIndex()       # opens on the same tab next time

@@ -509,8 +509,8 @@ class HiResLoader(QObject):
             h = hashlib.sha1(sig.encode("utf-8", "replace")).hexdigest()
             cache = os.path.join(thumb_cache_dir(), h[:2], h + ".jpg")
             if os.path.exists(cache):
-                with open(cache, "rb") as f:
-                    data = f.read()
+                import cryptbox
+                data = cryptbox.read_private(cache, "thumbs")
         except Exception:
             cache = None
         if not data:
@@ -520,11 +520,10 @@ class HiResLoader(QObject):
                 data = None
             if data and cache:     # kept on disk: next time the library opens, no photo is decoded
                 try:
+                    import cryptbox
                     os.makedirs(os.path.dirname(cache), exist_ok=True)
-                    with open(cache + ".tmp", "wb") as f:
-                        f.write(data)
-                    os.replace(cache + ".tmp", cache)
-                except OSError:
+                    cryptbox.write_private(cache, data, "thumbs")       # (encrypted with the library)
+                except Exception:
                     pass
         self.pending.discard(key)
         if gen != self.generation or not data:

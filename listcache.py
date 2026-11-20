@@ -10,7 +10,7 @@ The questions are the ones the last redraw asked (they hardly change from one re
 anything new is simply asked as before. If you change something else while the answers are being
 read, they're thrown away and read again - the lists never show older numbers than before.
 """
-import sqlite3
+from dbshim import sqlite3
 import time
 
 SKIP = ("temp.", "scope_ids")      # (temp tables belong to the window's own connection)

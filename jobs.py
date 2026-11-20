@@ -5,7 +5,7 @@ import hashlib
 import os
 import re
 import shutil
-import sqlite3
+from dbshim import sqlite3
 import time
 
 import numpy as np
@@ -1239,7 +1239,7 @@ def export_folders(conn, dest, include_suggestions=False, move=False,
         log_rows += [(a, b) for a, b in cleaned]
     if move and log_rows:
         stats["moves"] = [(a, b) for a, b in log_rows if a != b]      # (1.47) for the history: undo moves them back
-    if log_rows:
+    if log_rows and not store.encrypted_now():     # (1.55: an encrypted library keeps its history inside only)
         # a record of every move, in case you want to put things back
         # (kept in FaceSort's own data folder - the library doesn't need it, so it stays out of your photos)
         name = time.strftime("FaceSort moves %Y-%m-%d %H%M%S.csv")

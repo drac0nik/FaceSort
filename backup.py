@@ -27,7 +27,7 @@ import hashlib
 import json
 import os
 import shutil
-import sqlite3
+from dbshim import sqlite3
 import sys
 import time
 import zipfile
@@ -36,7 +36,7 @@ import store
 
 FORMAT = "facesort-backup-1"
 DBS = ("library.db", "known_people.db")
-FILES = ("settings.json", "never_track.json")
+FILES = ("settings.json", "never_track.json", "profile_lock.json")   # (1.55: the lock goes with an encrypted library)
 FOLDERS = ("move logs",)
 PREFIX = "FaceSort backup "
 PENDING = "restore_pending.json"
@@ -65,8 +65,20 @@ def _sha256(path):
 
 def _snapshot(src, dst):
     """A consistent copy of a SQLite database (works while it's in use)."""
-    a = sqlite3.connect(src, timeout=60)     # (only read: SQLite's backup copies page by page)
-    b = sqlite3.connect(dst)
+    import cryptbox
+    import store
+    if store.encrypted_now() and not cryptbox.unlocked():
+        # (1.55) the backup on close of an encrypted library: FaceSort has closed (so the database
+        # is complete in its file) and the file is encrypted already - copied as it is
+        for ext in ("", "-wal"):
+            if os.path.exists(src + ext):
+                shutil.copy2(src + ext, dst + ext)
+        if os.path.exists(dst + "-wal"):
+            os.replace(dst + "-wal", dst + ".wal-part")      # (kept with it; SQLite reads it back on open)
+            os.replace(dst + ".wal-part", dst + "-wal")
+        return
+    a = store.open_db(src, timeout=60)       # (only read: SQLite's backup copies page by page)
+    b = store.open_db(dst)                   # (an encrypted library's backup stays encrypted)
     try:
         a.backup(b, pages=4096)
     finally:
@@ -195,7 +207,8 @@ def make(settings=None, dest=None, progress=lambda d, t, m: None, cancelled=lamb
 
 def _count(db):
     try:
-        c = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        import store
+        c = store.open_db(f"file:{db}?mode=ro", uri=True)
         try:
             return c.execute("SELECT COUNT(*) FROM photos").fetchone()[0]
         finally:
@@ -369,9 +382,13 @@ def remap(conn, settings, old, new):
     return n
 
 
-def run_detached_backup():
-    """Start a backup in its own process (used when FaceSort closes)."""
-    _spawn(["--backup-now"])
+def run_detached_backup(settings=None):
+    """Start a backup in its own process (used when FaceSort closes). Where it goes and how many
+    are kept come along (an encrypted library's settings can't be read by that process)."""
+    args = ["--backup-now"]
+    if settings is not None:
+        args += ["--folder", folder(settings), "--keep", str(int(settings.get("backup_keep", 10)))]
+    _spawn(args)
 
 
 def relaunch():
@@ -403,6 +420,10 @@ def backup_now_main():
         log = print
     try:
         settings = store.load_settings()
+        argv = sys.argv
+        for flag, key, conv in (("--folder", "backup_folder", str), ("--keep", "backup_keep", int)):
+            if flag in argv and argv.index(flag) + 1 < len(argv):
+                settings[key] = conv(argv[argv.index(flag) + 1])
         time.sleep(1.0)                               # (the window's process lets go of the library)
         path = make(settings)
         log(f"backup made: {path}")
