@@ -153,6 +153,9 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.55.1
+- The release build now checks that encryption works in the packaged app before it ships.
+
 1.55.0
 - Settings has a new Privacy tab. Everything here is off unless you turn it on.
   - Password: set one, change it, or remove it. When you set it you're given a recovery key

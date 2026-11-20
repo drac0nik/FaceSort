@@ -812,6 +812,26 @@ def selftest_helpers(out_path):
     try:
         conn = store.connect()
         conn.close()
+        import dbshim                    # (1.55) the packaged app must have SQLCipher (encrypted libraries)
+        lines.append(f"sqlcipher: {dbshim.CIPHER} (SQLite {dbshim.sqlite3.sqlite_version})")
+        if not dbshim.CIPHER:
+            ok = False
+        else:
+            import privacy
+            import cryptbox
+            t = os.path.join(store.data_dir(), "selftest-cipher.db")
+            c = dbshim.sqlite3.connect(t)
+            c.execute("CREATE TABLE IF NOT EXISTS x(a)")
+            c.execute("INSERT INTO x VALUES(1)")
+            c.commit()
+            c.close()
+            cryptbox.set_master(os.urandom(32))
+            privacy.convert_db(t, True, cryptbox.subkey(cryptbox.master(), "library database").hex())
+            enc = not open(t, "rb").read(16).startswith(b"SQLite format 3")
+            lines.append(f"encrypting a database: {'ok' if enc else 'FAILED'}")
+            ok = ok and enc
+            cryptbox.lock()
+            os.remove(t)
         for role_ in ("cpu", "gpu"):
             p.submit("jobfuncs:ping_job", (), {"write": 3}, role_, helpers.NOW,
                      cb=lambda kind, data, r=role_: done.__setitem__(r, (kind, data)) if kind != "progress" else None)
