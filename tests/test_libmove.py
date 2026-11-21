@@ -90,3 +90,25 @@ def test_tagged_photos_leave_unsorted(window, tmp_path, monkeypatch):
                           libmove.unsorted_dir(str(lib)))
     assert solo not in libmove.tagged_waiting(c, store.norm_path(str(lib)))
     assert w.automove_tick(force=True) is False                            # ...and it stays put
+
+
+def test_made_files_are_imported(window, tmp_path, monkeypatch):
+    """1.57.4: pictures FaceSort makes are in FaceSort straight away; outside the library they go into
+    ~Unsorted first; a contact sheet starts out in the library."""
+    import contactsheet_ui
+    from PIL import Image
+    w, c = window, window.conn
+    lib = tmp_path / "My Library"
+    lib.mkdir()
+    w.settings["library_root"] = store.norm_path(str(lib))
+    w.settings.pop("sheet_dest", None)
+    scanned = []
+    monkeypatch.setattr(w, "scan_paths", lambda paths: scanned.extend(paths))
+    out = tmp_path / "Desktop" / "sheet 1.jpg"
+    out.parent.mkdir()
+    Image.new("RGB", (60, 40), "white").save(str(out))
+    made = w.import_made([str(out), str(tmp_path / "missing.jpg")])
+    assert made == [store.norm_path(libmove.target(str(out), str(lib)))] and os.path.exists(made[0])
+    assert pid_of(c, made[0]) and scanned == made
+    d = contactsheet_ui.ContactSheetDialog(w, 3, "Alice")
+    assert d.dest.text() == os.path.join(libmove.unsorted_dir(store.norm_path(str(lib))), "Contact sheets")

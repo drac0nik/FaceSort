@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 import photoedit
+import store
 from conftest import build_library, pump
 
 
@@ -294,6 +295,10 @@ def test_gif_edit_mode(edit_window, qapp):
     _wait(qapp, lambda: not v.ed_saver.busy and v.ed_panel.isEnabled())
     folder = os.path.join(os.path.dirname(gif), "anim frames")
     assert len(os.listdir(folder)) == 6
+    # 1.57.4: the frames are in FaceSort straight away, as copies of the GIF
+    gid = w.conn.execute("SELECT id FROM photos WHERE path=?", (store.norm_path(gif),)).fetchone()[0]
+    rows = w.conn.execute("SELECT path, copy_of FROM photos WHERE path LIKE ?", ("%anim frame %",)).fetchall()
+    assert len(rows) == 6 and all(r[1] == gid for r in rows)
     v.exit_edit()
     assert v.ed_gif is None and not v.ed_panel.gif_sec.isVisibleTo(v.ed_panel)
     v.close_viewer()

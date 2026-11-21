@@ -153,6 +153,19 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.57.4
+- Pictures FaceSort makes are added to FaceSort and scanned straight away:
+  - GIF frames ("Save every frame as a picture…") - tagged like the GIF, and left out of Duplicates
+    as copies of it.
+  - Contact sheets saved as JPEG. They're made in <library>\~Unsorted\Contact sheets unless you
+    choose another folder. A sheet saved outside the library moves into ~Unsorted like any import.
+    PDF sheets stay where you saved them, because a PDF isn't a picture FaceSort reads.
+  - Edited copies, new video clips, screenshots, the 12-shot collage, low light frames, enhanced
+    clips and JPEG copies of RAW files were already added straight away, and still are.
+  - Anything made outside the library and your folders goes into ~Unsorted first (when "Move what I
+    import into the library" is on). Once someone is confirmed on it, it moves to their folder like
+    everything else.
+
 1.57.3
 - What you import goes straight into your FaceSort library. Drops, Add folder… (imported once), Web
   drops, the browser and watched galleries move the photos and videos into

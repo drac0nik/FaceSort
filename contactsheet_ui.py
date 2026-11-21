@@ -74,6 +74,10 @@ class ContactSheetDialog(QDialog):
         prow = QHBoxLayout()
         home = os.path.expanduser("~")
         docs = os.path.join(home, "Pictures") if os.path.isdir(os.path.join(home, "Pictures")) else home
+        import libmove
+        lib = libmove.library(st)
+        if lib and st.get("import_into_library", True):     # (1.57.4) made in the library to begin with
+            docs = os.path.join(libmove.unsorted_dir(lib), "Contact sheets")
         self.dest = QLineEdit(st.get("sheet_dest") or docs)
         b = QPushButton("Browse…")
         b.clicked.connect(self.browse)
@@ -152,9 +156,14 @@ def run_contact_sheet(win, pids, title):
     def done(files):
         if not files:
             return
+        # (1.57.4) JPEG sheets are added to FaceSort straight away (a PDF isn't a picture FaceSort reads)
+        made = win.import_made([f for f in files if f.lower().endswith((".jpg", ".jpeg"))])
+        if made:
+            files = made + [f for f in files if not f.lower().endswith((".jpg", ".jpeg"))]
         box = QMessageBox(win)
         box.setWindowTitle("Contact sheet")
-        box.setText("Contact sheet saved:\n" + "\n".join(files[:5]) + (f"\n… and {len(files) - 5} more" if len(files) > 5 else ""))
+        box.setText("Contact sheet saved:\n" + "\n".join(files[:5]) + (f"\n… and {len(files) - 5} more" if len(files) > 5 else "")
+                    + ("\n\nAdded to FaceSort." if made else ""))
         op = box.addButton("Open it", QMessageBox.ActionRole)
         fo = box.addButton("Show in folder", QMessageBox.ActionRole)
         box.addButton(QMessageBox.Ok)

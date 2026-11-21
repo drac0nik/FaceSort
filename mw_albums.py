@@ -481,6 +481,33 @@ class AlbumsMixin:
             self.scan_paths([out])
         return out
 
+    def import_made(self, paths, src=None, copy_of=False):
+        """(1.57.4) New pictures FaceSort made (GIF frames, contact sheets…): in FaceSort straight away,
+        and scanned. Saved outside the library and your folders, they go into ~Unsorted first (like any
+        import). src: the photo they came from (its people tags and folder come along).
+        -> the paths they're at now."""
+        import libmove
+        paths = [store.norm_path(p) for p in paths if os.path.isfile(p)
+                 and (os.path.splitext(p)[1].lower() in engine.IMAGE_EXTS or engine.is_video(p))]
+        if not paths:
+            return []
+        s = self.settings
+        lib = libmove.library(s)
+        folders = s["folders"]
+        covered = lambda p: any(libmove.inside(p, f) for f in folders) or (lib and libmove.inside(p, lib))
+        outside = [p for p in paths if not covered(p)]
+        if outside and lib and s.get("import_into_library", True):
+            if not any(libmove.inside(lib, f) for f in folders):
+                folders.append(lib)
+                store.save_settings(s)
+            done, _errors = libmove.run(self.conn, [(p, libmove.target(p, lib)) for p in outside])
+            paths = [done.get(p, p) for p in paths]
+        outs = [self.add_derived(src or p, p, copy_of=bool(copy_of and src), scan=False) for p in paths]
+        outs = [o for o in outs if o]
+        if outs:
+            self.scan_paths(outs)
+        return outs
+
     def raw_jpeg_copies(self, photo_ids):
         """Right-click > Make a JPEG copy: a full-quality JPEG next to each RAW, tagged like it."""
         q = ",".join("?" * len(photo_ids))

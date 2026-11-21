@@ -181,7 +181,7 @@ class ViewerEditMixin:
 
         def work(step, cancelled):
             paths = gifedit.save_frames(src, folder, p if photoedit.changed(p) else None, g, step, cancelled)
-            return {"frames": paths, "folder": folder}
+            return {"frames": paths, "folder": folder, "src": src}
         self.ed_panel.setEnabled(False)
         self.toast.setText("Saving every frame…")
         self.ed_saver.submit(work)
@@ -442,10 +442,13 @@ class ViewerEditMixin:
             return
         win = self.win
         if "frames" in res:
+            # (1.57.4) in FaceSort straight away, tagged like the GIF (and kept out of Duplicates)
+            outs = win.import_made(res["frames"], src=res.get("src"), copy_of=True)
             n = len(res["frames"])
-            msg = f"✓ Saved {n} frame{'s' if n != 1 else ''} as pictures in “{os.path.basename(res['folder'])}”"
+            where = os.path.dirname(outs[0]) if outs else res["folder"]
+            msg = f"✓ Saved {n} frame{'s' if n != 1 else ''} as pictures in “{os.path.basename(where)}” - added to FaceSort"
             self.toast.setText(msg)
-            win.statusBar().showMessage(msg + f" ({res['folder']})", 12000)
+            win.statusBar().showMessage(msg + f" ({where})", 12000)
             return
         src = res["src"]
         if not res["replace"]:
