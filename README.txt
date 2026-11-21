@@ -153,6 +153,32 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.57.3
+- What you import goes straight into your FaceSort library. Drops, Add folder… (imported once), Web
+  drops, the browser and watched galleries move the photos and videos into
+  <library>\~Unsorted\<where they were> - C:\Downloads\a.jpg becomes
+  <library>\~Unsorted\C\Downloads\a.jpg.
+  - The library is your Photos library folder (Settings), else the Sort into folders destination.
+    If neither is set, FaceSort asks for it the first time.
+  - A photo's own extra files (.xmp, Takeout .json, .aae, .thm) go with it. Other files (notes,
+    documents…) stay where they are, and folders set to "Leave out" aren't moved.
+  - On the same drive a move is instant. From another drive (a USB stick, a card) each file is
+    copied, checked, then removed from where it was. Anything that can't be moved is added where it
+    is.
+  - Folders you keep watching (Add folder… with Keep watching) aren't moved, and nothing already in
+    the library moves.
+- Tagged photos leave ~Unsorted by themselves. Once someone is confirmed on a photo in ~Unsorted, it
+  moves to where Sort into folders would put it. A group photo goes to the biggest face's folder, and
+  the other people get copies.
+  - It waits until you've stopped using FaceSort for 30 seconds, so fixing a tag straight away
+    doesn't move a file twice. It doesn't happen while a photo is open in the viewer or a job is
+    running.
+  - Photos with nobody confirmed, Sort Later and discarded photos stay in ~Unsorted. Folders left
+    empty in ~Unsorted are removed.
+  - Each batch is in History. Undo puts the photos back in ~Unsorted, and they stay there until you
+    sort them yourself.
+- Settings › General / Library has a switch for each (both on), under Photos library.
+
 1.57.2
 - Animated GIFs can be edited. Open one in the viewer and press E (or Edit):
   - Every edit-mode tool works and is done to every frame: crop, turn, flip, straighten, light,

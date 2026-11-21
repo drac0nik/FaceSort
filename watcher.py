@@ -159,6 +159,10 @@ def base_folder(settings):
     """Where downloaded galleries go: "Web galleries" in your library."""
     if settings.get("gallery_folder"):
         return settings["gallery_folder"]
+    import libmove
+    lib = libmove.library(settings)
+    if lib and settings.get("import_into_library", True):        # (1.57.3) straight into ~Unsorted
+        return os.path.join(libmove.unsorted_dir(lib), "Web galleries")
     root = settings.get("library_root") or (settings.get("folders") or [None])[0]
     if root:
         return os.path.join(root, "Web galleries")

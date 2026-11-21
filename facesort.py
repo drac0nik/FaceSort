@@ -759,6 +759,9 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         self.gallery_timer = QTimer(self, interval=5 * 60 * 1000)   # (1.56) gallery checks that are due
         self.gallery_timer.timeout.connect(self.gallery_timer_tick)
         self.gallery_timer.start()
+        self.automove_timer = QTimer(self, interval=10 * 1000)     # (1.57.3) tagged photos leave ~Unsorted
+        self.automove_timer.timeout.connect(self.automove_tick)
+        self.automove_timer.start()
         sc = QShortcut(QKeySequence("Ctrl+Shift+L"), self)       # lock now
         sc.setContext(Qt.ApplicationShortcut)
         sc.activated.connect(self.locker.lock_now)

@@ -91,6 +91,19 @@ class SettingsDialog(QDialog):
         rr.addWidget(choose_root)
         rr.addWidget(self.rename_root_b)
         lay.addLayout(rr)
+        # (1.57.3) imports go straight into the library; tagged photos move on to their person's folder
+        self.cb_import_lib = QCheckBox("Move what I import into the library, under “~Unsorted\\<where it was>” "
+                                       "(drops, Import once, Web drops, the browser, watched galleries)")
+        self.cb_import_lib.setChecked(self.s.get("import_into_library", True))
+        self.cb_import_lib.setToolTip("C:\\Downloads\\a.jpg becomes <library>\\~Unsorted\\C\\Downloads\\a.jpg. "
+                                      "Folders you keep watching aren't moved.")
+        lay.addWidget(self.cb_import_lib)
+        self.cb_auto_move = QCheckBox("Once someone's confirmed on a photo in ~Unsorted, move it to their folder "
+                                      "(after a short pause; group photos: biggest face, copies for the others)")
+        self.cb_auto_move.setChecked(self.s.get("auto_move", True))
+        lay.addWidget(self.cb_auto_move)
+        for cb in (self.cb_import_lib, self.cb_auto_move):
+            cb.setStyleSheet("QCheckBox { margin-top: 2px; }")
         heading("Photo folders", lay)
         self.folders = QListWidget()
         self.folders.addItems(self.s["folders"])
@@ -698,6 +711,8 @@ class SettingsDialog(QDialog):
         s["tattoo_min_inliers"] = self.tat.value()
         s["keywords_all_people"] = self.cb_kw.isChecked()
         s["folder_hints"] = self.cb_folders.isChecked()
+        s["import_into_library"] = self.cb_import_lib.isChecked()
+        s["auto_move"] = self.cb_auto_move.isChecked()
         s["scan_on_start"] = self.cb_start.isChecked()
         s["ai_detector"] = self.cb_ai.isChecked()
         s["show_ai_group"] = self.cb_ai_group.isChecked()

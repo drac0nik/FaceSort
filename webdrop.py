@@ -190,6 +190,10 @@ def folder(settings):
     """Where pictures dropped from the web are saved."""
     if settings.get("web_drop_folder"):
         return settings["web_drop_folder"]
+    import libmove
+    lib = libmove.library(settings)
+    if lib and settings.get("import_into_library", True):        # (1.57.3) straight into ~Unsorted
+        return os.path.join(libmove.unsorted_dir(lib), "Web drops")
     root = settings.get("library_root") or (settings.get("folders") or [None])[0]
     if root:
         return os.path.join(root, "Web drops")

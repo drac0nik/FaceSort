@@ -5,10 +5,11 @@ import companions
 import engine
 import known
 import bodies
+import libmove
 import store
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QDialog, QFileDialog, QInputDialog, QMessageBox
-from ui_common import APP_VERSION, bodies_download_job, HELP
+from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QInputDialog, QMessageBox
+from ui_common import APP_VERSION, bodies_download_job, HELP, log
 from dialogs import SettingsDialog
 
 
@@ -115,6 +116,25 @@ class SettingsMixin:
         people, cat, later = ch["people"], ch["category"], ch["later"]
         uses = {store.norm_path(p): (u, n) for p, u, n in ch["folders"]}
         skip = [p for p, (u, n) in uses.items() if u == "skip"]
+        orig_dirs, moved_note = list(dirs), ""
+        if not ch["watch"] and self.settings.get("import_into_library", True):
+            # (1.57.3) new imports go straight into the library: <library>\~Unsorted\<where they were>
+            res = self.import_into_library(dirs, files, ask=answers is None, skip=skip)
+            if res is not None:
+                remap, n_moved, errors = res
+                dirs = list(dict.fromkeys(remap(d) for d in dirs))
+                files = list(dict.fromkeys(remap(f) for f in files))
+                uses = {remap(p): v for p, v in uses.items()}
+                skip = [remap(p) for p in skip]
+                known_paths = {r[0] for r in self.conn.execute("SELECT path FROM photos")}
+                prefixes = tuple(d.rstrip("\\/") + os.sep for d in dirs)
+                inside = {p for p in known_paths if prefixes and p.startswith(prefixes)} | \
+                    {f for f in files if f in known_paths}
+                if n_moved:
+                    moved_note = f" · {n_moved:,} moved into {libmove.UNSORTED}"
+                if errors:
+                    moved_note += f" · {len(errors)} couldn't be moved (added where they are)"
+                    files += [store.norm_path(src) for src, _why in errors]
         # where they live from now on: watched (a library folder) or imported once (forgotten -
         # just these photos are kept; the folder isn't looked at again)
         folders = self.settings["folders"]
@@ -167,7 +187,10 @@ class SettingsMixin:
             for p in dirs + files:
                 store.add_drop_rule(self.conn, p, p in dirs, [], None, False, None, batch)
         # everything else that came along (notes, links, documents, archives...): kept with the photos
-        others = self.collect_other_files(dirs, [p for p in paths if os.path.isfile(p) and p not in files])
+        others = self.collect_other_files(orig_dirs, [p for p in paths if os.path.isfile(p)
+                                                      and store.norm_path(p) not in files
+                                                      and not (os.path.splitext(p)[1].lower() in engine.IMAGE_EXTS
+                                                               or engine.is_video(p))])
         if others:
             store.add_drop_files(self.conn, batch, others)
         rules = store.drop_rules(self.conn)
@@ -182,6 +205,7 @@ class SettingsMixin:
             f"{len(dirs)} folder{'s' if len(dirs) != 1 else ''}" if dirs else "",
             f"{len(files)} file{'s' if len(files) != 1 else ''}" if files else "") if x)
         msg += " · watching for new photos" if ch["watch"] and dirs else (" · imported once" if dirs else "")
+        msg += moved_note
         if people:
             msg += " · tagged " + ", ".join(people)
         if cat:
@@ -207,6 +231,100 @@ class SettingsMixin:
         else:
             self.start_scan(videos_only=False, opts=drop)
         return True
+
+    def import_into_library(self, dirs, files, ask=True, skip=()):
+        r"""(1.57.3) Move what's being imported into <library>\~Unsorted\<where it was>.
+        -> (remap(path) -> new path, how many moved, [(path, why)]), or None (imported where it is)."""
+        s = self.settings
+        lib = libmove.library(s)
+        if not lib:
+            if not ask:
+                return None
+            QMessageBox.information(self, "Your FaceSort library",
+                                    "What you import now goes straight into your FaceSort library (into "
+                                    f"“{libmove.UNSORTED}”, and on to each person's folder once they're tagged).\n\n"
+                                    "Choose the folder for your library.")
+            d = QFileDialog.getExistingDirectory(self, "Choose your FaceSort library folder")
+            if not d:
+                self.statusBar().showMessage("No library folder chosen - imported where they are.", 10000)
+                return None
+            lib = store.norm_path(d)
+            s["library_root"] = lib
+        folders = s["folders"]
+        if not any(lib == f or lib.startswith(f.rstrip("\\/") + os.sep) for f in folders):
+            folders.append(lib)
+        store.save_settings(s)
+        moves = libmove.plan(dirs, files, lib, skip=skip, keep=list(folders))
+        done, errors = {}, []
+        if moves:
+            from PySide6.QtWidgets import QProgressDialog
+            dlg = None
+            if len(moves) > 30:
+                dlg = QProgressDialog(f"Moving into {libmove.UNSORTED}…", "Stop", 0, len(moves), self)
+                dlg.setWindowTitle("Import")
+                dlg.setMinimumDuration(400)
+
+            def progress(i, n):
+                if dlg is not None:
+                    dlg.setValue(i)
+                    QApplication.processEvents()
+            done, errors = libmove.run(self.conn, moves, progress, (lambda: dlg.wasCanceled()) if dlg else None)
+            if dlg is not None:
+                dlg.close()
+        keep = [lib] + list(folders)
+
+        def remap(p):
+            p = store.norm_path(p)
+            if p in done:
+                return done[p]
+            if any(libmove.inside(p, k) for k in keep):
+                return p
+            if os.path.isdir(p) or not os.path.exists(p):
+                return store.norm_path(libmove.target(p, lib))
+            return p                                   # (a file that couldn't be moved stays put)
+        for d in dirs:
+            nd = remap(d)
+            if nd != d:
+                os.makedirs(nd, exist_ok=True)
+        return remap, len(done), errors
+
+    def automove_tick(self, force=False):
+        """(1.57.3) Photos in ~Unsorted that now have someone confirmed on them move to where Sort into
+        folders would put them - once you've stopped using FaceSort for a moment (so a quick fix to a
+        tag doesn't move a file twice), never while a photo is open or a job is running."""
+        import time
+        s = self.settings
+        if not s.get("auto_move", True):
+            return False
+        lib = libmove.library(s)
+        if not lib or self.busy() or not os.path.isdir(libmove.unsorted_dir(lib)):
+            return False
+        if not force:
+            if time.monotonic() - (getattr(self, "_last_input", None) or 0) < libmove.PAUSE:
+                return False
+            v = getattr(self, "viewer", None)
+            if v is not None and v.isVisible():
+                return False
+            if getattr(getattr(self, "locker", None), "locked", False):
+                return False
+        pids = libmove.tagged_waiting(self.conn, lib)
+        if not pids:
+            return False
+
+        def done(st):
+            if not isinstance(st, dict):
+                return
+            n = st.get("moved", 0)
+            if n:
+                msg = f"Moved {n:,} tagged photo{'s' if n != 1 else ''} out of {libmove.UNSORTED} into their " \
+                      "person folders" + (f" (+{st['copied']:,} copies for group photos)" if st.get("copied") else "") + \
+                      " · Undo in History"
+                self.statusBar().showMessage(msg, 12000)
+            if st.get("errors"):
+                log(f"auto-move: {len(st['errors'])} couldn't be moved: {st['errors'][:3]}")
+            self.pix_cache.clear()
+            self.refresh_all()
+        return self.run_job("automove", libmove.auto_move_job, lib, pids, on_done=done)
 
     @staticmethod
     def _folder_chain(path, uses, dirs):
