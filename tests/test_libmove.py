@@ -10,11 +10,13 @@ from test_ui import window  # noqa: F401  (the window fixture)
 
 
 def test_target_paths(tmp_path):
-    lib = str(tmp_path / "Lib")
-    t = libmove.target("/home/mj/Downloads/a.jpg", lib)
-    assert t == os.path.join(lib, "~Unsorted", "home", "mj", "Downloads", "a.jpg")
-    assert libmove.inside(t, lib) and not libmove.inside("/home/mj/a.jpg", lib)
-    if os.name == "nt":
+    lib = str(tmp_path / "My Library")
+    if os.name != "nt":
+        t = libmove.target("/home/mj/Downloads/a.jpg", lib)
+        assert t == os.path.join(lib, "~Unsorted", "home", "mj", "Downloads", "a.jpg")
+        assert libmove.inside(t, lib) and not libmove.inside("/home/mj/a.jpg", lib)
+    else:
+        assert libmove.target(r"\\nas\share\x.jpg", lib) == os.path.join(lib, "~Unsorted", "nas", "share", "x.jpg")
         assert libmove.target(r"C:\Downloads\a.jpg", lib) == os.path.join(lib, "~Unsorted", "C", "Downloads", "a.jpg")
 
 
@@ -58,7 +60,7 @@ def test_drop_moves_into_unsorted(window, tmp_path):
 def test_tagged_photos_leave_unsorted(window, tmp_path, monkeypatch):
     import history
     w, c = window, window.conn
-    lib = tmp_path / "Lib"
+    lib = tmp_path / "My Library"
     lib.mkdir()
     w.settings["library_root"] = store.norm_path(str(lib))
     d = tmp_path / "Downloads"
