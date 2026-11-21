@@ -331,6 +331,8 @@ def _jpeg_read_header(path):
 
 def read_xmp(path, sidecar=False):
     if not sidecar:
+        import fsx
+        path = fsx.plain(path)                       # (1.58) kept encrypted: a readable copy
         ext = os.path.splitext(path)[1].lower()
         if ext != ".png":
             return _jpeg_read_header(path)
@@ -610,7 +612,8 @@ def read_keywords(path):
                 add(plain, k)
     try:  # Windows "Tags" stored in EXIF (XPKeywords, UTF-16)
         from PIL import Image
-        with Image.open(path) as im:
+        import fsx
+        with Image.open(fsx.plain(path)) as im:
             raw = im.getexif().get(0x9C9E)
         if raw:
             txt = bytes(raw).decode("utf-16-le", "ignore") if not isinstance(raw, str) else raw

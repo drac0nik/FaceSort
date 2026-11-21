@@ -3,6 +3,8 @@ import csv
 import filecmp
 import hashlib
 import os
+
+import fsx
 import re
 import shutil
 from dbshim import sqlite3
@@ -296,8 +298,9 @@ def scan_library(conn, settings, progress=lambda done, total, msg: None, cancell
     imported_dirs = tuple(store.norm_path(d).rstrip("\\/") + os.sep for d in settings.get("imported", []))
     checking = o["mode"] in ("both", "verify") and only is None and not drop_scan
     ex_names = {e.lower() for e in o["exclude"] if e and not os.path.isabs(e)}
+    sealed = fsx.sealed_paths(conn) if checking else set()     # (1.58) encrypted photos aren't missing
     for p in (known if checking else ()):
-        if p in found:
+        if p in found or p in sealed:
             continue
         k = known_kind[p]
         if (k == "other" and not o["others"]) or (k == "video" and not o["videos"]):
@@ -710,6 +713,11 @@ def write_tags(conn, settings, progress=lambda done, total, msg: None, cancelled
         sig = hashlib.sha1(repr((sorted(desired), regions, private, tagged, category,
                                  bool(settings.get("always_sidecar")), "v5")).encode()).hexdigest()
         progress(n, len(photo_ids), os.path.basename(path))
+        if fsx.sealed_only(path, conn):
+            # (1.58) kept encrypted: names stay in FaceSort's encrypted data (and go into the copies
+            # you export), not written into the file
+            stats["unchanged"] += 1
+            continue
         try:
             st = os.stat(path)
         except OSError:
@@ -788,7 +796,7 @@ def _free_target(folder, src, stem=None):
         if not stem or os.path.normcase(os.path.abspath(target)) == here:
             return os.path.abspath(src), True      # already sitting in this folder: nothing to do
     i = 2
-    while os.path.exists(target):
+    while fsx.exists(target):
         if os.path.normcase(os.path.abspath(target)) == here:
             return os.path.abspath(src), True
         if _quick_same(target, src):
@@ -811,6 +819,8 @@ def webp_to_jpg(src):
     the names saved in its .xmp sidecar (written into the JPEG itself)."""
     from io import BytesIO
     from PIL import Image
+    import fsx
+    src = fsx.plain(src)
     with Image.open(src) as im:
         exif = im.info.get("exif")
         icc = im.info.get("icc_profile")
@@ -842,7 +852,7 @@ def _free_name(folder, name, data=None):
     """A free file name in folder ("x (2).jpg" ...): (path, an identical file is already there)."""
     base, ext = os.path.splitext(name)
     target, i = os.path.join(folder, name), 2
-    while os.path.exists(target):
+    while fsx.exists(target):
         if data is not None:
             try:
                 if os.path.getsize(target) == len(data):
@@ -858,7 +868,7 @@ def _free_name(folder, name, data=None):
 
 def _free_dir(parent, name):
     target, i = os.path.join(parent, name), 2
-    while os.path.exists(target):
+    while fsx.exists(target):
         target = os.path.join(parent, f"{name} ({i})")
         i += 1
     return target
@@ -1147,12 +1157,13 @@ def export_folders(conn, dest, include_suggestions=False, move=False,
     for pid, (src, folders) in sorted(plan.items(), key=order):
         if cancelled():
             break
-        if not os.path.exists(src):
+        sealed = fsx.sealed_only(src, conn)      # (1.58) kept encrypted: moving is FaceSort's own business
+        if not os.path.exists(src) and not sealed:
             stats["errors"].append((src, "file not found"))
             done += len(folders)
             continue
         plan = None
-        if convert_webp and folders not in ([DISCARD_FOLDER], [SORT_LATER_FOLDER]) and media_kind(src) != "other":
+        if convert_webp and not sealed and folders not in ([DISCARD_FOLDER], [SORT_LATER_FOLDER]) and media_kind(src) != "other":
             try:
                 plan = convert.plan_for(src)       # WebP/HEIC/AVIF... -> JPEG, graphics -> PNG
             except Exception:
@@ -1184,6 +1195,30 @@ def export_folders(conn, dest, include_suggestions=False, move=False,
                 same_place = os.path.normcase(os.path.abspath(target)) == os.path.normcase(os.path.abspath(current))
                 if move and k == 0 and same_place:
                     stats["skipped"] += 1
+                    continue
+                if fsx.sealed_only(current, conn):
+                    # (1.58) an encrypted photo has no file in its folder: moving it only changes where
+                    # FaceSort shows it; a copy for another person is a readable copy, encrypted next
+                    if move and k == 0:
+                        new = store.norm_path(target)
+                        if conn.execute("SELECT id FROM photos WHERE path=? AND id<>?", (new, pid)).fetchone():
+                            stats["skipped"] += 1
+                            continue
+                        conn.execute("UPDATE photos SET path=?, outside=0 WHERE id=?", (new, pid))
+                        conn.commit()
+                        known.move_marks(src, new)
+                        log_rows.append((src, new))
+                        current = new
+                        stats["moved"] += 1
+                    elif not there:
+                        shutil.copy2(fsx.plain(current, conn), target)
+                        store.mark_placed(conn, target)
+                        fsx.mark_made(conn, target)
+                        try:
+                            known.copy_marks(store.norm_path(current), store.norm_path(target))
+                        except Exception:
+                            pass
+                        stats["copied"] += 1
                     continue
                 comps = companions.companions(current)        # Takeout .json, .aae, .thm
                 if move and k == 0:
@@ -1542,6 +1577,7 @@ def recycle_discarded(conn, roots=(), progress=lambda d, t, m: None, cancelled=l
                 stats["errors"].append((p, str(e)))
     stats["left"] = discard_contents(dirs)
     conn.commit()
+    fsx.collect_gone(conn)                   # (1.58) the encrypted files of photos taken out go too
     return stats
 
 
@@ -1608,11 +1644,12 @@ def copy_name(src, opts, src_fps):
             return f"{t // 3600}h{t // 60 % 60:02d}m{t % 60:02d}s" if t >= 3600 else f"{t // 60}m{t % 60:02d}s"
         parts.append(f"{stamp(t0)}-{stamp(t1) if t1 is not None else 'end'}")
     folder = os.path.dirname(src)
+    os.makedirs(folder, exist_ok=True)              # (1.58: the folder may exist only inside FaceSort)
     stem = os.path.splitext(os.path.basename(src))[0]
     label = " ".join(parts) or "copy"
     out = os.path.join(folder, f"{stem} - {label}.mp4")
     n = 2
-    while os.path.exists(out):
+    while fsx.exists(out):
         out = os.path.join(folder, f"{stem} - {label} ({n}).mp4")
         n += 1
     return out
@@ -1640,6 +1677,8 @@ def enhance_video(conn, src, opts=None, progress=lambda d, t, m: None, cancelled
     W = vs.W // 2 * 2                         # H.264 wants even sizes
     H = vs.H // 2 * 2
     out = copy_name(src, opts, fps)
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    src = fsx.plain(src)                      # (1.58) kept encrypted: the readable copy for FFmpeg
     tmp = out + ".part.mp4"
     vf = copy_filters(opts, fps)
     # motion interpolation runs on one processor core in FFmpeg: for anything but a short clip the
@@ -1843,6 +1882,7 @@ def best_lowlight_frames(conn, src, count=12, strength=1, progress=lambda d, t, 
             if len(chosen) >= count:
                 break
         folder = os.path.dirname(src)
+        os.makedirs(folder, exist_ok=True)              # (1.58: the folder may exist only inside FaceSort)
         stem = os.path.splitext(os.path.basename(src))[0]
         out = []
         for j, f in enumerate(sorted(chosen)):
@@ -1858,7 +1898,7 @@ def best_lowlight_frames(conn, src, count=12, strength=1, progress=lambda d, t, 
                      else f"{int(t // 60)}m{t % 60:05.2f}s").replace(".", "_")
             path = os.path.join(folder, f"{stem} - low light {stamp}.jpg")
             k2 = 2
-            while os.path.exists(path):
+            while fsx.exists(path):
                 path = os.path.join(folder, f"{stem} - low light {stamp} ({k2}).jpg")
                 k2 += 1
             ok, buf = cv2.imencode(".jpg", enh[:, :, ::-1], [cv2.IMWRITE_JPEG_QUALITY, 95])

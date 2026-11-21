@@ -9,6 +9,8 @@ The pictures are saved in the "Web drops" folder and go into Recently dropped li
 Only http(s) addresses are fetched, and only pictures and videos are kept."""
 import base64
 import os
+
+import fsx
 import re
 import struct
 import urllib.parse
@@ -205,7 +207,7 @@ def folder(settings):
 def _free(path):
     base, ext = os.path.splitext(path)
     cand, i = path, 2
-    while os.path.exists(cand):
+    while fsx.exists(cand):
         cand = f"{base} ({i}){ext}"
         i += 1
     return cand

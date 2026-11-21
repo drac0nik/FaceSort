@@ -25,7 +25,8 @@ def gif_changed(g, n):
 
 def info(path):
     """(frame count, loop count (0 = for ever), total milliseconds)."""
-    with Image.open(path) as im:
+    import fsx
+    with Image.open(fsx.plain(path)) as im:
         n = getattr(im, "n_frames", 1)
         loop = im.info.get("loop", 0)
         total = 0
@@ -36,7 +37,8 @@ def info(path):
 
 def frames(path):
     """Each frame as (RGBA array, milliseconds), drawn as it shows when the GIF plays."""
-    with Image.open(path) as im:
+    import fsx
+    with Image.open(fsx.plain(path)) as im:
         for i in range(getattr(im, "n_frames", 1)):
             im.seek(i)
             yield np.asarray(im.convert("RGBA")), int(im.info.get("duration", 100) or 100)

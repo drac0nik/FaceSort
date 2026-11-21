@@ -1,6 +1,8 @@
 """Video edit mode's saving (1.54): trim, cut out parts and turn a video, exact to the frame, with low
 light / Steady / a new frame rate on top (jobs.enhance_video). Always a new file next to the original."""
 import os
+
+import fsx
 import re
 import subprocess
 import sys
@@ -48,10 +50,11 @@ def has_audio(path):
 
 def out_name(src, pattern="{name} (edited)"):
     folder = os.path.dirname(src)
+    os.makedirs(folder, exist_ok=True)              # (1.58: the folder may exist only inside FaceSort)
     stem = os.path.splitext(os.path.basename(src))[0]
     base = (pattern or "{name} (edited)").replace("{name}", stem)
     out, n = os.path.join(folder, base + ".mp4"), 2
-    while os.path.exists(out):
+    while fsx.exists(out):
         out = os.path.join(folder, f"{base} ({n}).mp4")
         n += 1
     return out
@@ -113,10 +116,12 @@ def edit_video(conn, src, opts, progress=lambda d, t, m: None, cancelled=lambda:
     turn = int(opts.get("turn") or 0) % 4
     enhance = bool(opts.get("strength") or opts.get("steady") or opts.get("fps"))
     out = out_name(src, opts.get("name"))
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    label = os.path.basename(src)
+    src = fsx.plain(src)                     # (1.58) kept encrypted: the readable copy for FFmpeg
     total = sum(b - a for a, b in keep)
     audio = has_audio(src)
     crf = QUALITY.get(opts.get("quality", "high"), 18)
-    label = os.path.basename(src)
     if not enhance:
         tmp = out + ".part.mp4"
         err = _run(cut_command(exe, src, keep, turn, audio, tmp, crf), total, progress, cancelled,

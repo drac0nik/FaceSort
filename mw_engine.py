@@ -1,5 +1,7 @@
 """MainWindow, part: the face engine, scanning and grouping."""
 import os
+
+import fsx
 import rotate
 import engine
 import content
@@ -913,12 +915,13 @@ class EngineMixin:
                     skipped.append((path, "videos and RAW files can't be turned"))
                     continue
                 try:
-                    rotate.rotate_file(path, clockwise)
-                    st = os.stat(path)
-                    try:
-                        ph = engine.dhash(engine.load_image(path, max_side=256).bgr)
-                    except Exception:
-                        ph = None
+                    with fsx.editing(path, c) as work:      # (1.58) kept encrypted: turned, then re-encrypted
+                        rotate.rotate_file(work, clockwise)
+                        st = os.stat(work)
+                        try:
+                            ph = engine.dhash(engine.load_image(work, max_side=256).bgr)
+                        except Exception:
+                            ph = None
                     store.rotate_photo(c, pid, clockwise, round(st.st_mtime, 3), st.st_size, ph)
                     done += 1
                 except Exception as e:
@@ -941,9 +944,10 @@ class EngineMixin:
         stamp = label or (f"{int(t // 3600)}h{int(t // 60 % 60):02d}m{t % 60:05.2f}s" if t >= 3600
                           else f"{int(t // 60)}m{t % 60:05.2f}s")
         folder = os.path.dirname(video_path)
+        os.makedirs(folder, exist_ok=True)              # (1.58: the folder may exist only inside FaceSort)
         out = os.path.join(folder, f"{stem} - {stamp.replace('.', '_')}.jpg")
         n = 2
-        while os.path.exists(out):
+        while fsx.exists(out):
             out = os.path.join(folder, f"{stem} - {stamp.replace('.', '_')} ({n}).jpg")
             n += 1
         if not img.save(out, "JPG", 95):

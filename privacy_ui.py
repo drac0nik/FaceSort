@@ -1,5 +1,6 @@
 """Password, recovery key, lock screen and Settings > Privacy (1.55)."""
 import os
+import shutil
 import time
 
 from PySide6.QtCore import QObject, Qt, QTimer
@@ -10,6 +11,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QDialogButtonBo
 
 import cryptbox
 import privacy
+import store
 
 
 def _pw_field(placeholder=""):
@@ -310,6 +312,11 @@ class LockController(QObject):
             w.hide()
         self.win.hide()
         try:
+            import fsx
+            fsx.wipe()                           # (1.58) readable copies of encrypted photos go
+        except Exception:
+            pass
+        try:
             dlg = UnlockDialog(closing_text="Close FaceSort")
             ok = dlg.exec() == QDialog.Accepted
         finally:
@@ -379,7 +386,6 @@ class PrivacyPage(QWidget):
         enote = QLabel("Everything FaceSort keeps about your photos - names, faces, tags, folders, albums, "
                        "history, thumbnails and settings - is encrypted on this PC, readable only with your "
                        "password (or recovery key). Paths and file names are kept out of the logs. "
-                       "Encrypting the photo and video files themselves comes in the next version. "
                        "Turning this on or off happens when FaceSort restarts.")
         enote.setWordWrap(True)
         enote.setStyleSheet("color: gray;")
@@ -387,6 +393,35 @@ class PrivacyPage(QWidget):
         self.enc_state = QLabel()
         self.enc_state.setStyleSheet("color: gray;")
         lay.addWidget(self.enc_state)
+        # (1.58) the photo and video files themselves - optional, off unless you turn it on
+        lay.addSpacing(10)
+        lay.addWidget(QLabel("<b>Photo and video files</b>"))
+        import fsx
+        self.files = QCheckBox("Encrypt the photo and video files too")
+        self.files.setChecked(fsx.enabled())
+        lay.addWidget(self.files)
+        fnote = QLabel("Each photo and video is kept as an encrypted file with a random name in a hidden folder "
+                       "in your library - no names or folders show on disk; FaceSort shows them as before. "
+                       "Your originals stay until you remove them (Review originals). Anything you play or "
+                       "open in another app is a temporary copy, wiped when FaceSort locks or closes. Names "
+                       "aren't written into encrypted files (they're in FaceSort's encrypted data). "
+                       "Off by default.")
+        fnote.setWordWrap(True)
+        fnote.setStyleSheet("color: gray;")
+        lay.addWidget(fnote)
+        self.auto_rm = QCheckBox("Remove originals as soon as they're encrypted (no review)")
+        self.auto_rm.setChecked(fsx.auto_remove())
+        lay.addWidget(self.auto_rm)
+        row = QHBoxLayout()
+        self.files_state = QLabel()
+        self.files_state.setStyleSheet("color: gray;")
+        self.files_state.setWordWrap(True)
+        row.addWidget(self.files_state, 1)
+        self.b_review = QPushButton("Review originals…")
+        self.b_review.clicked.connect(lambda: self.win.review_originals(parent=self.window()) and self.refresh())
+        row.addWidget(self.b_review)
+        lay.addLayout(row)
+        self.want_files = None
         lay.addStretch()
         self.refresh()
 
@@ -408,6 +443,25 @@ class PrivacyPage(QWidget):
         p = privacy.pending()
         self.enc_state.setText(("Encrypted." if enc else "Not encrypted.") +
                                ("  (Changes when FaceSort restarts.)" if p else ""))
+        import fsx
+        can = has and enc and not p
+        on = fsx.enabled()
+        self.files.setEnabled(can or on)
+        self.files.setToolTip("" if can or on else "Turn on “Encrypt the library” first (FaceSort restarts) - "
+                              "it keeps the list of what's in each encrypted file")
+        self.auto_rm.setEnabled(on or can)
+        try:
+            n, waiting = fsx.counts(self.win.conn)
+        except Exception:
+            n, waiting = 0, 0
+        if on or n:
+            self.files_state.setText(f"{n:,} encrypted" + (f" · {waiting:,} original{'s' if waiting != 1 else ''} "
+                                                           "still on disk, waiting for you" if waiting else
+                                                           " · no originals left on disk"))
+        else:
+            self.files_state.setText("Not encrypted." if can else
+                                     "Needs “Encrypt the library” (above) to be on first.")
+        self.b_review.setVisible(bool(waiting))
 
     def set_password(self):
         d = NewPasswordDialog(self)
@@ -417,6 +471,49 @@ class PrivacyPage(QWidget):
         RecoveryKeyDialog(rk, self).exec()
         self.ask_open.setChecked(True)
         self.refresh()
+
+    def apply_files(self, win, on):
+        """(1.58) Turning encryption of the photo and video files on or off."""
+        import fsx
+        if on:
+            if not (cryptbox.has_password() and cryptbox.data_encrypted()):
+                return
+            vault = fsx.choose_vault(win.settings)
+            used = win.conn.execute("SELECT COALESCE(SUM(size), 0) FROM photos WHERE COALESCE(is_other, 0) = 0") \
+                .fetchone()[0] or 0
+            try:
+                free = shutil.disk_usage(os.path.dirname(vault) if os.path.isdir(os.path.dirname(vault))
+                                         else store.data_dir()).free
+            except OSError:
+                free = None
+            space = (f"\n\nThe encrypted copies need about {used / 1e9:,.1f} GB until you remove the originals"
+                     + (f" ({free / 1e9:,.1f} GB free there)." if free is not None else "."))
+            if free is not None and free < used * 1.05:
+                space += "\nThat's not enough room for all of them - FaceSort encrypts what fits; remove " \
+                         "originals as you go (Review originals) to make room."
+            if QMessageBox.question(
+                    win, "Encrypt the photo and video files",
+                    "Every photo and video is encrypted into a hidden folder:\n" + vault +
+                    "\n\nYour originals stay where they are until you remove them (Settings › Privacy › "
+                    "Review originals). New photos are encrypted as they come in." + space +
+                    "\n\nStart now?") != QMessageBox.Yes:
+                return
+            fsx.set_enabled(True, vault=vault)
+            if win.seal_when_free() is False:
+                win.statusBar().showMessage("Photo and video files will be encrypted as soon as FaceSort is free.",
+                                            10000)
+        else:
+            n, _w = fsx.counts(win.conn)
+            if n and QMessageBox.question(
+                    win, "Decrypt the photo and video files",
+                    f"{n:,} encrypted photos and videos are turned back into normal files at their places in "
+                    "your library (needs the room for them), then the hidden folder is removed.\n\nStart now?") \
+                    != QMessageBox.Yes:
+                return
+            if n:
+                win.start_unseal()
+            else:
+                fsx.set_enabled(False)
 
     def change_password(self):
         d = NewPasswordDialog(self, "Change password", "Type your current password, then the new one.", old=True)
@@ -463,6 +560,13 @@ class PrivacyPage(QWidget):
         if cryptbox.has_password():
             cryptbox.set_options({"ask_on_open": self.ask_open.isChecked(), "idle_minutes": self.idle.value(),
                                   "on_minimize": self.on_min.isChecked()})
+        import fsx
+        if fsx.enabled() or self.files.isEnabled():
+            try:
+                cryptbox.set_flag("remove_originals_auto", self.auto_rm.isChecked())
+            except Exception:
+                pass
+        self.want_files = None if self.files.isChecked() == fsx.enabled() else self.files.isChecked()
         want = self.enc.isChecked()
         now = cryptbox.data_encrypted()
         p = privacy.pending()
@@ -471,6 +575,8 @@ class PrivacyPage(QWidget):
 
     def apply_after(self, win):
         """After Settings closes: start encrypting / decrypting (at a restart)."""
+        if self.want_files is not None:
+            self.apply_files(win, self.want_files)
         want = self.want_encrypt
         if want is None:
             return

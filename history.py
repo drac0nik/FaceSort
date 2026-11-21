@@ -217,7 +217,13 @@ def undo(conn, entry_id):
                     else:
                         conn.execute(f"INSERT OR IGNORE INTO {table}(photo_id, {o}) VALUES(?,?)", (pid, x))
                     done += 1
+        import fsx
         for old, new in reversed(data.get("files", [])):
+            if fsx.sealed_only(new, conn) and not fsx.exists(old, conn):
+                with conn.write():                # (1.58) kept encrypted: only FaceSort's record moves
+                    conn.execute("UPDATE photos SET path=? WHERE path=?", (old, new))
+                done += 1
+                continue
             if os.path.exists(new) and not os.path.exists(old):
                 try:
                     os.makedirs(os.path.dirname(old), exist_ok=True)

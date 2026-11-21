@@ -9,6 +9,8 @@ import threading
 
 import cv2
 import numpy as np
+
+import fsx
 from PIL import Image, ImageOps
 
 try:
@@ -60,6 +62,7 @@ def is_raw(path):
 def _raw_preview(path, max_side):
     """(RGB array, full width, full height, taken) of a camera RAW file. Uses the camera's
     own embedded preview when it's big enough (fast); otherwise develops the raw data."""
+    path = fsx.plain(path)                  # (1.58) a photo kept encrypted: a readable copy
     import io
     import rawpy
     with rawpy.imread(path) as r:
@@ -221,6 +224,7 @@ def exif_taken(exif):
 
 def read_taken(path):
     """Date taken without decoding the image (only the header is read)."""
+    path = fsx.plain(path)                  # (1.58) a photo kept encrypted: a readable copy
     if is_video(path):
         return None
     if is_raw(path) and RAW_OK:
@@ -237,6 +241,7 @@ def read_taken(path):
 
 # ---------------------------------------------------------------------------- videos
 def _video_open(path):
+    path = fsx.plain(path)                  # (1.58) a photo kept encrypted: a readable copy
     cap = cv2.VideoCapture(path)
     if not cap.isOpened():
         raise ValueError("this video can't be opened (unsupported format or damaged)")
@@ -274,6 +279,7 @@ def _run_ff(args, timeout=60):
 
 def ffmpeg_info(path):
     """(width, height, fps, duration seconds) as FFmpeg reads the file."""
+    path = fsx.plain(path)                  # (1.58) a photo kept encrypted: a readable copy
     import re
     try:
         key = (path, os.path.getmtime(path))
@@ -298,6 +304,7 @@ def ffmpeg_info(path):
 
 def ffmpeg_frame(path, t):
     """One frame (BGR) at t seconds, decoded by FFmpeg."""
+    path = fsx.plain(path)                  # (1.58) a photo kept encrypted: a readable copy
     r = _run_ff(["-v", "error", "-ss", f"{max(0.0, float(t)):.3f}", "-i", path, "-frames:v", "1",
                  "-f", "image2pipe", "-vcodec", "png", "-"], timeout=60)
     if not r.stdout:
@@ -310,6 +317,7 @@ class VideoSource:
     odd or damaged files). n = frame count, fps, W x H."""
 
     def __init__(self, path):
+        path = fsx.plain(path)                  # (1.58) a photo kept encrypted: a readable copy
         self.path, self.cap, self.ff = path, None, False
         cap = cv2.VideoCapture(path)
         if cap.isOpened():
@@ -431,6 +439,7 @@ def video_collage(path, count=12, max_width=3200, cancelled=lambda: False, progr
     in it (a black, white or blank screen is skipped for a moment nearby) - laid out in a 3 x 4
     grid (4 across for a wide video, 3 across for a tall one), each with its time in the corner.
     Returns (JPEG bytes, [seconds of each frame])."""
+    path = fsx.plain(path)                  # (1.58) a photo kept encrypted: a readable copy
     src = VideoSource(path)
     fps, n = src.fps, src.n
     try:
@@ -551,6 +560,7 @@ def _collage_header(sheet, name, w, h, duration):
 
 
 def video_fps(path):
+    path = fsx.plain(path)                  # (1.58) a photo kept encrypted: a readable copy
     try:
         src = VideoSource(path)
         src.release()
@@ -693,6 +703,7 @@ def video_frames(path, max_side=MAX_SIDE, spots=VIDEO_SPOTS):
     """Frames spread through the video: [(seconds, bgr)], skipping dark or blurry ones
     (the next frames are tried instead). Very dark frames are brightened (low-light recovery)
     so faces in them can still be found. Returns (frames, width, height, duration)."""
+    path = fsx.plain(path)                  # (1.58) a photo kept encrypted: a readable copy
     src = VideoSource(path)
     try:
         W, H, fps, n = src.W, src.H, src.fps, src.n
@@ -740,6 +751,7 @@ def video_frames(path, max_side=MAX_SIDE, spots=VIDEO_SPOTS):
 
 def video_frame(path, t=None, max_side=MAX_SIDE):
     """One frame (BGR) at t seconds (default: the middle)."""
+    path = fsx.plain(path)                  # (1.58) a photo kept encrypted: a readable copy
     src = VideoSource(path)
     try:
         fps = src.fps or 25.0
@@ -755,6 +767,7 @@ def video_frame(path, t=None, max_side=MAX_SIDE):
 
 
 def load_image(path, max_side=MAX_SIDE, t=None):
+    path = fsx.plain(path)                  # (1.58) a photo kept encrypted: a readable copy
     if is_video(path):
         bgr = video_frame(path, t, max_side)
         try:

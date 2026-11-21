@@ -6,6 +6,8 @@ Network requests carry the cookies of FaceSort's browser (so signed-in galleries
 user agent, and a Referer from the page they came from."""
 import json
 import os
+
+import fsx
 import re
 import struct
 import threading
@@ -264,7 +266,7 @@ def clean_rel(path):
 def free_path(path):
     base, ext = os.path.splitext(path)
     cand, i = path, 2
-    while os.path.exists(cand):
+    while fsx.exists(cand):
         cand = f"{base} ({i}){ext}"
         i += 1
     return cand

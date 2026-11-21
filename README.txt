@@ -153,6 +153,37 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.58.0
+- Encrypt the photo and video files themselves (Settings › Privacy › Photo and video files). It's
+  optional and off unless you turn it on. It needs a password and "Encrypt the library" on first,
+  because FaceSort's encrypted data keeps the list of what's in each encrypted file.
+  - Each photo and video is kept as an encrypted file with a random name in a hidden folder in your
+    library (".facesort-vault"). No names or folders show on disk. Inside FaceSort everything looks
+    and works as before: the same folders, names, people and albums.
+  - Your originals stay where they are until you remove them: Settings › Privacy › Review originals
+    lists them, with how much room they take. Each one is checked against its encrypted copy first.
+    If you changed an original after it was encrypted, it's encrypted again before it goes, and its
+    .xmp / .json extras and the folders it leaves empty go with it.
+    Tick "Remove originals as soon as they're encrypted" to skip the review.
+  - New photos are encrypted as they come in (drops, imports, Web drops, the browser, galleries,
+    scans). Pictures FaceSort makes - edited copies, video clips, screenshots, GIF frames, copies for
+    group photos - go straight into the vault, with no readable copy left behind.
+  - Viewing, playing, scanning, editing and exporting use a temporary readable copy kept in
+    FaceSort's private data folder. "Open in default app" and "Show in folder" give a copy with the
+    photo's real name. All of them are wiped when FaceSort locks or closes (and at the next start
+    after a crash). A big video takes a moment to open, while it's decrypted.
+  - Moving, Sort into folders, the move after tagging, renaming and History's undo just change
+    where FaceSort shows a photo - nothing is copied around on disk. Turning a photo or replacing
+    the original after an edit decrypts it, makes the change, then encrypts it again.
+  - Write tags doesn't write names into encrypted files (they're kept in FaceSort's encrypted
+    data). Export gives normal, readable copies wherever you choose.
+  - Turning it off decrypts every photo and video back to a normal file at its place in the library,
+    checks each one, then removes the hidden folder.
+  - Without your password or recovery key, nobody can open the encrypted files - including you.
+    Keep the recovery key safe, and keep the hidden vault folder in your normal file backup:
+    FaceSort's own backups hold the list of what's in it, not the files.
+  - The packaged app's self-test also checks a file encrypting and decrypting.
+
 1.57.6
 - Every import brings up the Add photos window before any faces are looked for, so you can set
   people, a folder and what each sub-folder's name means first. That covers drops, Add folder…, Web

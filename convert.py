@@ -21,6 +21,8 @@ JPEG_EXT = {".jpg", ".jpeg", ".jfif", ".jpe"}
 
 
 def _open(path):
+    import fsx
+    path = fsx.plain(path)
     try:
         import pillow_heif
         pillow_heif.register_heif_opener()

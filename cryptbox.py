@@ -276,3 +276,98 @@ def scrub(msg):
         return msg
     msg = _PATHS.sub("<file>", str(msg))
     return _NAMES.sub("<file>", msg)
+
+
+# ------------------------------------------------------------------ photo and video files (1.58)
+FILE_MAGIC = b"FSV1"
+CHUNK = 1 << 20                                  # 1 MB pieces: big videos never sit in memory whole
+
+
+def file_key():
+    if _master is None:
+        raise RuntimeError("the profile is locked")
+    return subkey(_master, "photo and video files")
+
+
+def _nonce(base, i):
+    return base + i.to_bytes(4, "big")
+
+
+def seal_stream(src, dst, key=None):
+    """Encrypt the file src into dst (AES-GCM, piece by piece; each piece numbered and the last one
+    marked, so pieces can't be swapped, dropped or cut off). Returns the SHA-256 of the plain file."""
+    key = key or file_key()
+    aes = _aes()(key)
+    base = os.urandom(8)
+    h = hashlib.sha256()
+    tmp = dst + ".part"
+    with open(src, "rb") as fi, open(tmp, "wb") as fo:
+        fo.write(FILE_MAGIC + base + CHUNK.to_bytes(4, "big"))
+        i = 0
+        cur = fi.read(CHUNK)
+        while True:
+            nxt = fi.read(CHUNK) if cur else b""
+            last = not nxt
+            h.update(cur)
+            aad = FILE_MAGIC + i.to_bytes(4, "big") + (b"\x01" if last else b"\x00")
+            fo.write(aes.encrypt(_nonce(base, i), cur, aad))
+            i += 1
+            if last:
+                break
+            cur = nxt
+        fo.flush()
+        os.fsync(fo.fileno())
+    os.replace(tmp, dst)
+    return h.hexdigest()
+
+
+def open_stream(src, key=None):
+    """The plain pieces of a sealed file, in order (raises ValueError if it was changed or cut short)."""
+    key = key or file_key()
+    aes = _aes()(key)
+    with open(src, "rb") as fi:
+        head = fi.read(16)
+        if len(head) < 16 or head[:4] != FILE_MAGIC:
+            raise ValueError("not a FaceSort encrypted file")
+        base, size = head[4:12], int.from_bytes(head[12:16], "big")
+        i = 0
+        cur = fi.read(size + 16)
+        while True:
+            nxt = fi.read(size + 16)
+            last = not nxt
+            aad = FILE_MAGIC + i.to_bytes(4, "big") + (b"\x01" if last else b"\x00")
+            try:
+                yield aes.decrypt(_nonce(base, i), cur, aad)
+            except Exception:
+                raise ValueError("the encrypted file is damaged or was changed") from None
+            if last:
+                return
+            i += 1
+            cur = nxt
+
+
+def unseal_stream(src, dst, key=None):
+    """Decrypt src into dst (written as dst.part first). Returns the SHA-256 of what was written."""
+    h = hashlib.sha256()
+    tmp = dst + ".part"
+    try:
+        with open(tmp, "wb") as fo:
+            for piece in open_stream(src, key):
+                h.update(piece)
+                fo.write(piece)
+        os.replace(tmp, dst)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+    return h.hexdigest()
+
+
+def sealed_sha(src, key=None):
+    """SHA-256 of the plain contents of a sealed file (to check a copy before an original is removed)."""
+    h = hashlib.sha256()
+    for piece in open_stream(src, key):
+        h.update(piece)
+    return h.hexdigest()

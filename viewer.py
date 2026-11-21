@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 import photo_tools
 import engine
+import fsx
 import store
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
@@ -585,7 +586,7 @@ class PhotoViewer(ViewerEditMixin, QWidget):
         self.is_anim = False
         if os.path.splitext(path)[1].lower() != ".gif":
             return
-        mv = QMovie(path)
+        mv = QMovie(fsx.plain(path))
         if not mv.isValid() or mv.frameCount() == 1:
             return
         self.is_anim = True
@@ -716,7 +717,7 @@ class PhotoViewer(ViewerEditMixin, QWidget):
             self.player.pause()
             return
         if getattr(self, "_video_loaded", None) != self.path:
-            self.player.setSource(QUrl.fromLocalFile(self.path))
+            self.player.setSource(QUrl.fromLocalFile(fsx.plain(self.path)))
             self._video_loaded = self.path
             if self.frame_t:
                 self.player.setPosition(int(self.frame_t * 1000))      # start at the moment you're on
@@ -847,7 +848,7 @@ class PhotoViewer(ViewerEditMixin, QWidget):
         if not self.is_video or not self.make_player():
             return
         if getattr(self, "_video_loaded", None) != self.path:
-            self.player.setSource(QUrl.fromLocalFile(self.path))
+            self.player.setSource(QUrl.fromLocalFile(fsx.plain(self.path)))
             self._video_loaded = self.path
             self.player.setPosition(int((self.frame_t or 0) * 1000))
             self.media.setCurrentIndex(self.video_page())
@@ -1706,7 +1707,7 @@ class PhotoViewer(ViewerEditMixin, QWidget):
         # meanwhile: a big JPEG shows a quick small preview (decoded at 1/8 size - a few milliseconds)
         try:
             if (not self.is_video and os.path.splitext(self.path)[1].lower() in (".jpg", ".jpeg")
-                    and os.path.getsize(self.path) > QUICK_PREVIEW_BYTES):
+                    and (fsx.size(self.path) or 0) > QUICK_PREVIEW_BYTES):
                 img, w, h = decode_picture(self.path, None, 0, False, boxes, max_side=640)
                 if getattr(self, "_loading", False):
                     self.image, self._full_w, self._full_h = img, w, h

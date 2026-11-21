@@ -508,6 +508,8 @@ class JobsMixin:
         if self.regroup_pending:
             self.schedule_regroup(now=True)
         self._after_job(name)
+        if name not in ("seal", "unseal", "originals") and not look_only:
+            QTimer.singleShot(2500, self, self.seal_soon)     # (1.58) anything new: encrypted (when that's on)
 
     def _job_refresh(self, name):
         self.pix_cache.clear()

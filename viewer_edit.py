@@ -4,6 +4,9 @@ Photos: the edit panel replaces the tag column; the preview is worked out in the
 smaller copy, and Save copy (always the default) or Replace original works on the full picture.
 Videos: trim, cut out parts, turn, low light - saved as a new clip (videoedit.py)."""
 import os
+
+import fsx
+import store
 import shutil
 
 import cv2
@@ -31,12 +34,13 @@ def _small(rgb, side=PREVIEW_SIDE):
 
 def copy_path(src, pattern, png=False, ext=None):
     folder = os.path.dirname(src)
+    os.makedirs(folder, exist_ok=True)              # (1.58: the folder may exist only inside FaceSort)
     stem, own = os.path.splitext(os.path.basename(src))
     ext = ext or (".png" if png or own.lower() == ".png" else ".jpg")
     import renamer
     base = renamer.clean((pattern or "{name} (edited)").replace("{name}", stem)) or f"{stem} (edited)"
     out, n = os.path.join(folder, base + ext), 2
-    while os.path.exists(out):
+    while fsx.exists(out):
         out = os.path.join(folder, f"{base} ({n}){ext}")
         n += 1
     return out
@@ -475,9 +479,28 @@ class ViewerEditMixin:
         win = self.win
         stem, ext = os.path.splitext(src)
         backup, n = f"{stem} (original){ext}", 2
-        while os.path.exists(backup):
+        while fsx.exists(backup):
             backup = f"{stem} (original {n}){ext}"
             n += 1
+        c = win.conn
+        if fsx.sealed_only(src, c):
+            # (1.58) kept encrypted: the encrypted original becomes "<name> (original)" (marked to
+            # discard) and the new picture takes its place - encrypted in turn as it comes in
+            old = c.execute("SELECT id, mtime, size FROM photos WHERE path=?", (store.norm_path(src),)).fetchone()
+            c.execute("INSERT INTO photos(path, mtime, size, discarded, copy_of) VALUES(?,?,?,1,?)",
+                      (store.norm_path(backup), old[1], old[2], old[0]))
+            bid = c.execute("SELECT id FROM photos WHERE path=?", (store.norm_path(backup),)).fetchone()[0]
+            c.execute("UPDATE vault SET photo_id=? WHERE photo_id=?", (bid, old[0]))
+            os.makedirs(os.path.dirname(src), exist_ok=True)
+            os.replace(tmp, src)
+            fsx.mark_made(c, src)
+            st = os.stat(src)
+            c.execute("UPDATE photos SET mtime=?, size=? WHERE id=?", (round(st.st_mtime, 3), st.st_size, old[0]))
+            c.commit()
+            if geometry:
+                win.rescan_photos([old[0]])
+            win.seal_when_free()
+            return f"✓ Replaced - the original is kept as {os.path.basename(backup)} (marked to discard)"
         try:
             shutil.move(src, backup)
             os.replace(tmp, src)

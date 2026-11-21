@@ -13,6 +13,11 @@ from ui_common import APP_VERSION, bodies_download_job, HELP, log
 from dialogs import SettingsDialog
 
 
+def cryptbox_scrub(x):
+    import cryptbox
+    return cryptbox.scrub(str(x))
+
+
 class SettingsMixin:
     """Part of MainWindow (see facesort.py): drag and drop from Explorer, folders and Settings."""
 
@@ -400,6 +405,115 @@ class SettingsMixin:
             self.refresh_all()
             QTimer.singleShot(1500, self, lambda: self.automove_tick(force=True))
         return self.run_job("bringin", libmove.bring_in_job, lib, paths, on_done=done)
+
+    # ------------------------------------------------------------ (1.58) encrypted photo and video files
+    def seal_soon(self):
+        """Encrypt what isn't yet (new photos, edits, copies) - when that's on and nothing else runs."""
+        import cryptbox
+        import fsx
+        if getattr(self, "_closing", False) or not fsx.enabled() or not cryptbox.unlocked():
+            return None
+        if self.busy() and getattr(self, "_job", None) != "dupes":      # (the duplicate check gives way)
+            return False
+        n = self.conn.execute("""SELECT COUNT(*) FROM photos p LEFT JOIN vault v ON v.photo_id = p.id
+                                 WHERE v.photo_id IS NULL AND COALESCE(p.is_other, 0) = 0""").fetchone()[0]
+        if not n:
+            return None
+
+        def done(st):
+            if not isinstance(st, dict):
+                return
+            parts = []
+            if st.get("sealed"):
+                parts.append(f"Encrypted {st['sealed']:,} photo{'s' if st['sealed'] != 1 else ''} and videos")
+            if st.get("waiting"):
+                parts.append(f"{st['waiting']:,} original{'s' if st['waiting'] != 1 else ''} waiting for you to "
+                             "remove them (Settings › Privacy › Review originals)")
+            if st.get("errors"):
+                parts.append(f"{len(st['errors'])} couldn't be encrypted (see the log)")
+                log(f"encrypting: {len(st['errors'])} failed, e.g. {cryptbox_scrub(st['errors'][:3])}")
+            if parts:
+                self.statusBar().showMessage(" · ".join(parts), 15000)
+        return self.run_job("seal", fsx.seal_job, fsx.library_roots(self.settings), on_done=done)
+
+    def seal_when_free(self, tries=240):
+        """Encrypt as soon as nothing else is running (tried every 5 seconds, for up to 20 minutes)."""
+        r = self.seal_soon()
+        if r is False and tries > 0:
+            QTimer.singleShot(5000, self, lambda: self.seal_when_free(tries - 1))
+        return r
+
+    def review_originals(self, parent=None):
+        """The originals of encrypted photos, still on disk: remove them (once you're sure)."""
+        import fsx
+        from PySide6.QtWidgets import QDialogButtonBox, QLabel, QListWidget, QVBoxLayout
+        items = fsx.originals(self.conn)
+        if not items:
+            QMessageBox.information(parent or self, "Originals", "No originals are waiting - every encrypted "
+                                    "photo's original has been removed.")
+            return False
+        total = 0
+        for p, _i in items:
+            try:
+                total += os.path.getsize(p)
+            except OSError:
+                pass
+        dlg = QDialog(parent or self)
+        dlg.setWindowTitle("Review originals")
+        dlg.resize(720, 480)
+        lay = QVBoxLayout(dlg)
+        head = QLabel(f"<b>{len(items):,} original{'s' if len(items) != 1 else ''}</b> ({total / 1e9:,.2f} GB) "
+                      "are encrypted and checked. Removing them leaves only the encrypted copies, readable in "
+                      "FaceSort with your password or recovery key. Their .xmp / .json extras go too, and so do "
+                      "the folders they leave empty.")
+        head.setWordWrap(True)
+        lay.addWidget(head)
+        lst = QListWidget()
+        for p, _i in items[:2000]:
+            lst.addItem(p)
+        if len(items) > 2000:
+            lst.addItem(f"… and {len(items) - 2000:,} more")
+        lay.addWidget(lst, 1)
+        warn = QLabel("Make sure you have your recovery key saved: without the password or the key, the "
+                      "encrypted copies can't be opened by anyone - including you.")
+        warn.setWordWrap(True)
+        warn.setStyleSheet("color: #b3261e;")
+        lay.addWidget(warn)
+        bb = QDialogButtonBox()
+        go = bb.addButton(f"Remove {len(items):,} original{'s' if len(items) != 1 else ''}", QDialogButtonBox.AcceptRole)
+        bb.addButton("Not yet", QDialogButtonBox.RejectRole)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        lay.addWidget(bb)
+        go.setStyleSheet("font-weight: 600;")
+        if dlg.exec() != QDialog.Accepted:
+            return False
+
+        def done(st):
+            if not isinstance(st, dict):
+                return
+            msg = f"Removed {st['removed']:,} originals - only the encrypted copies are left"
+            if st.get("kept"):
+                msg += f" · {len(st['kept'])} kept (still in use, or their encrypted copy is missing)"
+            self.statusBar().showMessage(msg, 15000)
+        return self.run_job("originals", fsx.originals_job, items, fsx.library_roots(self.settings), on_done=done)
+
+    def start_unseal(self):
+        """Encryption of the files turned off: every photo back to a normal file."""
+        import fsx
+
+        def done(st):
+            if not isinstance(st, dict):
+                return
+            if not st.get("left"):
+                fsx.set_enabled(False)
+                self.statusBar().showMessage(f"Decrypted {st['unsealed']:,} photos and videos - they're normal "
+                                             "files again", 15000)
+            else:
+                QMessageBox.warning(self, "Decrypting", f"{st['left']:,} couldn't be decrypted yet (see the log) - "
+                                    "they stay encrypted; try again from Settings › Privacy.")
+                log(f"decrypting: {cryptbox_scrub(st.get('errors', [])[:3])}")
+        return self.run_job("unseal", fsx.unseal_job, on_done=done)
 
     def automove_tick(self, force=False):
         """(1.57.3) Photos in ~Unsorted that now have someone confirmed on them move to where Sort into

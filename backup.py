@@ -448,6 +448,18 @@ def remap(conn, settings, old, new):
     if settings.get("library_root") and (settings["library_root"] == old_n
                                          or settings["library_root"].startswith(old_n + os.sep)):
         settings["library_root"] = new_n + settings["library_root"][len(old_n):]
+    try:                                       # (1.58) the encrypted files' hidden folder moved with them
+        import cryptbox
+        import fsx
+        v = fsx.vault_dir()
+        if v:
+            vn = store.norm_path(v)
+            if vn == old_n or vn.startswith(old_n + os.sep):
+                i = cryptbox.info()
+                i["vault_dir"] = new_n + vn[len(old_n):]
+                cryptbox._write(i)
+    except Exception:
+        pass
     return n
 
 

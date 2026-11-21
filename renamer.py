@@ -183,6 +183,21 @@ def apply(conn, rows, progress=lambda d, t, m: None, cancelled=lambda: False):
         if cancelled():
             break
         progress(k, len(rows) * 2, f"Renaming {os.path.basename(old)}…")
+        import fsx
+        if fsx.sealed_only(old, conn):          # (1.58) kept encrypted: the name is FaceSort's alone
+            n_new = store.norm_path(new)
+            if fsx.exists(n_new, conn):
+                stats["errors"].append((old, f"{os.path.basename(new)} is already there"))
+                continue
+            with conn.write():
+                conn.execute("UPDATE photos SET path=? WHERE id=?", (n_new, pid))
+            try:
+                known.move_marks(store.norm_path(old), n_new)
+            except Exception:
+                pass
+            stats["moves"].append((old, new))
+            stats["renamed"] += 1
+            continue
         if not os.path.exists(old):
             stats["errors"].append((old, "file not found"))
             continue

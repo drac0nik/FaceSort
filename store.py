@@ -343,6 +343,8 @@ def connect(path=None):
     conn.execute(f"PRAGMA mmap_size={MMAP_BYTES}")
     conn.execute("PRAGMA cache_size=-32768")          # 32 MB per connection (default: 2 MB)
     conn.executescript(SCHEMA)
+    import fsx
+    fsx.ensure_tables(conn)                           # (1.58) encrypted photo and video files
     cols = {r[1] for r in conn.execute("PRAGMA table_info(faces)")}
     if "fhash" not in cols:  # library from version 1.0.x
         _add_column(conn, "ALTER TABLE faces ADD COLUMN fhash TEXT")
@@ -2721,6 +2723,8 @@ class _ShaCache(dict):
 def _file_sha1(path):
     h = hashlib.sha1()
     try:
+        import fsx
+        path = fsx.plain(path)                       # (1.58) kept encrypted: a readable copy
         with open(path, "rb") as f:
             for chunk in iter(lambda: f.read(1 << 20), b""):
                 h.update(chunk)

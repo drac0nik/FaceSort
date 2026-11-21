@@ -1,5 +1,7 @@
 """MainWindow, part: albums and search by description."""
 import os
+
+import fsx
 import clip_search
 import engine
 import jobs
@@ -429,9 +431,10 @@ class AlbumsMixin:
         data, times = res
         stem = os.path.splitext(os.path.basename(video_path))[0]
         folder = os.path.dirname(video_path)
+        os.makedirs(folder, exist_ok=True)              # (1.58: the folder may exist only inside FaceSort)
         out = os.path.join(folder, f"{stem} - collage.jpg")
         n = 2
-        while os.path.exists(out):
+        while fsx.exists(out):
             out = os.path.join(folder, f"{stem} - collage ({n}).jpg")
             n += 1
         try:
@@ -458,6 +461,7 @@ class AlbumsMixin:
         st = os.stat(out)
         c.execute("INSERT OR IGNORE INTO photos(path, mtime, size, dropped) VALUES(?,?,?,?)",
                   (out, None, st.st_size, vid[3] if vid else None))      # mtime NULL: the next scan reads it
+        fsx.mark_made(c, out)          # (1.58) encryption on: FaceSort's own readable copy goes once encrypted
         pid = c.execute("SELECT id FROM photos WHERE path=?", (out,)).fetchone()[0]
         if copy_of and vid:
             c.execute("UPDATE photos SET copy_of=? WHERE id=?", (vid[0], pid))

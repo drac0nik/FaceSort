@@ -269,14 +269,17 @@ def export(conn, pids, opts, progress=lambda d, t, m: None, cancelled=lambda: Fa
             if cancelled():
                 break
             progress(k, len(rows), os.path.basename(path))
+            fname = os.path.basename(path)
+            import fsx
+            path = fsx.plain(path, conn)      # (1.58) kept encrypted: exported from a readable copy
             if not os.path.exists(path):
                 stats["errors"].append((path, "file not found"))
                 continue
             try:
-                stem = os.path.splitext(os.path.basename(path))[0]
+                stem = os.path.splitext(fname)[0]
                 if engine.is_video(path):
                     tmp = os.path.join(work or out, f".v{k}" + os.path.splitext(path)[1].lower()) if use_zip \
-                        else os.path.join(out, _free(os.path.basename(path), used))
+                        else os.path.join(out, _free(fname, used))
                     made = video_file(path, tmp, opts, shrink=use_zip, cancelled=cancelled)
                     if use_zip:
                         arc = _free(stem + os.path.splitext(made)[1], used)

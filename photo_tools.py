@@ -4,6 +4,8 @@ auto-enhance, restoring old faded photos, and colorizing black & white / sepia p
 
 All functions take and return RGB uint8 arrays (full size)."""
 import os
+
+import fsx
 import re
 import threading
 
@@ -25,6 +27,8 @@ _LOCK = threading.Lock()
 # ------------------------------------------------------------------ loading / saving
 def load_full(path):
     """(RGB array at full size, upright, EXIF bytes to keep or None)."""
+    import fsx
+    path = fsx.plain(path)                           # (1.58) kept encrypted: a readable copy
     if engine.is_raw(path):
         li = engine.load_image(path, max_side=100000)
         return np.ascontiguousarray(li.bgr[:, :, ::-1]), None
@@ -52,11 +56,12 @@ def load_full(path):
 
 def out_path(src, label, png=False):
     folder = os.path.dirname(src)
+    os.makedirs(folder, exist_ok=True)              # (1.58: the folder may exist only inside FaceSort)
     stem, ext = os.path.splitext(os.path.basename(src))
     ext = ".png" if png or ext.lower() == ".png" else ".jpg"
     out = os.path.join(folder, f"{stem} - {label}{ext}")
     n = 2
-    while os.path.exists(out):
+    while fsx.exists(out):
         out = os.path.join(folder, f"{stem} - {label} ({n}){ext}")
         n += 1
     return out

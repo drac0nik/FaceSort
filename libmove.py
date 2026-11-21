@@ -12,6 +12,8 @@ folder once the face is confirmed.
 
 The library is the Photos library folder (Settings), else the Sort into folders destination."""
 import os
+
+import fsx
 import shutil
 
 import companions
@@ -78,11 +80,11 @@ def plan(dirs, files, lib, skip=(), keep=()):
 
 
 def _free(dst):
-    if not os.path.exists(dst):
+    if not fsx.exists(dst):
         return dst
     base, ext = os.path.splitext(dst)
     i = 2
-    while os.path.exists(f"{base} ({i}){ext}"):
+    while fsx.exists(f"{base} ({i}){ext}"):
         i += 1
     return f"{base} ({i}){ext}"
 
@@ -133,6 +135,11 @@ def run(conn, moves, progress=None, cancelled=None):
     for i, (src, dst) in enumerate(moves):
         if cancelled and cancelled():
             break
+        if conn is not None and fsx.sealed_only(src, conn):
+            done[store.norm_path(src)] = store.norm_path(_free(dst))   # (1.58) encrypted: FaceSort's record only
+            if progress:
+                progress(i + 1, len(moves))
+            continue
         try:
             new = move_file(src, dst)
         except OSError as e:
@@ -184,7 +191,7 @@ def tagged_waiting(conn, lib):
                                   OR EXISTS (SELECT 1 FROM photo_people pp WHERE pp.photo_id = p.id))""",
                         (len(pre), pre)).fetchall()
     held = held_back(conn)
-    return [pid for pid, path in rows if path not in held and os.path.exists(path)]
+    return [pid for pid, path in rows if path not in held and fsx.exists(path, conn)]
 
 
 def held_back(conn):
@@ -248,7 +255,7 @@ def other_drive(paths, lib):
 
 def bring_in_job(conn, lib, paths, progress=lambda d, t, m: None, cancelled=lambda: False):
     """The job: each photo (with its own extra files) into ~Unsorted\\<where it was>."""
-    existing = [p for p in paths if os.path.isfile(p)]
+    existing = [p for p in paths if os.path.isfile(p) or fsx.sealed_only(p, conn)]
     moves = [(p, target(p, lib)) for p in existing]
 
     def prog(i, n):

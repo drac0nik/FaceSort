@@ -80,7 +80,8 @@ def metadata(path):
                 else:
                     return out
         else:
-            im = Image.open(path)
+            import fsx
+            im = Image.open(fsx.plain(path))
         with im:
             exif = im.getexif()
             tags = dict(exif)

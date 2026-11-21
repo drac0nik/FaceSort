@@ -193,6 +193,8 @@ def helper_main(role_, slot, task_q, result_q, cancel, ui_active, xlock, xui, xo
         if opts.get("mk"):
             import cryptbox
             cryptbox.set_master(opts["mk"])
+            import fsx
+            fsx.CACHE_BYTES = 300 << 20       # (1.58) a helper keeps few readable copies of encrypted photos
         if opts.get("nofp16"):
             os.environ["FACESORT_NO_FP16"] = "1"
         else:

@@ -853,6 +853,18 @@ def selftest_helpers(out_path):
             enc = not open(t, "rb").read(16).startswith(b"SQLite format 3")
             lines.append(f"encrypting a database: {'ok' if enc else 'FAILED'}")
             ok = ok and enc
+            try:                         # (1.58) a photo file in and out of its encrypted form
+                f1 = os.path.join(store.data_dir(), "selftest-file.bin")
+                with open(f1, "wb") as fh:
+                    fh.write(os.urandom(3 * cryptbox.CHUNK + 17))
+                h1 = cryptbox.seal_stream(f1, f1 + ".v")
+                fok = cryptbox.unseal_stream(f1 + ".v", f1 + ".o") == h1 and open(f1 + ".v", "rb").read(4) == cryptbox.FILE_MAGIC
+                for x in (f1, f1 + ".v", f1 + ".o"):
+                    os.remove(x)
+            except Exception:
+                fok = False
+            lines.append(f"encrypting a photo file: {'ok' if fok else 'FAILED'}")
+            ok = ok and fok
             cryptbox.lock()
             os.remove(t)
         try:                             # (1.56) the built-in browser is packaged
@@ -1008,6 +1020,8 @@ def main():
     if not privacy_ui.gate():                # (1.55) a locked profile opens only with its password
         return 0
     privacy_ui.finish_pending()              # encrypting / decrypting asked for in Settings
+    import fsx
+    fsx.wipe()                               # (1.58) readable copies left by a crash or power cut
     finish_restore()
     try:
         engine.FaceEngine()  # fail early and clearly if the models are missing
@@ -1020,6 +1034,7 @@ def main():
     import helpers
     if helpers.has_pool():
         helpers.pool().shutdown(3.0)      # the helper processes end with FaceSort
+    fsx.wipe()                            # (1.58) readable copies of encrypted photos go
     if getattr(win, "_restart_after_close", False):
         try:
             import backup
