@@ -210,3 +210,51 @@ def auto_move_job(conn, lib, pids, progress=lambda d, t, m: None, cancelled=lamb
     n = st.get("moved", 0)
     st["history_label"] = f"Moved {n:,} tagged photo{'s' if n != 1 else ''} out of {UNSORTED}"
     return st
+
+
+# ------------------------------------------------------------------ bringing older photos in
+def strays(conn, settings, lib):
+    """Photos FaceSort knows that live outside the library: [(path, "watched" / "imported")].
+    "watched": in one of your photo folders (Keep watching); "imported": everything else (dropped,
+    imported once, added as single files)."""
+    if not lib:
+        return []
+    watched = [f for f in settings.get("folders") or [] if f and not inside(f, lib) and not inside(lib, f)]
+    out = []
+    for (path,) in conn.execute("SELECT path FROM photos"):
+        if not path or inside(path, lib):
+            continue
+        group = "watched" if any(inside(path, f) for f in watched) else "imported"
+        out.append((path, group))
+    return out
+
+
+def other_drive(paths, lib):
+    """How many of these are on another drive than the library (copied, not just renamed)."""
+    def dev(p):
+        try:
+            return os.stat(os.path.dirname(p) or p).st_dev
+        except OSError:
+            return None
+    home, seen, n = dev(os.path.join(lib, ".")), {}, 0
+    for p in paths:
+        d = os.path.dirname(p)
+        if d not in seen:
+            seen[d] = dev(p)
+        if seen[d] is not None and seen[d] != home:
+            n += 1
+    return n
+
+
+def bring_in_job(conn, lib, paths, progress=lambda d, t, m: None, cancelled=lambda: False):
+    """The job: each photo (with its own extra files) into ~Unsorted\\<where it was>."""
+    existing = [p for p in paths if os.path.isfile(p)]
+    moves = [(p, target(p, lib)) for p in existing]
+
+    def prog(i, n):
+        progress(i, n, f"Moving into {UNSORTED}… {i:,} / {n:,}")
+    done, errors = run(conn, moves, prog, cancelled)
+    n = len(done)
+    return {"moved": n, "errors": errors, "missing": len(paths) - len(existing),
+            "moves": list(done.items()),
+            "history_label": f"Brought {n:,} older photo{'s' if n != 1 else ''} into the library ({UNSORTED})"}

@@ -288,6 +288,105 @@ class SettingsMixin:
                 os.makedirs(nd, exist_ok=True)
         return remap, len(done), errors
 
+    def library_or_ask(self, why):
+        """The library folder; asks for it once if there isn't one yet (None = not chosen)."""
+        s = self.settings
+        lib = libmove.library(s)
+        if not lib:
+            QMessageBox.information(self, "Your FaceSort library", why + "\n\nChoose the folder for your library.")
+            d = QFileDialog.getExistingDirectory(self, "Choose your FaceSort library folder")
+            if not d:
+                return None
+            lib = store.norm_path(d)
+            s["library_root"] = lib
+        if not any(lib == f or lib.startswith(f.rstrip("\\/") + os.sep) for f in s["folders"]):
+            s["folders"].append(lib)
+        store.save_settings(s)
+        return lib
+
+    def bring_into_library(self, answers=None):
+        """(1.57.5) Photos added before imports went into the library: moved into ~Unsorted\\<where they
+        were>, like a new import - tagged ones then go on to their person's folder by themselves.
+        answers: skips the window (tests) - {"watched": bool}."""
+        from PySide6.QtWidgets import QCheckBox, QDialogButtonBox, QLabel, QVBoxLayout
+        if self.busy():
+            QMessageBox.information(self, "Bring into the library", "Wait for the current task to finish first.")
+            return False
+        lib = self.library_or_ask("Older photos are brought into your FaceSort library, into "
+                                  f"“{libmove.UNSORTED}”.") if answers is None else libmove.library(self.settings)
+        if not lib:
+            return False
+        found = libmove.strays(self.conn, self.settings, lib)
+        imported = [p for p, g in found if g == "imported"]
+        watched = [p for p, g in found if g == "watched"]
+        if not found:
+            if answers is None:
+                QMessageBox.information(self, "Bring into the library",
+                                        "Everything FaceSort knows is already in your library.")
+            return False
+        if answers is None:
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Bring everything into the library")
+            dlg.setMinimumWidth(560)
+            lay = QVBoxLayout(dlg)
+            head = QLabel(f"<b>{len(imported):,}</b> photo{'s' if len(imported) != 1 else ''} and videos you added "
+                          "before (dropped, imported once, single files) are still outside your library. They're "
+                          f"moved into <b>{libmove.UNSORTED}\\&lt;where they were&gt;</b> in<br>{lib}")
+            head.setWordWrap(True)
+            lay.addWidget(head)
+            cb = QCheckBox(f"Also the {len(watched):,} in the photo folders you keep watching (your whole collection)")
+            cb.setEnabled(bool(watched))
+            lay.addWidget(cb)
+            note = QLabel("")
+            note.setWordWrap(True)
+            note.setStyleSheet("color: gray;")
+            lay.addWidget(note)
+            bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+            lay.addWidget(bb)
+
+            def update():
+                paths = imported + (watched if cb.isChecked() else [])
+                far = libmove.other_drive(paths, lib)
+                txt = ("Then, like anything new, photos with someone confirmed move on to their person's folder, "
+                       f"and the rest wait in {libmove.UNSORTED} until they're tagged. A photo's own extra files "
+                       "(.xmp, .json…) go with it; other files stay where they are. ")
+                if cb.isChecked():
+                    txt += ("The watched folders stay in your list, so new photos put there later are still "
+                            "found. ")
+                txt += (f"{far:,} are on another drive, so they're copied, checked, then removed - that takes "
+                        "longer. " if far else "Everything's on the library's drive, so it's quick. ")
+                txt += "Undo is in History."
+                note.setText(txt)
+                bb.button(QDialogButtonBox.Ok).setText(f"Move {len(paths):,} into {libmove.UNSORTED}")
+                bb.button(QDialogButtonBox.Ok).setEnabled(bool(paths))
+            cb.toggled.connect(update)
+            update()
+            bb.accepted.connect(dlg.accept)
+            bb.rejected.connect(dlg.reject)
+            if dlg.exec() != QDialog.Accepted:
+                return False
+            with_watched = cb.isChecked()
+        else:
+            with_watched = bool(answers.get("watched"))
+        paths = imported + (watched if with_watched else [])
+        if not paths:
+            return False
+
+        def done(st):
+            if not isinstance(st, dict):
+                return
+            msg = f"Brought {st.get('moved', 0):,} older photos into {libmove.UNSORTED}"
+            if st.get("errors"):
+                msg += f" · {len(st['errors'])} couldn't be moved (left where they are)"
+            if st.get("missing"):
+                msg += f" · {st['missing']:,} weren't there any more"
+            msg += " · tagged ones move on to their folders next · Undo in History"
+            self.statusBar().showMessage(msg, 15000)
+            self.pix_cache.clear()
+            self.refresh_all()
+            QTimer.singleShot(1500, self, lambda: self.automove_tick(force=True))
+        return self.run_job("bringin", libmove.bring_in_job, lib, paths, on_done=done)
+
     def automove_tick(self, force=False):
         """(1.57.3) Photos in ~Unsorted that now have someone confirmed on them move to where Sort into
         folders would put them - once you've stopped using FaceSort for a moment (so a quick fix to a
@@ -297,7 +396,7 @@ class SettingsMixin:
         if not s.get("auto_move", True):
             return False
         lib = libmove.library(s)
-        if not lib or self.busy() or not os.path.isdir(libmove.unsorted_dir(lib)):
+        if not lib or not self.isVisible() or self.busy() or not os.path.isdir(libmove.unsorted_dir(lib)):
             return False
         if not force:
             if time.monotonic() - (getattr(self, "_last_input", None) or 0) < libmove.PAUSE:

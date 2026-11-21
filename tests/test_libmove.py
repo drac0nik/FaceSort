@@ -112,3 +112,42 @@ def test_made_files_are_imported(window, tmp_path, monkeypatch):
     assert pid_of(c, made[0]) and scanned == made
     d = contactsheet_ui.ContactSheetDialog(w, 3, "Alice")
     assert d.dest.text() == os.path.join(libmove.unsorted_dir(store.norm_path(str(lib))), "Contact sheets")
+
+
+def test_bring_older_photos_into_the_library(window, tmp_path, monkeypatch):
+    """1.57.5: photos added before (imported once / watched) brought into ~Unsorted; tagged ones go on."""
+    import history
+    w, c = window, window.conn
+    old = tmp_path / "Old drop"
+    write_photo(str(old / "o1.jpg"), 971)
+    write_photo(str(old / "o2.jpg"), 972)
+    assert w.handle_drop([str(old)], answers={})                           # no library yet: stays put
+    w.idle()
+    o1 = pid_of(c, old / "o1.jpg")
+    assert o1
+    lib = tmp_path / "My Library"
+    lib.mkdir()
+    w.settings["library_root"] = store.norm_path(str(lib))
+    w.settings["folders"].append(store.norm_path(str(lib)))
+    found = libmove.strays(c, w.settings, store.norm_path(str(lib)))
+    groups = {g for _p, g in found}
+    assert "imported" in groups and "watched" in groups                    # the test library's photos are watched
+    watched_one = next(p for p, g in found if g == "watched")
+    alice = c.execute("SELECT id FROM persons WHERE name='Alice'").fetchone()[0]
+    c.execute("INSERT OR IGNORE INTO photo_people(photo_id, person_id, src) VALUES(?,?,'manual')", (o1, alice))
+    c.commit()
+    monkeypatch.setattr(w, "automove_tick", lambda force=False: None)       # (checked on its own below)
+    assert w.bring_into_library(answers={"watched": False})
+    w.idle()
+    new = libmove.target(str(old), str(lib))
+    assert os.path.exists(os.path.join(new, "o2.jpg")) and not os.path.exists(str(old / "o2.jpg"))
+    assert pid_of(c, os.path.join(new, "o1.jpg")) == o1
+    assert os.path.exists(watched_one)                                     # watched: left alone
+    assert o1 in libmove.tagged_waiting(c, store.norm_path(str(lib)))      # ...and moves on next
+    e = next(e for e in history.entries(c) if "older photo" in e["text"])
+    assert history.undo(c, e["id"])[0] == 2 and os.path.exists(str(old / "o2.jpg"))
+    assert w.bring_into_library(answers={"watched": True})
+    w.idle()
+    assert not os.path.exists(watched_one)
+    assert os.path.exists(libmove.target(watched_one, str(lib)))
+    assert not [p for p, _g in libmove.strays(c, w.settings, store.norm_path(str(lib))) if os.path.exists(p)]

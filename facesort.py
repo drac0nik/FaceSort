@@ -180,6 +180,13 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
                           "Save people's names into the photo files")
         self.a_export = act("Sort into folders…", QStyle.SP_DirLinkIcon, self.export_folders,
                             "Copy or move photos into one folder per person")
+        m = QMenu(self)                          # (1.57.5) the arrow beside it
+        m.addAction("Sort into folders…", self.export_folders)
+        m.addAction("Bring everything into the library…", lambda: self.bring_into_library())
+        self.a_export.setMenu(m)
+        b = tb.widgetForAction(self.a_export)
+        if isinstance(b, QToolButton):
+            b.setPopupMode(QToolButton.MenuButtonPopup)
         tb.addSeparator()
         self.a_review = act("Quick review", QStyle.SP_MediaPlay, self.quick_review,
                             "Answer yes/no questions that sort the most faces per keypress")

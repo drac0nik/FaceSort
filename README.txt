@@ -153,6 +153,21 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.57.5
+- Bring everything into the library: the arrow beside "Sort into folders…" › "Bring everything into
+  the library…". Photos and videos added before 1.57.3 are moved into
+  <library>\~Unsorted\<where they were>, the same as a new import.
+  - By default it moves what you added before by dropping, importing once or adding single files -
+    the strays left in places like Downloads. Tick the box to also move the photo folders you keep
+    watching (your whole collection).
+  - It shows how many first, and warns when files are on another drive, since those are copied,
+    checked, then removed, which takes longer.
+  - Afterwards, photos with someone confirmed go straight on to their person's folder. The rest wait
+    in ~Unsorted until they're tagged.
+  - A photo's own extra files go with it; other files stay where they are. Watched folders stay in
+    your list, so new photos put there later are still found (run it again to bring those in).
+  - Undo is in History.
+
 1.57.4
 - Pictures FaceSort makes are added to FaceSort and scanned straight away:
   - GIF frames ("Save every frame as a picture…") - tagged like the GIF, and left out of Duplicates
