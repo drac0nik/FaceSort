@@ -116,14 +116,18 @@ def test_gallery_watcher_downloads_whats_new(library, qapp, site, monkeypatch):
     library.conn.close()
     w = _web_window(qapp)
     got = []
-    monkeypatch.setattr(w, "handle_drop", lambda paths, answers=None, **k: got.append((list(paths), answers)))
+    # (1.57.6) the Add photos window comes up, filled in with the gallery's tagging
+    monkeypatch.setattr(w, "handle_drop", lambda paths, answers=None, defaults=None, source="", **k:
+                        got.append((list(paths), defaults, source)))
     state["n"] = 4
     wid = watcher.save_watch(w.conn, {"url": base + "/gallery", "name": "Test", "mode": "gallery",
                                       "people": ["Alice"], "category": None, "later": 0, "ask": 0})
     ww = w.open_gallery_watcher()
     ww.panel.check(None)
     _wait(qapp, lambda: ww.panel.checker is None)
+    pump(qapp, 0.3)
     assert len(got) == 1 and len(got[0][0]) == 4 and got[0][1]["people"] == ["Alice"]
+    assert "Test" in got[0][2]
     assert all(os.path.exists(p) and p.startswith(watcher.base_folder(w.settings)) for p in got[0][0])
     first = watcher.get_watch(w.conn, wid)
     assert first["last_new"] == 4 and first["last_check"]

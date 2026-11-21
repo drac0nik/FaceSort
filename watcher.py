@@ -373,7 +373,9 @@ class Checker(QObject):
         c.commit()
         self.total_new += n
         if self.new:
-            self.win.import_gallery_files(list(self.new), self.rule)
+            # (1.57.6) the Add photos window opens without holding up the next gallery's check
+            new, rule, name = list(self.new), dict(self.rule), w.get("name") or ""
+            QTimer.singleShot(0, lambda: self.win.import_gallery_files(new, rule, name))
         self.gallery_done.emit(w["id"], n, text)
         if not self.stopped:
             QTimer.singleShot(500, self._next)

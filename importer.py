@@ -83,7 +83,9 @@ def guess_use(name, depth, known_people):
 
 
 class ImportDialog(QDialog):
-    def __init__(self, win, dirs, files, already, watch=False):
+    def __init__(self, win, dirs, files, already, watch=False, defaults=None, source=""):
+        """defaults: people / category / later filled in to start with (a watched gallery's settings);
+        source: where they came from, shown under the title."""
         super().__init__(win)
         self.win = win
         self.dirs, self.files = dirs, files
@@ -99,6 +101,10 @@ class ImportDialog(QDialog):
         if nvid:
             parts.append(f"{nvid:,} video{'s' if nvid != 1 else ''}")
         lay.addWidget(QLabel(f"<b>Adding {' + '.join(parts)}</b>"))
+        if source:
+            src = QLabel(html.escape(source, quote=False))
+            src.setStyleSheet("color: #b07a12; font-weight: 600;")
+            lay.addWidget(src)
         names = [os.path.basename(p.rstrip("\\/")) or p for p in dirs + files]
         sub = ElidedLabel(", ".join(names[:12]) + ("…" if len(names) > 12 else ""))
         sub.setStyleSheet("color: gray;")
@@ -186,6 +192,12 @@ class ImportDialog(QDialog):
             self.update_preview()
         self.later = QCheckBox("Put them in Sort Later (out of the way until you're ready)")
         lay.addWidget(self.later)
+        d = defaults or {}
+        if d.get("people"):
+            self.people.setText(", ".join(d["people"]))
+        if d.get("category"):
+            self.category.setCurrentText(d["category"])
+        self.later.setChecked(bool(d.get("later")))
         bb = QDialogButtonBox()
         self.ok = bb.addButton("Add", QDialogButtonBox.AcceptRole)
         bb.addButton(QDialogButtonBox.Cancel)

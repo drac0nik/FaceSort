@@ -153,6 +153,21 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.57.6
+- Every import brings up the Add photos window before any faces are looked for, so you can set
+  people, a folder and what each sub-folder's name means first. That covers drops, Add folder…, Web
+  drops, the browser and now watched galleries too.
+  - A watched gallery's window comes up filled in with its tagging (people, folder, Sort Later),
+    with "New from the watched gallery “name”" under the title. Change anything before you click
+    Add. The gallery's "Ask me each time" box is gone, because it always asks now.
+  - One window at a time. If another gallery finishes while a window is open, its window comes next.
+    The gallery checks carry on meanwhile.
+- These don't bring the window up: pictures FaceSort makes from a photo you already have (they're
+  tagged like it), Bring everything into the library (they're already in FaceSort), and new photos a
+  Scan finds in folders you keep watching.
+- Fixed: a single file added on its own could change FaceSort's built-in default settings for the
+  rest of that session.
+
 1.57.5
 - Bring everything into the library: the arrow beside "Sort into folders…" › "Bring everything into
   the library…". Photos and videos added before 1.57.3 are moved into

@@ -96,7 +96,8 @@ def threshold(settings, model=None):
 
 
 def load_settings():
-    s = dict(DEFAULT_SETTINGS)
+    import copy
+    s = copy.deepcopy(DEFAULT_SETTINGS)          # (1.57.6: lists like "files" were shared with the defaults)
     try:
         import cryptbox
         saved = json.loads(cryptbox.read_private(os.path.join(data_dir(), "settings.json"), "settings")

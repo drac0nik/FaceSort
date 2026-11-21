@@ -86,7 +86,7 @@ class SettingsMixin:
         self._web_worker = w
         w.start()
 
-    def handle_drop(self, paths, ask=True, answers=None, watch=False):
+    def handle_drop(self, paths, ask=True, answers=None, watch=False, defaults=None, source=""):
         """Photos, videos and folders dropped on the window (or chosen with Add folder): the Add
         photos window (importer.py) asks how to tag them; they're added and scanned.
         answers: skips the window (tests) - a dict like ImportDialog.choices(), or the older
@@ -101,9 +101,23 @@ class SettingsMixin:
         prefixes = tuple(d.rstrip("\\/") + os.sep for d in dirs)
         inside = {p for p in known_paths if prefixes and p.startswith(prefixes)} | {f for f in files if f in known_paths}
         if answers is None:
+            # (1.57.6) one Add photos window at a time: anything else coming in waits its turn
+            if getattr(self, "_import_open", False):
+                self._import_queue = getattr(self, "_import_queue", []) + [
+                    (list(paths), {"watch": watch, "defaults": defaults, "source": source})]
+                self.statusBar().showMessage("More to add - its Add photos window comes next.", 6000)
+                return True
             from importer import ImportDialog
-            dlg = ImportDialog(self, dirs, files, len(inside), watch=watch)
-            if dlg.exec() != QDialog.Accepted:
+            self._import_open = True
+            try:
+                dlg = ImportDialog(self, dirs, files, len(inside), watch=watch, defaults=defaults, source=source)
+                ok = dlg.exec() == QDialog.Accepted
+            finally:
+                self._import_open = False
+                if getattr(self, "_import_queue", None):
+                    nxt_paths, nxt_kw = self._import_queue.pop(0)
+                    QTimer.singleShot(300, lambda: self.handle_drop(nxt_paths, **nxt_kw))
+            if not ok:
                 return False
             ch = dlg.choices()
         elif isinstance(answers, dict):

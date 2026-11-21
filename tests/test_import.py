@@ -119,3 +119,34 @@ def test_emptied_imported_folders_are_cleaned_up(tmp_path):
     assert busy.exists() and "Shoot 13" not in olds                   # something else is in it: stays
     assert "Empty inside" in olds and lib.exists()                    # library folder itself never moves
     assert (dest / jobs.DISCARD_FOLDER / "Shoot 12" / "Day 2").exists()
+
+
+def test_gallery_imports_show_the_window_filled_in(window, qapp, tmp_path, monkeypatch):
+    """1.57.6: every import brings up Add photos first - a watched gallery's with its tagging filled in;
+    a second one waits until the first window is closed."""
+    import importer
+    from PySide6.QtWidgets import QDialog
+    w = window
+    w.start_scan = lambda **k: None
+    w.settings["import_into_library"] = False     # (no library folder here: it would ask for one)
+    seen = []
+
+    def fake_exec(dlg):
+        seen.append((dlg.people.text(), dlg.category.currentText(), dlg.later.isChecked(),
+                     [lb.text() for lb in dlg.findChildren(importer.QLabel)]))
+        if len(seen) == 1:                         # while the first is open, another gallery finishes
+            w.import_gallery_files([str(tmp_path / "g2" / "b.jpg")], {"people": ["Bo"]}, "Second")
+            assert len(w._import_queue) == 1
+        dlg._done("tag")
+        return QDialog.Accepted
+    monkeypatch.setattr(importer.ImportDialog, "exec", fake_exec)
+    write_photo(str(tmp_path / "g1" / "a.jpg"), 981)
+    write_photo(str(tmp_path / "g2" / "b.jpg"), 982)
+    assert w.import_gallery_files([str(tmp_path / "g1" / "a.jpg")],
+                                  {"people": ["Ann Lee"], "category": "Shoots", "later": True}, "Ann's page")
+    assert seen[0][:3] == ("Ann Lee", "Shoots", True)
+    assert any("Ann's page" in t for t in seen[0][3])
+    pump(qapp, 0.8)
+    assert len(seen) == 2 and seen[1][0] == "Bo" and not w._import_queue
+    ann = w.conn.execute("SELECT id FROM persons WHERE name='Ann Lee'").fetchone()
+    assert ann is not None or store.drop_rules(w.conn)            # the window's answers were used

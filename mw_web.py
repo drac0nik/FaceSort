@@ -52,13 +52,14 @@ class WebMixin:
             return
         self.open_gallery_watcher(check=True)
 
-    def import_gallery_files(self, paths, rule):
-        """New pictures from a watched gallery: into Recently dropped, tagged as set for it."""
-        if rule.get("ask"):
-            return self.handle_drop(paths)
-        return self.handle_drop(paths, answers={"people": list(rule.get("people") or []),
-                                                "category": rule.get("category") or None,
-                                                "later": bool(rule.get("later"))})
+    def import_gallery_files(self, paths, rule, name=""):
+        """New pictures from a watched gallery: the Add photos window, filled in as set for the gallery
+        (1.57.6 - you check the people and folders before the faces are looked for)."""
+        return self.handle_drop(paths, defaults={"people": list(rule.get("people") or []),
+                                                 "category": rule.get("category") or None,
+                                                 "later": bool(rule.get("later"))},
+                                source=f"New from the watched gallery “{name}”" if name else
+                                "New from a watched gallery")
 
     def gallery_timer_tick(self):
         """Every few minutes: start a check by itself when one is due (Gallery watcher: Check every)."""
