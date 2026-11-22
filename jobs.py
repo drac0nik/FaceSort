@@ -1366,7 +1366,8 @@ def _file_drop_files(conn, dest, move, include_dropped, dir_dests, stats, log_ro
     done_ids, n = [], 0
     for fid, batch, path, kind, root in rows:
         n += 1
-        if not os.path.exists(path):
+        sealed = fsx.sealed_only(path, conn)    # (1.58.1) an encrypted other file: FaceSort's record moves
+        if not os.path.exists(path) and not sealed:
             done_ids.append(fid)
             continue
         fl = drop_file_folders(path, root, dir_dests)
@@ -1382,10 +1383,20 @@ def _file_drop_files(conn, dest, move, include_dropped, dir_dests, stats, log_ro
                 os.makedirs(folder, exist_ok=True)
                 target, _ = _free_name(folder, os.path.basename(path))
                 src = first or path
+                if sealed:
+                    if move and k == 0:
+                        conn.execute("UPDATE photos SET path=? WHERE path=?", (store.norm_path(target), path))
+                        first = store.norm_path(target)
+                        log_rows.append((path, first))
+                    else:
+                        shutil.copy2(fsx.plain(first or path, conn), target)
+                        fsx.mark_made(conn, target)
+                    continue
                 if move and k == 0:
                     shutil.move(path, target)
                     first = target
                     log_rows.append((path, store.norm_path(target)))
+                    conn.execute("UPDATE photos SET path=? WHERE path=?", (store.norm_path(target), path))
                 else:
                     shutil.copy2(src if first else path, target)
                 store.mark_placed(conn, target)

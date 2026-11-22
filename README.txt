@@ -153,6 +153,26 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.58.1
+- Other files now move with the photos and videos. That means notes, links, documents and archives
+  that come with a drop (a photo's own .xmp / .json / .aae always went with it).
+  - Importing: every other file in the folders you add goes into the same ~Unsorted\<where it was>
+    folder as the photos, and so do other files dropped on their own. Folders set to "Leave out"
+    still stay where they are.
+  - After tagging: once every photo from a folder has moved out of ~Unsorted, that folder's other
+    files go where the photos went - <their folder>\~links, ~archives or ~files (the same rule as
+    Sort into folders, with copies when the photos went to more than one person). They're part of
+    the same History entry, so Undo brings them back too.
+  - Sort into folders follows them to their new place in ~Unsorted (before, they were listed as
+    "left behind").
+  - Other files that earlier versions left behind (still where they were dropped from) come in with
+    Bring everything into the library, and follow photos that were already sorted.
+- With photo and video file encryption on, other files are encrypted into the vault too: random
+  names, opened as a temporary copy that's wiped, removed with Review originals and decrypted again
+  if you turn encryption off. They show in FaceSort as other files, since FaceSort is now the way to
+  open them. The first time, FaceSort looks through your folders and library for them. After that,
+  it picks them up as they come in.
+
 1.58.0
 - Encrypt the photo and video files themselves (Settings › Privacy › Photo and video files). It's
   optional and off unless you turn it on. It needs a password and "Encrypt the library" on first,

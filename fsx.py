@@ -51,6 +51,8 @@ def set_enabled(on, vault=None, data=None):
     if i is None:
         raise ValueError("set a password first")
     i["encrypt_files"] = bool(on)
+    if not on:
+        i.pop("extras_walked", None)            # (turned on again later: every folder looked through again)
     if vault:
         i["vault_dir"] = vault
     cryptbox._write(i, data)
@@ -275,11 +277,52 @@ def made_paths(conn):
     return {r[0] for r in conn.execute("SELECT path FROM vault_made")}
 
 
+def record_extras(conn, roots=(), full=False):
+    """(1.58.1) Other files (notes, links, documents, archives) get a record in FaceSort so they can be
+    encrypted too: those in folders with photos not encrypted yet, ones FaceSort made, ones that came
+    with a drop - or, the first time, every one in your folders and library. -> how many new."""
+    import libmove
+    dirs = set()
+    for (p,) in conn.execute("SELECT p.path FROM photos p LEFT JOIN vault v ON v.photo_id = p.id "
+                             "WHERE v.photo_id IS NULL"):
+        dirs.add(os.path.dirname(p))
+    for p in made_paths(conn):
+        dirs.add(os.path.dirname(p))
+    try:
+        for _i, _b, p, _k, _r in store.drop_files(conn):
+            dirs.add(os.path.dirname(p))
+    except Exception:
+        pass
+    if full:
+        for r in roots:
+            for root, subdirs, _names in os.walk(r):
+                subdirs[:] = [x for x in subdirs if not x.startswith(("$", "."))]
+                dirs.add(root)
+    known = {r[0] for r in conn.execute("SELECT path FROM photos")}
+    n = 0
+    for d in dirs:
+        try:
+            names = os.listdir(d)
+        except OSError:
+            continue
+        media_lower = [x.lower() for x in names if libmove._media(x)]
+        for x in names:
+            p = store.norm_path(os.path.join(d, x))
+            if p in known or not os.path.isfile(p) or not libmove.is_extra(x, media_lower, d):
+                continue
+            st = os.stat(p)
+            store.store_other(conn, p, round(st.st_mtime, 3), st.st_size)
+            known.add(p)
+            n += 1
+    conn.commit()
+    return n
+
+
 def to_seal(conn):
     """[(photo_id, path)] not encrypted yet whose file is there (photos and videos, not other files)."""
     ensure_tables(conn)
     rows = conn.execute("""SELECT p.id, p.path FROM photos p LEFT JOIN vault v ON v.photo_id = p.id
-                           WHERE v.photo_id IS NULL AND COALESCE(p.is_other, 0) = 0""").fetchall()
+                           WHERE v.photo_id IS NULL""").fetchall()             # (1.58.1: other files too)
     return [(i, p) for i, p in rows if os.path.isfile(p)]
 
 
@@ -468,6 +511,11 @@ def seal_job(conn, roots=(), progress=lambda d, t, m: None, cancelled=lambda: Fa
     """Encrypt every photo and video that isn't yet. Readable files FaceSort made itself go straight
     away; your originals wait for Review originals (or go straight away too if you chose that)."""
     ensure_tables(conn)
+    i = cryptbox.info() or {}
+    record_extras(conn, roots, full=not i.get("extras_walked"))     # (1.58.1) other files too
+    if not i.get("extras_walked"):
+        i["extras_walked"] = True
+        cryptbox._write(i)
     items = to_seal(conn)
     made = made_paths(conn)
     auto = auto_remove()

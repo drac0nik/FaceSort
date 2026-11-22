@@ -136,11 +136,16 @@ class SettingsMixin:
         uses = {store.norm_path(p): (u, n) for p, u, n in ch["folders"]}
         skip = [p for p, (u, n) in uses.items() if u == "skip"]
         orig_dirs, moved_note = list(dirs), ""
+        loose = [store.norm_path(p) for p in paths if os.path.isfile(p) and store.norm_path(p) not in files
+                 and not (os.path.splitext(p)[1].lower() in engine.IMAGE_EXTS or engine.is_video(p))]
         if not ch["watch"] and self.settings.get("import_into_library", True):
             # (1.57.3) new imports go straight into the library: <library>\~Unsorted\<where they were>
-            res = self.import_into_library(dirs, files, ask=answers is None, skip=skip)
+            # (1.58.1) - and the other files with them (notes, links, documents, archives)
+            res = self.import_into_library(dirs, files, ask=answers is None, skip=skip, extras=loose)
             if res is not None:
                 remap, n_moved, errors = res
+                orig_dirs = list(dict.fromkeys(remap(d) for d in dirs))
+                loose = [remap(p) for p in loose]
                 dirs = list(dict.fromkeys(remap(d) for d in dirs))
                 files = list(dict.fromkeys(remap(f) for f in files))
                 uses = {remap(p): v for p, v in uses.items()}
@@ -153,7 +158,8 @@ class SettingsMixin:
                     moved_note = f" · {n_moved:,} moved into {libmove.UNSORTED}"
                 if errors:
                     moved_note += f" · {len(errors)} couldn't be moved (added where they are)"
-                    files += [store.norm_path(src) for src, _why in errors]
+                    files += [store.norm_path(src) for src, _why in errors
+                              if os.path.splitext(src)[1].lower() in engine.IMAGE_EXTS or engine.is_video(src)]
         # where they live from now on: watched (a library folder) or imported once (forgotten -
         # just these photos are kept; the folder isn't looked at again)
         folders = self.settings["folders"]
@@ -206,10 +212,7 @@ class SettingsMixin:
             for p in dirs + files:
                 store.add_drop_rule(self.conn, p, p in dirs, [], None, False, None, batch)
         # everything else that came along (notes, links, documents, archives...): kept with the photos
-        others = self.collect_other_files(orig_dirs, [p for p in paths if os.path.isfile(p)
-                                                      and store.norm_path(p) not in files
-                                                      and not (os.path.splitext(p)[1].lower() in engine.IMAGE_EXTS
-                                                               or engine.is_video(p))])
+        others = self.collect_other_files(orig_dirs, [p for p in loose if os.path.isfile(p)])
         if others:
             store.add_drop_files(self.conn, batch, others)
         rules = store.drop_rules(self.conn)
@@ -251,7 +254,7 @@ class SettingsMixin:
             self.start_scan(videos_only=False, opts=drop)
         return True
 
-    def import_into_library(self, dirs, files, ask=True, skip=()):
+    def import_into_library(self, dirs, files, ask=True, skip=(), extras=()):
         r"""(1.57.3) Move what's being imported into <library>\~Unsorted\<where it was>.
         -> (remap(path) -> new path, how many moved, [(path, why)]), or None (imported where it is)."""
         s = self.settings
@@ -273,7 +276,7 @@ class SettingsMixin:
         if not any(lib == f or lib.startswith(f.rstrip("\\/") + os.sep) for f in folders):
             folders.append(lib)
         store.save_settings(s)
-        moves = libmove.plan(dirs, files, lib, skip=skip, keep=list(folders))
+        moves = libmove.plan(dirs, files, lib, skip=skip, keep=list(folders), extras=extras)
         done, errors = {}, []
         if moves:
             from PySide6.QtWidgets import QProgressDialog
@@ -416,7 +419,7 @@ class SettingsMixin:
         if self.busy() and getattr(self, "_job", None) != "dupes":      # (the duplicate check gives way)
             return False
         n = self.conn.execute("""SELECT COUNT(*) FROM photos p LEFT JOIN vault v ON v.photo_id = p.id
-                                 WHERE v.photo_id IS NULL AND COALESCE(p.is_other, 0) = 0""").fetchone()[0]
+                                 WHERE v.photo_id IS NULL""").fetchone()[0] + len(fsx.made_paths(self.conn))
         if not n:
             return None
 

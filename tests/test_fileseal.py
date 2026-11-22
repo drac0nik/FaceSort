@@ -211,3 +211,39 @@ def test_viewer_and_edits_on_encrypted_photos(window, data_dir, qapp, tmp_path, 
     v.close_viewer()
     pump(qapp, 3)
     w.idle()
+
+
+def test_other_files_encrypted_too(window, data_dir, qapp, tmp_path):
+    """1.58.1: notes, links and documents next to the photos go into the vault as well."""
+    w, c = window, window.conn
+    folder = os.path.dirname(_real_files(c)[0][1])
+    note = os.path.join(folder, "release notes.txt")
+    open(note, "w").write("Anna Reyes - model release")
+    h = _sha(note)
+    cryptbox.setup("pw")
+    fsx.set_enabled(True, vault=str(tmp_path / "vault"))
+    w.seal_soon()
+    w.idle()
+    assert fsx.entry(note) is not None
+    assert c.execute("SELECT is_other FROM photos WHERE path=?", (store.norm_path(note),)).fetchone()[0] == 1
+    fsx.remove_originals(c, fsx.originals(c), roots=fsx.library_roots(w.settings))
+    assert not os.path.exists(note) and _sha(fsx.plain(note)) == h
+    for root, _d, files in os.walk(str(tmp_path / "vault")):
+        for f in files:
+            assert b"Anna" not in open(os.path.join(root, f), "rb").read()
+    # an encrypted other file follows its photos out of ~Unsorted by FaceSort's record alone
+    import libmove
+    lib = store.norm_path(str(data_dir.lib))
+    uns = os.path.join(libmove.unsorted_dir(lib), "Trip")
+    pid = c.execute("SELECT id FROM photos WHERE path=?", (store.norm_path(note),)).fetchone()[0]
+    moved_to = os.path.join(uns, "release notes.txt")
+    c.execute("UPDATE photos SET path=? WHERE id=?", (store.norm_path(moved_to), pid))
+    c.commit()
+    libmove.remember_moves(c, lib, [(os.path.join(uns, "x.jpg"), os.path.join(lib, "Alice", "x.jpg"))])
+    moved = libmove.follow_extras(c, lib)
+    assert moved and moved[0][1].endswith(os.path.join("Alice", "~files", "release notes.txt"))
+    assert _sha(fsx.plain(moved[0][1])) == h
+    # decrypting brings it back as a normal file too
+    w.start_unseal()
+    w.idle()
+    assert _sha(moved[0][1]) == h

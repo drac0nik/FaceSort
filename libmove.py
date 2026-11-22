@@ -56,15 +56,28 @@ def _media(name):
     return ext in engine.IMAGE_EXTS or ext in engine.VIDEO_EXTS
 
 
-def plan(dirs, files, lib, skip=(), keep=()):
-    """[(src, dst)] for the photos and videos being imported. skip: folders left out; keep: folders /
-    files that stay where they are (watched folders, the library itself)."""
+def is_extra(name, media_lower, folder=""):
+    """A file that comes with photos (notes, links, documents, archives) - not a photo or video, not
+    one photo's own .xmp / .json / .aae (those go with their photo), not Windows' own clutter."""
+    if _media(name) or name.startswith(".") or name.lower() in companions.JUNK or name.endswith(".part"):
+        return False
+    return not companions.is_companion(os.path.join(folder, name), media_lower)
+
+
+def plan(dirs, files, lib, skip=(), keep=(), extras=()):
+    """[(src, dst)] for what's being imported: the photos and videos first, then (1.58.1) the other
+    files in the same folders - they go into the same ~Unsorted folder as the photos. skip: folders
+    left out; keep: folders / files that stay where they are (watched folders, the library itself);
+    extras: other files dropped on their own."""
     keep = [k for k in keep if k] + [lib]
     stay = lambda p: any(inside(p, k) for k in keep)
-    out = []
+    out, more = [], []
     for f in files:
         if not stay(f):
             out.append((f, target(f, lib)))
+    for f in extras:
+        if not stay(f) and os.path.isfile(f):
+            more.append((f, target(f, lib)))
     for d in dirs:
         if stay(d):
             continue
@@ -72,11 +85,14 @@ def plan(dirs, files, lib, skip=(), keep=()):
             subdirs[:] = [x for x in subdirs if not x.startswith(("$", "."))
                           and not any(inside(os.path.join(root, x), s) for s in skip)
                           and not stay(os.path.join(root, x))]
+            media_lower = [n.lower() for n in names if _media(n)]
             for n in names:
+                p = os.path.join(root, n)
                 if _media(n) and not n.startswith("."):
-                    p = os.path.join(root, n)
                     out.append((p, target(p, lib)))
-    return out
+                elif is_extra(n, media_lower, root):
+                    more.append((p, target(p, lib)))
+    return out + more
 
 
 def _free(dst):
@@ -213,10 +229,133 @@ def auto_move_job(conn, lib, pids, progress=lambda d, t, m: None, cancelled=lamb
     import jobs
     st = jobs.export_folders(conn, lib, False, True, progress, cancelled, roots=(), convert_webp=False,
                              cleanup=False, include_dropped=True, only=pids)
+    remember_moves(conn, lib, st.get("moves") or [])
+    extra = follow_extras(conn, lib)
+    st["moves"] = list(st.get("moves") or []) + extra
+    st["extra_files"] = len(extra)
     st["cleaned"] = remove_empty(unsorted_dir(lib))
     n = st.get("moved", 0)
-    st["history_label"] = f"Moved {n:,} tagged photo{'s' if n != 1 else ''} out of {UNSORTED}"
+    st["history_label"] = f"Moved {n:,} tagged photo{'s' if n != 1 else ''} out of {UNSORTED}" + \
+        (f" (+{len(extra):,} other file{'s' if len(extra) != 1 else ''})" if extra else "")
     return st
+
+
+# ------------------------------------------------------------------ (1.58.1) other files follow
+def _moves_table(conn):
+    conn.execute("CREATE TABLE IF NOT EXISTS unsorted_moves(src_dir TEXT, dest_dir TEXT, "
+                 "PRIMARY KEY(src_dir, dest_dir))")
+
+
+def remember_moves(conn, lib, moves):
+    """Where photos from each ~Unsorted folder went (their other files follow once it's empty)."""
+    _moves_table(conn)
+    uns = unsorted_dir(lib)
+    rows = {(store.norm_path(os.path.dirname(a)), store.norm_path(os.path.dirname(b)))
+            for a, b in moves if inside(a, uns) and not inside(b, uns) and _media(a)}
+    conn.executemany("INSERT OR IGNORE INTO unsorted_moves(src_dir, dest_dir) VALUES(?,?)", list(rows))
+    conn.commit()
+
+
+def _left_in(conn, d):
+    """Photos or videos still waiting in this ~Unsorted folder (on disk, or kept encrypted)."""
+    try:
+        names = os.listdir(d)
+    except OSError:
+        names = []
+    discarded = {r[0] for r in conn.execute("SELECT path FROM photos WHERE COALESCE(discarded, 0) = 1 "
+                                            "AND substr(path, 1, ?) = ?", (len(d) + 1, d + os.sep))}
+    if any(_media(n) and os.path.join(d, n) not in discarded for n in names):
+        return True
+    pre = d + os.sep
+    for (p,) in conn.execute("""SELECT p.path FROM photos p JOIN vault v ON v.photo_id = p.id
+                                WHERE substr(p.path, 1, ?) = ? AND COALESCE(p.is_other, 0) = 0
+                                  AND COALESCE(p.discarded, 0) = 0""", (len(pre), pre)) if fsx._has_table(conn) else ():
+        if os.path.dirname(p) == d:
+            return True
+    return False
+
+
+def _extras_in(conn, d):
+    """[(path, photo_id or None, kept encrypted)] other files in this folder."""
+    out, seen = [], set()
+    try:
+        names = os.listdir(d)
+    except OSError:
+        names = []
+    media_lower = [n.lower() for n in names if _media(n)]
+    for n in names:
+        p = os.path.join(d, n)
+        if os.path.isfile(p) and is_extra(n, media_lower, d):
+            row = conn.execute("SELECT id FROM photos WHERE path=?", (store.norm_path(p),)).fetchone()
+            out.append((store.norm_path(p), row[0] if row else None, False))
+            seen.add(store.norm_path(p))
+    pre = d + os.sep
+    for pid, p in conn.execute("SELECT id, path FROM photos WHERE COALESCE(is_other, 0) = 1 AND substr(path, 1, ?) = ?",
+                               (len(pre), pre)):
+        if os.path.dirname(p) == d and p not in seen and fsx.sealed_only(p, conn):
+            out.append((p, pid, True))
+    return out
+
+
+def backfill_moves(conn, lib):
+    """Where earlier moves out of ~Unsorted went (History), for photos moved before 1.58.1."""
+    import json
+    _moves_table(conn)
+    try:
+        rows = conn.execute("SELECT data FROM history WHERE undone=0 AND text LIKE ?",
+                            (f"%out of {UNSORTED}%",)).fetchall()
+    except Exception:
+        return
+    for (data,) in rows:
+        try:
+            remember_moves(conn, lib, [tuple(m) for m in json.loads(data).get("files") or []])
+        except Exception:
+            pass
+
+
+def follow_extras(conn, lib):
+    r"""Other files in an ~Unsorted folder whose photos have all moved on go where the photos went:
+    <their folder>\~links, ~archives or ~files (the first folder gets the file, any others a copy).
+    -> [(old, new)] moved."""
+    import shutil
+    _moves_table(conn)
+    backfill_moves(conn, lib)
+    uns = unsorted_dir(lib)
+    moved = []
+    for (d,) in conn.execute("SELECT DISTINCT src_dir FROM unsorted_moves").fetchall():
+        if not inside(d, uns) or _left_in(conn, d):
+            continue
+        dests = [r[0] for r in conn.execute("SELECT dest_dir FROM unsorted_moves WHERE src_dir=? ORDER BY dest_dir",
+                                            (d,))]
+        for path, pid, sealed in _extras_in(conn, d):
+            sub = companions.SUB.get(companions.kind_of(path), "~files")
+            first = None
+            for k, dest in enumerate(dests):
+                to = _free(os.path.join(dest, sub, os.path.basename(path)))
+                try:
+                    if k == 0:
+                        if sealed:
+                            conn.execute("UPDATE photos SET path=? WHERE id=?", (store.norm_path(to), pid))
+                        else:
+                            os.makedirs(os.path.dirname(to), exist_ok=True)
+                            _move(path, to)
+                            if pid:
+                                conn.execute("UPDATE photos SET path=? WHERE id=?", (store.norm_path(to), pid))
+                            elif fsx.enabled():                       # (encrypted next, like the rest)
+                                st = os.stat(to)
+                                store.store_other(conn, store.norm_path(to), round(st.st_mtime, 3), st.st_size)
+                        first = store.norm_path(to)
+                        moved.append((path, first))
+                    else:
+                        os.makedirs(os.path.dirname(to), exist_ok=True)
+                        shutil.copy2(fsx.plain(first, conn), to)
+                        fsx.mark_made(conn, to)
+                except OSError:
+                    break
+            conn.commit()
+        conn.execute("DELETE FROM unsorted_moves WHERE src_dir=?", (d,))
+        conn.commit()
+    return moved
 
 
 # ------------------------------------------------------------------ bringing older photos in
@@ -227,12 +366,20 @@ def strays(conn, settings, lib):
     if not lib:
         return []
     watched = [f for f in settings.get("folders") or [] if f and not inside(f, lib) and not inside(lib, f)]
-    out = []
+    out, seen = [], set()
     for (path,) in conn.execute("SELECT path FROM photos"):
         if not path or inside(path, lib):
             continue
         group = "watched" if any(inside(path, f) for f in watched) else "imported"
         out.append((path, group))
+        seen.add(path)
+    try:                                       # (1.58.1) other files that came with a drop, left behind
+        for _i, _b, path, _k, _r in store.drop_files(conn):
+            if path and path not in seen and not inside(path, lib) and os.path.isfile(path):
+                out.append((path, "watched" if any(inside(path, f) for f in watched) else "imported"))
+                seen.add(path)
+    except Exception:
+        pass
     return out
 
 
@@ -261,7 +408,14 @@ def bring_in_job(conn, lib, paths, progress=lambda d, t, m: None, cancelled=lamb
     def prog(i, n):
         progress(i, n, f"Moving into {UNSORTED}… {i:,} / {n:,}")
     done, errors = run(conn, moves, prog, cancelled)
+    for old, new in done.items():              # (1.58.1) other files from a drop: their record follows
+        conn.execute("UPDATE drop_files SET path=? WHERE path=?", (new, old))
+    for (fid, root) in conn.execute("SELECT id, root FROM drop_files WHERE root IS NOT NULL").fetchall():
+        if root and not inside(root, lib):
+            conn.execute("UPDATE drop_files SET root=? WHERE id=?", (store.norm_path(target(root, lib)), fid))
+    conn.commit()
+    extra = follow_extras(conn, lib)
     n = len(done)
     return {"moved": n, "errors": errors, "missing": len(paths) - len(existing),
-            "moves": list(done.items()),
+            "moves": list(done.items()) + extra,
             "history_label": f"Brought {n:,} older photo{'s' if n != 1 else ''} into the library ({UNSORTED})"}
