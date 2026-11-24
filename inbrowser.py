@@ -189,8 +189,18 @@ def make_page(host, parent=None):
     from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineScript
 
     class FsPage(QWebEnginePage):
-        def createWindow(self, _type):
-            return self                            # (pop-ups and new tabs open here)
+        def createWindow(self, kind):
+            # (1.58.2) a link opened in a new tab or window (target=_blank, middle / Ctrl+click, pop-ups)
+            # gets its own tab when the window has tabs; otherwise it opens right here
+            ui = getattr(host, "ui", None)
+            if ui is not None and hasattr(ui, "new_tab"):
+                bg = kind == QWebEnginePage.WebWindowType.WebBrowserBackgroundTab
+                v = ui.new_tab(None, switch=False)
+                if not bg:                         # (switched to once the page has taken it)
+                    from PySide6.QtCore import QTimer
+                    QTimer.singleShot(0, lambda: ui.tabs.indexOf(v) >= 0 and ui.tabs.setCurrentWidget(v))
+                return v.page()
+            return self
 
         def javaScriptConsoleMessage(self, level, message, line, source):
             pass
@@ -237,30 +247,33 @@ class BrowserHost:
 
 class BrowserWindow(QMainWindow):
     """(1.57.1) The Gallery Watcher window: the browser on the left (with a tab for the page being
-    checked), the watched galleries and their settings on the right."""
+    checked), the watched galleries and their settings on the right.
+    (1.58.2) The browser has tabs: + or Ctrl+T for a new one, links meant for a new tab or window open in
+    one, Ctrl+W closes, Ctrl+Shift+T brings back the last closed; the tabs you had open come back next time."""
     saved = Signal(list)
+    HOME = "https://www.google.com/"
 
     def __init__(self, win, url=None):
         super().__init__(None)
-        from PySide6.QtWebEngineWidgets import QWebEngineView  # noqa: F401
-        from PySide6.QtWidgets import QSplitter, QTabWidget
+        from PySide6.QtGui import QKeySequence, QShortcut
+        from PySide6.QtWebEngineWidgets import QWebEngineView
+        from PySide6.QtWidgets import QSplitter, QTabWidget, QToolButton
         import watcher_ui
         self.win = win
         self.setWindowTitle("Gallery Watcher")
         self.setWindowIcon(win.windowIcon())
         self.resize(1500, 900)
         self.host = BrowserHost(win, self)
-        self.view = QWebEngineView()
-        self.page = make_page(self.host, self.view)
-        self.view.setPage(self.page)
+        self._closed = []                          # (address, title) of closed tabs, for Ctrl+Shift+T
         tb = QToolBar()
         tb.setMovable(False)
         self.addToolBar(tb)
-        from PySide6.QtWebEngineCore import QWebEnginePage
-        for text, act in (("◀", QWebEnginePage.Back), ("▶", QWebEnginePage.Forward), ("⟳", QWebEnginePage.Reload)):
-            a = self.page.action(act)
-            a.setText(text)
-            tb.addAction(a)
+        self.a_back = tb.addAction("◀", lambda: self.view.back())
+        self.a_back.setToolTip("Back (Alt+Left)")
+        self.a_fwd = tb.addAction("▶", lambda: self.view.forward())
+        self.a_fwd.setToolTip("Forward (Alt+Right)")
+        self.a_reload = tb.addAction("⟳", lambda: self.view.reload())
+        self.a_reload.setToolTip("Reload (F5)")
         self.addr = QLineEdit()
         self.addr.setPlaceholderText("Web address")
         self.addr.returnPressed.connect(self.go)
@@ -271,9 +284,27 @@ class BrowserWindow(QMainWindow):
         self.a_fill.setToolTip("Fill in the login saved for this site (you press Sign in)")
         tb.addAction("Logins…", self.manage_logins)
         self.tabs = QTabWidget()
-        self.tabs.addTab(self.view, "Browse")
+        self.tabs.setDocumentMode(True)
+        self.tabs.setMovable(True)
+        self.tabs.setTabsClosable(True)
+        self.tabs.setElideMode(Qt.ElideRight)
+        self.tabs.setUsesScrollButtons(True)
+        self.tabs.tabCloseRequested.connect(self.close_tab)
+        self.tabs.currentChanged.connect(self._tab_changed)
+        self.tabs.tabBar().tabMoved.connect(lambda *_: self._keep_checked_last())
+        self.tabs.tabBar().setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tabs.tabBar().customContextMenuRequested.connect(self._tab_menu)
+        plus = QToolButton()
+        plus.setText("+")
+        plus.setAutoRaise(True)
+        plus.setMinimumSize(30, 26)
+        plus.setStyleSheet("QToolButton { font-size: 17px; font-weight: 600; padding: 0 6px; }")
+        plus.setToolTip("New tab (Ctrl+T)")
+        plus.clicked.connect(lambda: self.new_tab(self.HOME, focus_address=True))
+        self.tabs.setCornerWidget(plus, Qt.TopRightCorner)
         self.check_view = QWebEngineView()
         self.tabs.addTab(self.check_view, "Being checked")
+        self._fix_checked_tab()
         self.panel = watcher_ui.WatcherPanel(win, self.check_view, self)
         split = QSplitter(Qt.Horizontal)
         split.addWidget(self.tabs)
@@ -282,21 +313,160 @@ class BrowserWindow(QMainWindow):
         split.setStretchFactor(1, 1)
         split.setSizes([1040, 460])
         self.setCentralWidget(split)
-        self.view.urlChanged.connect(self._url_changed)
-        self.view.titleChanged.connect(lambda t: self.setWindowTitle(f"Gallery Watcher - {t}" if t else "Gallery Watcher"))
-        self.view.loadFinished.connect(self._loaded)
         self.saved.connect(self._saved)
         self._batch, self._timer = [], None
         self.profile = profile()
         self.profile.downloadRequested.connect(self._download_requested)
-        self.view.setUrl(QUrl(url or "https://www.google.com/"))
+        for keys, fn in (("Ctrl+T", lambda: self.new_tab(self.HOME, focus_address=True)),
+                         ("Ctrl+W", lambda: self.close_tab(self.tabs.currentIndex())),
+                         ("Ctrl+Shift+T", self.reopen_tab),
+                         ("Ctrl+Tab", lambda: self._step(1)), ("Ctrl+Shift+Tab", lambda: self._step(-1)),
+                         ("Ctrl+L", lambda: (self.addr.setFocus(), self.addr.selectAll())),
+                         ("F5", lambda: self.view.reload()), ("Alt+Left", lambda: self.view.back()),
+                         ("Alt+Right", lambda: self.view.forward())):
+            QShortcut(QKeySequence(keys), self, fn)
+        saved = [u for u in (win.settings.get("browser_tabs") or []) if isinstance(u, str) and u]
+        for u in saved[:30]:
+            self.new_tab(u, switch=False)
+        if url or not saved:
+            self.new_tab(url or self.HOME)
+        else:
+            self.tabs.setCurrentIndex(min(int(win.settings.get("browser_tab", 0) or 0), len(saved) - 1))
+
+    # ------------------------------------------------------------ tabs
+    def _fix_checked_tab(self):
+        """The "Being checked" tab: last, and can't be closed."""
+        from PySide6.QtWidgets import QTabBar
+        i = self.tabs.indexOf(self.check_view)
+        bar = self.tabs.tabBar()
+        for side in (QTabBar.RightSide, QTabBar.LeftSide):
+            if bar.tabButton(i, side):
+                bar.tabButton(i, side).hide()
+                bar.setTabButton(i, side, None)
+
+    def _keep_checked_last(self):
+        i = self.tabs.indexOf(self.check_view)
+        if i != self.tabs.count() - 1:
+            self.tabs.tabBar().moveTab(i, self.tabs.count() - 1)
+
+    def browse_views(self):
+        return [self.tabs.widget(i) for i in range(self.tabs.count()) if self.tabs.widget(i) is not self.check_view]
+
+    @property
+    def view(self):
+        """The tab you're looking at (or the last one you were, while "Being checked" is showing)."""
+        w = self.tabs.currentWidget()
+        if w is None or w is self.check_view:
+            w = getattr(self, "_last_view", None)
+            views = self.browse_views()
+            if w not in views:
+                w = views[-1] if views else None
+        return w
+
+    @property
+    def page(self):
+        v = self.view
+        return v.page() if v is not None else None
+
+    def new_tab(self, url=None, switch=True, focus_address=False):
+        from PySide6.QtWebEngineWidgets import QWebEngineView
+        v = QWebEngineView()
+        pg = make_page(self.host, v)
+        v.setPage(pg)
+        i = self.tabs.insertTab(max(0, self.tabs.indexOf(self.check_view)), v, "New tab")
+        v.titleChanged.connect(lambda t, v=v: self._title(v, t))
+        v.iconChanged.connect(lambda ic, v=v: self.tabs.setTabIcon(self.tabs.indexOf(v), ic))
+        v.urlChanged.connect(lambda u, v=v: v is self.view and self._url_changed(u))
+        v.loadFinished.connect(lambda ok, v=v: v is self.view and self._loaded(ok))
+        pg.loadingChanged.connect(lambda *_a, v=v: v is self.view and self._nav_state())
+        if url:
+            v.setUrl(QUrl(url))
+        if switch:
+            self.tabs.setCurrentIndex(i)
+        if focus_address:
+            self.addr.setFocus()
+            self.addr.selectAll()
+        return v
+
+    def _title(self, v, t):
+        i = self.tabs.indexOf(v)
+        if i < 0:
+            return
+        t = t or v.url().host() or "New tab"
+        self.tabs.setTabText(i, t if len(t) <= 26 else t[:25] + "…")
+        self.tabs.setTabToolTip(i, t)
+        if v is self.view:
+            self.setWindowTitle(f"Gallery Watcher - {t}")
+
+    def close_tab(self, i):
+        v = self.tabs.widget(i)
+        if v is None or v is self.check_view:
+            return
+        u = v.url().toString()
+        if u and u != "about:blank":
+            self._closed = (self._closed + [(u, v.title())])[-25:]
+        self.tabs.removeTab(i)
+        pg = v.page()
+        v.setPage(None)
+        if pg is not None:
+            pg.deleteLater()
+        v.deleteLater()
+        if not self.browse_views():               # (closing the last one: a fresh tab instead)
+            self.new_tab(self.HOME)
+
+    def reopen_tab(self):
+        if self._closed:
+            u, _t = self._closed.pop()
+            self.new_tab(u)
+
+    def _step(self, d):
+        n = self.tabs.count()
+        if n:
+            self.tabs.setCurrentIndex((self.tabs.currentIndex() + d) % n)
+
+    def _tab_changed(self, i):
+        w = self.tabs.widget(i)
+        on_page = w is not None and w is not self.check_view
+        if on_page:
+            self._last_view = w
+            self._url_changed(w.url())
+            self.setWindowTitle(f"Gallery Watcher - {w.title()}" if w.title() else "Gallery Watcher")
+        for a in (self.a_watch, self.a_reload):
+            a.setEnabled(on_page)
+        self.addr.setEnabled(on_page)
+        self._nav_state()
+        self._update_fill()
+
+    def _nav_state(self):
+        v = self.tabs.currentWidget()
+        ok = v is not None and v is not self.check_view
+        self.a_back.setEnabled(ok and v.history().canGoBack())
+        self.a_fwd.setEnabled(ok and v.history().canGoForward())
+
+    def _tab_menu(self, pos):
+        from PySide6.QtWidgets import QMenu
+        i = self.tabs.tabBar().tabAt(pos)
+        v = self.tabs.widget(i) if i >= 0 else None
+        m = QMenu(self)
+        m.addAction("New tab", lambda: self.new_tab(self.HOME, focus_address=True))
+        if v is not None and v is not self.check_view:
+            m.addAction("Duplicate tab", lambda: self.new_tab(v.url().toString()))
+            m.addAction("Reload", v.reload)
+            m.addSeparator()
+            m.addAction("Close tab", lambda: self.close_tab(self.tabs.indexOf(v)))
+            m.addAction("Close other tabs", lambda: [self.close_tab(self.tabs.indexOf(o))
+                                                     for o in self.browse_views() if o is not v])
+        if self._closed:
+            m.addAction("Reopen closed tab", self.reopen_tab)
+        m.exec(self.tabs.tabBar().mapToGlobal(pos))
 
     def browse(self, url):
-        self.tabs.setCurrentIndex(0)
-        self.view.setUrl(QUrl(url))
+        """A watched gallery opened from the list: in a new tab."""
+        self.new_tab(url)
 
     def checking(self, on):
-        self.tabs.setTabText(1, "Being checked  ●" if on else "Being checked")
+        i = self.tabs.indexOf(self.check_view)
+        self.tabs.setTabText(i, "Being checked  ●" if on else "Being checked")
 
     def go(self):
         t = self.addr.text().strip()
@@ -304,25 +474,32 @@ class BrowserWindow(QMainWindow):
             return
         if not re.match(r"^[a-z]+://", t, re.I):
             t = ("https://" + t) if ("." in t and " " not in t) else "https://www.google.com/search?q=" + QUrl.toPercentEncoding(t).data().decode()
-        self.view.setUrl(QUrl(t))
+        v = self.view
+        if v is None or self.tabs.currentWidget() is self.check_view:
+            v = self.new_tab(None)
+        v.setUrl(QUrl(t))
+        v.setFocus()
 
     def _url_changed(self, u):
         self.addr.setText(u.toString())
         self._update_fill()
+        self._nav_state()
 
     def _host(self):
-        return self.view.url().host()
+        v = self.view
+        return v.url().host() if v is not None else ""
 
     def _update_fill(self):
         import logins
         try:
-            has = logins.get(self.win.conn, self._host()) is not None
+            has = self.tabs.currentWidget() is not self.check_view and logins.get(self.win.conn, self._host()) is not None
         except Exception:
             has = False
         self.a_fill.setEnabled(has)
 
     def _loaded(self, ok):
         self._update_fill()
+        self._nav_state()
 
     def fill_login(self):
         import logins
@@ -370,7 +547,7 @@ class BrowserWindow(QMainWindow):
 
     def _download_requested(self, d):
         """A link the site offers as a download (in this window): saved in Web drops, then added."""
-        if d.page() is not self.page:
+        if d.page() not in [v.page() for v in self.browse_views()]:
             return
         import webdrop
         folder = webdrop.folder(self.win.settings)
@@ -395,6 +572,19 @@ class BrowserWindow(QMainWindow):
             self.profile.downloadRequested.disconnect(self._download_requested)
         except (RuntimeError, TypeError):
             pass
-        self.view.setPage(None)
-        self.page.deleteLater()
+        # (1.58.2) the tabs you had open come back next time
+        views = self.browse_views()
+        urls = [v.url().toString() for v in views]
+        cur = self.view
+        self.win.settings["browser_tabs"] = [u for u in urls if u and u != "about:blank"][:30]
+        self.win.settings["browser_tab"] = views.index(cur) if cur in views else 0
+        try:
+            store.save_settings(self.win.settings)
+        except Exception:
+            pass
+        for v in views:
+            pg = v.page()
+            v.setPage(None)
+            if pg is not None:
+                pg.deleteLater()
         super().closeEvent(e)

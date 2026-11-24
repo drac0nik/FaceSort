@@ -153,6 +153,20 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.58.2
+- Tabs in the Gallery Watcher browser - several pages open at once.
+  - + (or Ctrl+T) opens a new tab. Links meant for a new tab or window - middle-click, Ctrl+click,
+    links that open a new window, pop-ups - open in their own tab (middle-click and Ctrl+click open
+    it behind the one you're on).
+  - The address bar, back / forward / reload, Watch this page and Fill login all follow the tab
+    you're on.
+  - Ctrl+W closes a tab, Ctrl+Shift+T brings back the last one you closed, and Ctrl+Tab /
+    Ctrl+Shift+Tab move between tabs. Tabs can be dragged to reorder them. Right-click a tab for New
+    tab, Duplicate, Reload, Close, Close other tabs and Reopen closed tab.
+  - The tabs you had open come back the next time you open Gallery Watcher (up to 30).
+  - "Being checked" stays as the last tab and can't be closed. Opening a watched gallery from the
+    list opens it in a new tab.
+
 1.58.1
 - Other files now move with the photos and videos. That means notes, links, documents and archives
   that come with a drop (a photo's own .xmp / .json / .aae always went with it).

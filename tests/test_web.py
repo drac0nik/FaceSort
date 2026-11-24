@@ -259,3 +259,44 @@ def test_read_list_follows_the_address(library, qapp):
     items = [d.fields.mode.itemData(i) for i in range(d.fields.mode.count())]
     assert items == [None, "mm", "all", "gallery"]
     assert "MM+" in d.fields.mode.itemText(1)
+
+
+def test_browser_tabs(library, qapp, site):
+    """1.58.2: tabs - a link meant for a new tab opens in one, Ctrl+W / Ctrl+Shift+T, and the tabs you
+    had open come back next time. "Being checked" stays last and can't be closed."""
+    base, _state = site
+    library.conn.close()
+    w = _web_window(qapp)
+    w.settings.pop("browser_tabs", None)
+    b = w.open_browser(base + "/gallery")
+    _wait(qapp, lambda: b.view.url().toString().endswith("/gallery"), 30)
+    assert len(b.browse_views()) == 1
+    assert b.tabs.widget(b.tabs.count() - 1) is b.check_view
+    from PySide6.QtWebEngineCore import QWebEngineScript
+    pump(qapp, 2)
+    b.page.runJavaScript("window.open('/login')", QWebEngineScript.MainWorld)   # (a link meant for a new tab)
+    _wait(qapp, lambda: len(b.browse_views()) == 2, 30)
+    _wait(qapp, lambda: b.view.url().toString().endswith("/login"), 30)
+    assert b.addr.text().endswith("/login")                     # the address bar follows the tab
+    assert b.tabs.widget(b.tabs.count() - 1) is b.check_view    # new tabs go before "Being checked"
+    b.tabs.setCurrentIndex(0)
+    assert b.addr.text().endswith("/gallery")
+    b.close_tab(b.tabs.indexOf(b.check_view))                   # can't be closed
+    assert b.tabs.indexOf(b.check_view) >= 0
+    b.close_tab(1)
+    assert len(b.browse_views()) == 1
+    b.reopen_tab()
+    _wait(qapp, lambda: len(b.browse_views()) == 2 and b.view.url().toString().endswith("/login"), 30)
+    b.close_tab(0)
+    b.close_tab(0)                                              # the last one: a fresh tab instead
+    assert len(b.browse_views()) == 1
+    b.view.setUrl(__import__("PySide6.QtCore", fromlist=["QUrl"]).QUrl(base + "/gallery"))
+    b.new_tab(base + "/login")
+    _wait(qapp, lambda: all(v.url().toString().startswith(base) for v in b.browse_views()), 30)
+    b.close()
+    assert w.settings["browser_tabs"] == [base + "/gallery", base + "/login"] and w.settings["browser_tab"] == 1
+    b2 = w.open_gallery_watcher()
+    assert b2 is not b and [v.url().toString() for v in b2.browse_views()] == w.settings["browser_tabs"]
+    assert b2.view is b2.browse_views()[1]
+    b2.close()
+    w.close()
