@@ -49,3 +49,7 @@ def test_gallery_sorted_by_type(window, tmp_path):
     w.update_sort_button()
     assert w.sort_btn.text() == "Sort: Type (Micro)"
     w.settings["grid_sort"] = "default"
+    from conftest import pump
+    from PySide6.QtWidgets import QApplication
+    pump(QApplication.instance(), 3)             # (let anything started meanwhile finish first)
+    w.idle()
