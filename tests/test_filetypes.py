@@ -23,7 +23,7 @@ def test_types():
 
 def test_gallery_sorted_by_type(window, tmp_path):
     w, c = window, window.conn
-    lib = tmp_path / "Lib"
+    lib = tmp_path / "My Library"
     lib.mkdir()
     w.settings["library_root"] = store.norm_path(str(lib))
     d = tmp_path / "Mix"
