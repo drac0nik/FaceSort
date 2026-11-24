@@ -294,6 +294,9 @@ def test_scan_window_and_unassociated_files(window, qapp, data_dir):
     w.ask_name = lambda *a, **k: "Alice"
     w.act_name()                                                    # Enter
     w.idle()
+    end = time.time() + 15                                          # (the list redraws when it's free)
+    while time.time() < end and w.find_tree_item(("unassoc", None)) is not None:
+        pump(qapp, 0.2)
     assert w.find_tree_item(("unassoc", None)) is None
     pid = -rows[0][0]
     assert w.conn.execute("SELECT p.name FROM photo_people pp JOIN persons p ON p.id=pp.person_id "
