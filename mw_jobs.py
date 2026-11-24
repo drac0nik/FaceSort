@@ -482,7 +482,21 @@ class JobsMixin:
             self.settings["imported"] = keep
             store.save_settings(self.settings)
 
+    def _gone(self):
+        """FaceSort is closing (or its library is already shut): a job that ends now leaves the
+        window alone."""
+        if getattr(self, "_closing", False):
+            return True
+        try:
+            self.conn.execute("SELECT 1")
+            return False
+        except Exception:
+            return True
+
     def job_done(self, name, res, on_done):
+        if self._gone():
+            self.worker = None
+            return
         try:
             self.prune_imported()
         except Exception as e:
@@ -550,6 +564,9 @@ class JobsMixin:
             QTimer.singleShot(0, nxt)
 
     def job_failed(self, name, tb):
+        if self._gone():
+            self.worker = None
+            return
         self.set_busy(False)
         self.worker = None
         self.refresh_all()
