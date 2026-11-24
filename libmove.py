@@ -419,3 +419,97 @@ def bring_in_job(conn, lib, paths, progress=lambda d, t, m: None, cancelled=lamb
     return {"moved": n, "errors": errors, "missing": len(paths) - len(existing),
             "moves": list(done.items()) + extra,
             "history_label": f"Brought {n:,} older photo{'s' if n != 1 else ''} into the library ({UNSORTED})"}
+
+
+# ------------------------------------------------------------------ (1.58.3) other files as items
+def record_drop_extras(conn, batch, paths=None):
+    """A drop's other files get their own entry in FaceSort (an "other file", like a photo without a
+    picture): they show in Recently dropped, can be selected, dragged onto a person or folder and
+    tagged, and move like photos do. paths: these (default: the drop's listed other files)."""
+    if paths is None:
+        paths = [r[2] for r in store.drop_files(conn, batch)]
+    rules = store.drop_rules(conn)
+    n = 0
+    for p in paths:
+        p = store.norm_path(p)
+        if not os.path.isfile(p):
+            continue
+        row = conn.execute("SELECT id FROM photos WHERE path=?", (p,)).fetchone()
+        if row is None:
+            st = os.stat(p)
+            store.store_other(conn, p, round(st.st_mtime, 3), st.st_size)
+            row = conn.execute("SELECT id FROM photos WHERE path=?", (p,)).fetchone()
+            n += 1
+        conn.execute("UPDATE photos SET dropped=? WHERE id=? AND dropped IS NULL", (batch, row[0]))
+        conn.execute("CREATE TABLE IF NOT EXISTS drop_extra(photo_id INTEGER PRIMARY KEY REFERENCES photos(id) "
+                     "ON DELETE CASCADE)")
+        conn.execute("INSERT OR IGNORE INTO drop_extra(photo_id) VALUES(?)", (row[0],))   # (filed in ~files etc.)
+        store.apply_drop_rules(conn, row[0], p, rules)
+    conn.commit()
+    return n
+
+
+def _follow_table(conn):
+    conn.execute("CREATE TABLE IF NOT EXISTS extra_follow(photo_id INTEGER, person_id INTEGER, "
+                 "PRIMARY KEY(photo_id, person_id))")
+
+
+def _people_on(conn, ids):
+    """People confirmed on these photos (face boxes or tags)."""
+    if not ids:
+        return set()
+    q = ",".join("?" * len(ids))
+    out = {r[0] for r in conn.execute(f"SELECT DISTINCT person_id FROM faces WHERE photo_id IN ({q}) "
+                                      "AND confirmed=1 AND ignored=0 AND person_id IS NOT NULL", ids)}
+    out |= {r[0] for r in conn.execute(f"SELECT DISTINCT person_id FROM photo_people WHERE photo_id IN ({q}) "
+                                       "AND src<>'follow'", ids)}
+    return out
+
+
+def sync_follow(conn, lib=None):
+    """An other file you haven't tagged or put in a folder yourself goes with the photos it came with:
+    it's tagged (as "follow") with the people confirmed on the photos in its own folder - or, if there
+    are none beside it, in the folders under it. A person you take off it isn't put back.
+    -> how many changed."""
+    _follow_table(conn)
+    uns = store.norm_path(unsorted_dir(lib)) + os.sep if lib else None
+    rows = conn.execute("""SELECT id, path FROM photos WHERE is_other=1 AND category_id IS NULL
+                             AND COALESCE(discarded, 0)=0 AND COALESCE(sort_later, 0)=0""").fetchall()
+    rows = [(i, p) for i, p in rows if conn.execute("SELECT 1 FROM photos WHERE id=? AND dropped IS NOT NULL", (i,)).fetchone()
+            or (uns and p.startswith(uns))]
+    if not rows:
+        return 0
+    photos = conn.execute("SELECT id, path FROM photos WHERE COALESCE(is_other, 0)=0 AND COALESCE(discarded, 0)=0").fetchall()
+    by_dir = {}
+    for i, p in photos:
+        by_dir.setdefault(os.path.dirname(p), []).append(i)
+    changed = 0
+    for pid, path in rows:
+        mine = {r[0]: r[1] for r in conn.execute("SELECT person_id, src FROM photo_people WHERE photo_id=?", (pid,))}
+        if any(s != "follow" for s in mine.values()):
+            continue                                  # tagged by you (or a drop rule): yours decides
+        d = os.path.dirname(path)
+        near = by_dir.get(d) or [i for k, ids in by_dir.items() if k.startswith(d + os.sep) for i in ids]
+        want = _people_on(conn, near)
+        done = {r[0] for r in conn.execute("SELECT person_id FROM extra_follow WHERE photo_id=?", (pid,))}
+        for person in want - set(mine) - done:        # (never put back one you took off)
+            conn.execute("INSERT OR IGNORE INTO photo_people(photo_id, person_id, src) VALUES(?,?,'follow')",
+                         (pid, person))
+            conn.execute("INSERT OR IGNORE INTO extra_follow(photo_id, person_id) VALUES(?,?)", (pid, person))
+            changed += 1
+        for person in set(mine) - want:               # the photos' tag was taken off: so is this
+            conn.execute("DELETE FROM photo_people WHERE photo_id=? AND person_id=? AND src='follow'", (pid, person))
+            conn.execute("DELETE FROM extra_follow WHERE photo_id=? AND person_id=?", (pid, person))
+            changed += 1
+    conn.commit()
+    return changed
+
+
+def migrate_drop_extras(conn):
+    """Drops from before 1.58.3: their listed other files get entries too (once)."""
+    have = {r[0] for r in conn.execute("SELECT path FROM photos WHERE is_other=1")}
+    n = 0
+    for _fid, batch, path, _k, _r in store.drop_files(conn):
+        if path not in have and os.path.isfile(path):
+            n += record_drop_extras(conn, batch, [path])
+    return n

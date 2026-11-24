@@ -801,6 +801,11 @@ class JobsMixin:
         self.run_job("tags", jobs.write_tags, self.settings, on_done=done)
 
     def export_folders(self):
+        try:                                       # (1.58.3) other files: going with their photos
+            import libmove
+            libmove.sync_follow(self.conn, libmove.library(self.settings))
+        except Exception:
+            pass
         dlg = ExportDialog(self, self.settings)
         if dlg.exec() != QDialog.Accepted:
             return

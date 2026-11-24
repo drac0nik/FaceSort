@@ -153,6 +153,29 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.58.3
+- The other files in a drop (notes, links, documents, archives) are now items in Recently dropped,
+  shown as tiles (TXT, PDF, URL…) among the photos. They weren't moving with the photos once tagged,
+  and couldn't be selected or moved by hand. Now:
+  - They go with the photos beside them: once someone is confirmed on a photo in the same folder (or,
+    for a file with no photos beside it, in the folders under it), the file is tagged with them too
+    and moves with that photo - straight away, not when the whole folder's done. If that tag is taken
+    off the photos, it comes off the file too.
+  - You decide when you want to: select them, tag them with a person, put them in a folder, or drag
+    them onto a person or folder like photos. Your choice wins over "goes with". Take a person off one
+    and they aren't put back.
+  - They're filed in <their folder>\~links, ~archives or ~files, with copies when the photos went to
+    more than one person.
+  - Drops from before this version get the same: their listed other files become items too.
+- Two new choices in the gallery's Sort menu. Both set aside the gallery's folders and sections
+  and give each type its own heading, also in the list beside the gallery:
+  - Sort by type (Micro): one heading per file type - JPG, PNG, GIF, MOV, MP4, PDF, ZIP, DOCX… (.jpeg
+    counts as JPG, .tif as TIFF).
+  - Sort by type (Macro): similar types together - Images, RAW photos, GIF (on its own), Video,
+    Office documents (Word, Excel, PowerPoint, OpenDocument…), PDF, Web links, Archives, Text, Audio,
+    Other files.
+  Inside each heading the pictures keep their usual order (best first).
+
 1.58.2
 - Tabs in the Gallery Watcher browser - several pages open at once.
   - + (or Ctrl+T) opens a new tab. Links meant for a new tab or window - middle-click, Ctrl+click,

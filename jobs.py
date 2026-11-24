@@ -989,6 +989,10 @@ def plan_destinations(conn, include_suggestions=False, ai_folder=False, include_
         return parts
     plan = {}
     photo_path = dict(conn.execute("SELECT id, path FROM photos"))
+    try:                                   # (1.58.3) a drop's other files: into ~links / ~archives / ~files
+        other_ids = {r[0] for r in conn.execute("SELECT photo_id FROM drop_extra")}
+    except Exception:
+        other_ids = set()
     for pid, dests in store.photo_destinations(conn, include_suggestions).items():
         folders = []
         for base, person, inner in dests:
@@ -998,6 +1002,8 @@ def plan_destinations(conn, include_suggestions=False, ai_folder=False, include_
                 parts = base_parts(base) + [NO_PEOPLE_FOLDER] if base else [NO_PEOPLE_FOLDER]
             if inner:
                 parts += chain(inner)
+            if pid in other_ids and pid in photo_path:
+                parts.append(companions.SUB.get(companions.kind_of(photo_path[pid]), "~files"))
             f = os.path.join(*parts)
             if f not in folders:
                 folders.append(f)

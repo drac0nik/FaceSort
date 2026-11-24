@@ -530,7 +530,9 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
                            ("taken", "Date taken (newest first)"), ("name_az", "File name (A-Z)"),
                            ("name_za", "File name (Z-A)"), ("size_up", "File size (small to large)"),
                            ("size_down", "File size (large to small)"),
-                           ("res_down", "Resolution (largest first)"), ("res_up", "Resolution (smallest first)")]
+                           ("res_down", "Resolution (largest first)"), ("res_up", "Resolution (smallest first)"),
+                           ("type_micro", "Sort by type (Micro: JPG, PNG, MP4, PDF…)"),
+                           ("type_macro", "Sort by type (Macro: Images, Video, Documents…)")]
         for key, label in self.grid_sorts:
             a = sm.addAction(label)
             a.setCheckable(True)

@@ -403,7 +403,8 @@ class ActionsMixin:
     def update_sort_button(self):
         key = self.settings.get("grid_sort", "default")
         label = dict(self.grid_sorts).get(key, self.grid_sorts[0][1])
-        self.sort_btn.setText(f"Sort: {label if key != 'default' else 'Best first'}")
+        short = {"default": "Best first", "type_micro": "Type (Micro)", "type_macro": "Type (Macro)"}
+        self.sort_btn.setText(f"Sort: {short.get(key, label)}")
         for a in self.sort_menu.actions():
             a.setChecked(a.data() == key)
 
@@ -521,6 +522,8 @@ class ActionsMixin:
         key = self.settings.get("grid_sort", "default")
         if key == "default" or not rows:
             return rows
+        if key in ("type_micro", "type_macro"):
+            return self.rows_by_type(rows, key == "type_micro")
         meta = self.photo_meta([r[1] for r in rows if r[0]])
         far = float("-inf")
 
@@ -548,6 +551,29 @@ class ActionsMixin:
             else:
                 block.append(r)
         flush()
+        return out
+
+    def rows_by_type(self, rows, micro):
+        """(1.58.3) Sort by type: the gallery's own sections (folders, To confirm…) are set aside and
+        there's a heading per file type instead - each type (JPG, PNG, MP4, PDF…) for Micro, similar
+        types together (Images, GIF, Video, Office documents, PDF, Web links…) for Macro. Inside a
+        heading the pictures keep the order they had (best first)."""
+        import filetypes
+        groups, seen = {}, set()
+        for r in rows:
+            if r[0] == 0 or r[0] in seen:
+                continue                       # (a picture under two headings shows once)
+            seen.add(r[0])
+            label = filetypes.micro(r[1]) if micro else filetypes.macro(r[1])
+            groups.setdefault(label, []).append(r)
+        if micro:
+            order = sorted(groups, key=lambda g: filetypes.micro_order((g, groups[g][0][1])))
+        else:
+            order = sorted(groups, key=filetypes.MACRO.index)
+        out = []
+        for g in order:
+            out.append((0, f"{g}   ·   {len(groups[g]):,}", ("ftype", g), 1))
+            out.extend(groups[g])
         return out
 
     def dup_key(self):
@@ -1337,6 +1363,14 @@ class ActionsMixin:
     def dropped_rows(self, batch):
         """A drop's photos, with a heading for each place they'll be saved."""
         c = self.conn
+        try:                                       # (1.58.3) other files: shown where they'll go too
+            import libmove
+            if not getattr(self, "_extras_migrated", False):
+                self._extras_migrated = True
+                libmove.migrate_drop_extras(c)
+            libmove.sync_follow(c, libmove.library(self.settings))
+        except Exception as e:
+            log(f"other files: {e}")
         paths = store.category_paths(c)
         names = dict(c.execute("SELECT id, name FROM persons"))
         mine = {r[0] for r in c.execute("SELECT id FROM photos WHERE dropped=? AND error IS NULL "
@@ -1361,6 +1395,9 @@ class ActionsMixin:
     def fill_extra_files(self, batch):
         """The drop's other files, each with the sub-folder and person / folder it'll go under."""
         rows = store.drop_files(self.conn, batch) if batch is not None else []
+        # (1.58.3) the ones with their own entry show in the grid above, as items you can tag and drag
+        items = {r[0] for r in self.conn.execute("SELECT path FROM photos WHERE is_other=1")}
+        rows = [r for r in rows if r[2] not in items]
         self.extra_list.clear()
         if not rows:
             self.extra_box.hide()

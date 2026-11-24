@@ -215,6 +215,7 @@ class SettingsMixin:
         others = self.collect_other_files(orig_dirs, [p for p in loose if os.path.isfile(p)])
         if others:
             store.add_drop_files(self.conn, batch, others)
+            libmove.record_drop_extras(self.conn, batch, [p for p, _k, _r in others])   # (1.58.3) items you can tag
         rules = store.drop_rules(self.conn)
         for pid, path in self.conn.execute("SELECT id, path FROM photos WHERE error IS NULL").fetchall():
             if path in inside:
@@ -529,6 +530,13 @@ class SettingsMixin:
         lib = libmove.library(s)
         if not lib or not self.isVisible() or self.busy() or not os.path.isdir(libmove.unsorted_dir(lib)):
             return False
+        if not getattr(self, "_extras_migrated", False):
+            self._extras_migrated = True
+            try:
+                libmove.migrate_drop_extras(self.conn)
+            except Exception as e:
+                log(f"other files: {e}")
+        libmove.sync_follow(self.conn, lib)          # (1.58.3) other files go with their photos
         if not force:
             if time.monotonic() - (getattr(self, "_last_input", None) or 0) < libmove.PAUSE:
                 return False

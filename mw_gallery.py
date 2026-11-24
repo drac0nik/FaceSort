@@ -993,10 +993,14 @@ class GalleryMixin:
             rows, pids = self.dropped_rows(ident)
             name = c.execute("SELECT name FROM drop_batches WHERE batch=?", (ident,)).fetchone()
             self.title.setText(f"Recently dropped · {name[0] if name else ''}")
-            self.subtitle.setText(f"{len(pids):,} photo{'s' if len(pids) != 1 else ''}, shown the way they'll be saved "
-                                  "(folder › person › folder); other files that came with them are listed at the "
-                                  "bottom. Fix anything that's wrong, then Done checking - the next Sort into "
-                                  "folders files them all.")
+            n_other = c.execute("SELECT COUNT(*) FROM photos WHERE is_other=1 AND dropped=? AND error IS NULL",
+                                (ident,)).fetchone()[0]
+            n_ph = len(pids) - n_other
+            self.subtitle.setText(f"{n_ph:,} photo{'s' if n_ph != 1 else ''}"
+                                  + (f" and {n_other:,} other file{'s' if n_other != 1 else ''}" if n_other else "")
+                                  + ", shown the way they'll be saved (folder › person › folder). Other files go "
+                                  "with the photos beside them - or tag them, or drag them onto a person or folder, "
+                                  "yourself. Fix anything that's wrong, then Done checking.")
             self.set_buttons([("Done checking", lambda: self.done_checking(ident), True)])
         elif kind == "ai":
             cond = "ph.ai>0" if ident is None else f"ph.ai={int(ident)}"

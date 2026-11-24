@@ -189,13 +189,14 @@ def test_other_files_come_and_follow(window, tmp_path):
     _tag(c, p1)
     assert w.automove_tick(force=True)
     w.idle()
-    assert os.path.exists(os.path.join(new, "notes.txt"))                 # p2 is still waiting there
+    dest = os.path.dirname(c.execute("SELECT path FROM photos WHERE id=?", (p1,)).fetchone()[0])
+    # (1.58.3) they go as soon as a photo beside them does - not once every one has
+    assert os.path.exists(os.path.join(dest, "~files", "notes.txt"))
+    assert os.path.exists(os.path.join(dest, "~links", "site.url"))
+    assert os.path.exists(os.path.join(new, "p2.jpg"))                    # p2 is still waiting there
     _tag(c, p2)
     assert w.automove_tick(force=True)
     w.idle()
-    dest = os.path.dirname(c.execute("SELECT path FROM photos WHERE id=?", (p1,)).fetchone()[0])
-    assert os.path.exists(os.path.join(dest, "~files", "notes.txt"))
-    assert os.path.exists(os.path.join(dest, "~links", "site.url"))
     assert not os.path.exists(new)                                        # the emptied folder went
 
 
@@ -229,3 +230,81 @@ def test_left_behind_other_files_brought_in(window, tmp_path, monkeypatch):
     w.idle()
     dest = os.path.dirname(c.execute("SELECT path FROM photos WHERE id=?", (a,)).fetchone()[0])
     assert os.path.exists(os.path.join(dest, "~files", "readme.txt"))
+
+
+def _person(c, name):
+    row = c.execute("SELECT id FROM persons WHERE name=?", (name,)).fetchone()
+    if row:
+        return row[0]
+    c.execute("INSERT INTO persons(name) VALUES(?)", (name,))
+    c.commit()
+    return c.execute("SELECT id FROM persons WHERE name=?", (name,)).fetchone()[0]
+
+
+def test_other_files_are_items_that_follow_their_photos(window, tmp_path):
+    """1.58.3: a drop's other files are items in Recently dropped (select, drag, tag); untagged, they're
+    tagged with the people on the photos beside them - or under them - and move as soon as those do."""
+    w, c = window, window.conn
+    lib = tmp_path / "My Library"
+    lib.mkdir()
+    w.settings["library_root"] = store.norm_path(str(lib))
+    d = tmp_path / "Drop"
+    write_photo(str(d / "Shoot" / "p1.jpg"), 1101)
+    write_photo(str(d / "Shoot" / "p2.jpg"), 1102)
+    open(str(d / "Shoot" / "notes.txt"), "w").write("n")
+    os.makedirs(str(d / "Gallery" / "Set1"))
+    open(str(d / "Gallery" / "readme.txt"), "w").write("r")
+    write_photo(str(d / "Gallery" / "Set1" / "p3.jpg"), 1103)
+    open(str(d / "Shoot" / "site.url"), "w").write("[InternetShortcut]\nURL=https://example.com\n")
+    assert w.handle_drop([str(d)], answers={})
+    w.idle()
+    new = libmove.target(str(d), str(lib))
+    notes = store.norm_path(os.path.join(new, "Shoot", "notes.txt"))
+    nid = pid_of(c, notes)
+    batch = c.execute("SELECT dropped FROM photos WHERE id=?", (nid,)).fetchone()[0]
+    assert nid and batch is not None
+    assert c.execute("SELECT is_other FROM photos WHERE id=?", (nid,)).fetchone()[0] == 1
+    rows, mine = w.dropped_rows(batch)
+    assert nid in mine                                          # an item in Recently dropped
+    w.fill_extra_files(batch)
+    assert w.extra_list.topLevelItemCount() == 0                # (not listed twice)
+    ann, bo, cy = _person(c, "Ann"), _person(c, "Bo"), _person(c, "Cy")
+    p1 = pid_of(c, os.path.join(new, "Shoot", "p1.jpg"))
+    p3 = pid_of(c, os.path.join(new, "Gallery", "Set1", "p3.jpg"))
+    url = pid_of(c, os.path.join(new, "Shoot", "site.url"))
+    store.tag_photos(c, [url], cy)                              # tagged by hand: goes where you said
+    store.tag_photos(c, [p1], ann)
+    store.tag_photos(c, [p3], bo)
+    assert w.automove_tick(force=True)
+    w.idle()
+    path = lambda i: c.execute("SELECT path FROM photos WHERE id=?", (i,)).fetchone()[0]
+    assert os.path.join("Ann", "~files", "notes.txt") in path(nid) and os.path.exists(path(nid))
+    rid = c.execute("SELECT id FROM photos WHERE path LIKE ?", ("%readme.txt",)).fetchone()[0]
+    assert os.path.join("Bo", "~files", "readme.txt") in path(rid)          # photos only under it
+    assert os.path.join("Cy", "~links", "site.url") in path(url)
+    assert os.path.exists(os.path.join(new, "Shoot", "p2.jpg"))             # untagged: still waiting
+    # a person you take off an other file isn't put back
+    store.untag_photos(c, [nid], ann)
+    libmove.sync_follow(c, store.norm_path(str(lib)))
+    assert not c.execute("SELECT 1 FROM photo_people WHERE photo_id=? AND person_id=?", (nid, ann)).fetchone()
+
+
+def test_other_file_dragged_to_a_folder(window, tmp_path):
+    """Putting an other file in a folder (drag onto the folder bar) sends it there."""
+    w, c = window, window.conn
+    lib = tmp_path / "My Library"
+    lib.mkdir()
+    w.settings["library_root"] = store.norm_path(str(lib))
+    d = tmp_path / "Drop2"
+    write_photo(str(d / "a.jpg"), 1111)
+    open(str(d / "plan.pdf"), "wb").write(b"%PDF-1.4")
+    assert w.handle_drop([str(d)], answers={})
+    w.idle()
+    new = libmove.target(str(d), str(lib))
+    pdf = pid_of(c, os.path.join(new, "plan.pdf"))
+    w.set_category_for([pdf], "Contracts")
+    store.tag_photos(c, [pdf], _person(c, "Ann"))
+    assert w.automove_tick(force=True)
+    w.idle()
+    p = c.execute("SELECT path FROM photos WHERE id=?", (pdf,)).fetchone()[0]
+    assert os.path.join("Contracts", "Ann", "~files", "plan.pdf") in p and os.path.exists(p)
