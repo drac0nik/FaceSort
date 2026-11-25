@@ -51,6 +51,24 @@ def target(path, lib):
     return os.path.join(unsorted_dir(lib), *parts)
 
 
+def original(path, unsorted):
+    r"""Where something in ~Unsorted came from: <library>\~Unsorted\C\Downloads -> C:\Downloads
+    (\server\share\x on Windows for two-letter-or-longer first parts; /home/x elsewhere). Paths not in
+    ~Unsorted come back as they are."""
+    u = os.path.normcase(os.path.abspath(unsorted)).rstrip("\\/")
+    p = os.path.abspath(path)
+    if not os.path.normcase(p).startswith(u + os.sep):
+        return path
+    parts = [x for x in p[len(u) + 1:].replace("\\", "/").split("/") if x]
+    if not parts:
+        return path
+    if os.name == "nt":
+        if len(parts[0]) == 1:
+            return parts[0].upper() + ":\\" + "\\".join(parts[1:])
+        return "\\\\" + "\\".join(parts)
+    return "/" + "/".join(parts)
+
+
 def _media(name):
     ext = os.path.splitext(name)[1].lower()
     return ext in engine.IMAGE_EXTS or ext in engine.VIDEO_EXTS

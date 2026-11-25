@@ -2633,7 +2633,7 @@ def fill_created(conn):
     conn.commit()
 
 
-def photo_buckets(conn, mode, sorted_sql=None):
+def photo_buckets(conn, mode, sorted_sql=None, unsorted=None):
     """Photos still to sort, grouped for the lower list: {key: (label, sort key, [photo ids])}.
     mode: 'taken' / 'created' (by month) or 'location' (by folder). sorted_sql: a condition for
     "already sorted" (someone confirmed or tagged on it, a folder, in the library) - (1.50.1) by
@@ -2647,6 +2647,9 @@ def photo_buckets(conn, mode, sorted_sql=None):
     for pid, v in conn.execute(f"SELECT ph.id, {col} FROM photos ph WHERE {where}"):
         if mode == "location":
             key = os.path.dirname(v)
+            if unsorted:                       # (1.58.4) moved into ~Unsorted: still where it came from
+                import libmove
+                key = libmove.original(key, unsorted)
             label, order = (os.sep.join(key.split(os.sep)[-2:]) or key), key.casefold()
         elif v:
             d = datetime.datetime.fromtimestamp(v)

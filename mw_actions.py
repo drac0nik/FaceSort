@@ -758,11 +758,15 @@ class ActionsMixin:
             roots += list(store.vault_root_paths(self.conn).values())
         except Exception:
             pass
+        import libmove
         for r in roots:
             r = store.norm_path(r).rstrip("\\/") + os.sep
             esc = r.replace("'", "''").replace("!", "!!").replace("%", "!%").replace("_", "!_")
             disc = (r + jobs.DISCARD_FOLDER + os.sep).replace("'", "''").replace("!", "!!").replace("%", "!%").replace("_", "!_")
-            conds.append(f"({a}.path LIKE '{esc}%' ESCAPE '!' AND {a}.path NOT LIKE '{disc}%' ESCAPE '!')")
+            # (1.58.4) ~Unsorted is in the library but isn't sorted
+            uns = (r + libmove.UNSORTED + os.sep).replace("'", "''").replace("!", "!!").replace("%", "!%").replace("_", "!_")
+            conds.append(f"({a}.path LIKE '{esc}%' ESCAPE '!' AND {a}.path NOT LIKE '{disc}%' ESCAPE '!' "
+                         f"AND {a}.path NOT LIKE '{uns}%' ESCAPE '!')")
         return "(" + " OR ".join(conds) + ")"
 
     # ------------------------------------------------- library consistency

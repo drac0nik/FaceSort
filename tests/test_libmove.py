@@ -308,3 +308,25 @@ def test_other_file_dragged_to_a_folder(window, tmp_path):
     w.idle()
     p = c.execute("SELECT path FROM photos WHERE id=?", (pdf,)).fetchone()[0]
     assert os.path.join("Contracts", "Ann", "~files", "plan.pdf") in p and os.path.exists(p)
+
+
+def test_unsorted_photos_listed_by_original_location(window, tmp_path):
+    """1.58.4: photos moved into ~Unsorted still show under "To sort by original location", by the
+    folder they came from."""
+    w, c = window, window.conn
+    lib = tmp_path / "My Library"
+    lib.mkdir()
+    w.settings["library_root"] = store.norm_path(str(lib))
+    d = tmp_path / "Downloads" / "Shoot"
+    write_photo(str(d / "s1.jpg"), 1501)
+    write_photo(str(d / "s2.jpg"), 1502)
+    assert w.handle_drop([str(d)], answers={})
+    w.idle()
+    s1 = pid_of(c, os.path.join(libmove.target(str(d), str(lib)), "s1.jpg"))
+    assert s1
+    b = w.photo_buckets("location")
+    key = store.norm_path(str(d))
+    assert key in b and s1 in b[key][2] and len(b[key][2]) == 2
+    assert not any(libmove.UNSORTED in k for k in b)
+    w.add_buckets(lambda title, tree=None: __import__("PySide6.QtWidgets", fromlist=["QTreeWidgetItem"]).QTreeWidgetItem([title]),
+                  "location")

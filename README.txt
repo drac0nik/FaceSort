@@ -153,6 +153,13 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.58.4
+- Fixed: photos moved into ~Unsorted didn't show under "To sort by original location" (or the Smart
+  Groups by original location). ~Unsorted is inside the library, so they were counted as already
+  sorted. Now they show under the folder they came from - C:\Downloads\Shoot, not
+  ~Unsorted\C\Downloads\Shoot - and leave the list once they're sorted (tagged, in a folder, or
+  moved on to a person's folder).
+
 1.58.3
 - The other files in a drop (notes, links, documents, archives) are now items in Recently dropped,
   shown as tiles (TXT, PDF, URL…) among the photos. They weren't moving with the photos once tagged,

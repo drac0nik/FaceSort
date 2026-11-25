@@ -211,7 +211,10 @@ class GalleryMixin:
         got = getattr(self, "_buckets_memo", None)
         if got and got[0] == key:
             return got[1]
-        b = store.photo_buckets(self.conn, mode, self.sorted_photo_sql())
+        import libmove
+        lib = libmove.library(self.settings)
+        b = store.photo_buckets(self.conn, mode, self.sorted_photo_sql(),
+                                unsorted=libmove.unsorted_dir(lib) if lib else None)
         self._buckets_memo = (key, b)
         return b
 
