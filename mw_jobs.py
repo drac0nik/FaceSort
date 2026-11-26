@@ -522,6 +522,7 @@ class JobsMixin:
         if self._gone():
             self.worker = None
             return
+        self._am_dirty = True                    # (1.61) auto-move takes another look after any job
         try:
             self.prune_imported()
         except Exception as e:
@@ -815,6 +816,8 @@ class JobsMixin:
         QTimer.singleShot(4000, self.start_same_people)     # (1.49) possibly the same person
         if not changed and not self.refresh_timer.isActive():
             return          # nothing changed: don't redraw (no stutter)
+        if getattr(self, "review", None) is not None:
+            return          # (1.61) Quick review is open: the gallery is redrawn when it closes
         self.refresh_timer.start()         # redrawn once you pause (never under your fingers)
 
     def write_tags(self):
@@ -919,6 +922,10 @@ class JobsMixin:
     def closeEvent(self, e):
         self._closing = True              # (a timer or job signal still on its way must not start anything)
         getattr(self, "stallwatch", None) and self.stallwatch.stop()
+        try:
+            self.save_list_questions()        # (1.61) the next start reads them in the background
+        except Exception:
+            pass
         try:
             store.save_settings(self.settings)  # remembers the thumbnail size
         except Exception:

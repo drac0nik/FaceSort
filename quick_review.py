@@ -243,6 +243,7 @@ class QuickReview(QWidget):
     def restart(self):
         """Opened again: a fresh session (it's kept, just hidden, in between)."""
         self.sess = review.Session(self.win.conn)
+        self._reset_queue()
         self.name.setCompleter(None)
         comp = QCompleter(self.win.people_by_recent(), self.name)
         comp.setCaseSensitivity(Qt.CaseInsensitive)
@@ -264,10 +265,113 @@ class QuickReview(QWidget):
             self.left.show_unit(self.q.a)
             self.right.show_unit(self.q.b)
 
-    def next_question(self):
+    # ---- (1.61) the questions are worked out a batch at a time - the next one is instant; a fresh batch is
+    # read in the background while you answer (it used to work out the whole library again for every
+    # question: seconds per keypress on a big library)
+    QUEUE_LOW = 25          # this few left: the next batch is read in the background
+    QUEUE_STALE = 30        # answers since the batch was read: read a fresh one
+
+    def _reset_queue(self):
+        self._queue, self._total, self._touched = [], 0, set()
+        self._since_build, self._shown = 0, []
+        self._opening = True
+        self._bg = None
+
+    def _build_now(self):
         queue, total = review.build_queue(self.win.conn, store.threshold(self.win.settings),
-                                          self.sess.exclude(), limit=1)
-        self.q = queue[0] if queue else None
+                                          self.sess.exclude(), limit=200)
+        self._queue, self._total, self._touched, self._since_build = list(queue), total, set(), 0
+        self._more = total > len(queue)
+
+    def _build_later(self):
+        """A fresh batch on a background thread (its own connection), swapped in when it's ready."""
+        import threading
+        if getattr(self, "_bg", None) is not None:
+            return
+        thr, excl = store.threshold(self.win.settings), self.sess.exclude()
+        box, started = {}, len(self.sess.history)
+
+        def work():
+            conn = None
+            try:
+                conn = store.connect()
+                box["got"] = review.build_queue(conn, thr, excl, limit=200)
+            except Exception as e:
+                box["error"] = e
+            finally:
+                if conn is not None:
+                    conn.close()
+        th = threading.Thread(target=work, daemon=True, name="quick review questions")
+        self._bg = (th, box, started, set())
+        th.start()
+        QTimer.singleShot(100, self._bg_check)
+
+    def _bg_check(self):
+        bg = getattr(self, "_bg", None)
+        if bg is None:
+            return
+        th, box, started, touched = bg
+        if th.is_alive():
+            QTimer.singleShot(100, self._bg_check)
+            return
+        self._bg = None
+        self._opening = False
+        if getattr(self.win, "_closing", False) or self.win._gone():
+            return
+        if "got" not in box:                       # (couldn't read them there: here, then)
+            from ui_common import log
+            log(f"quick review: {box.get('error')}")
+            box["got"] = review.build_queue(self.win.conn, store.threshold(self.win.settings),
+                                            self.sess.exclude(), limit=200)
+        queue, total = box["got"]
+        excl = self.sess.exclude()
+        # answers given while it was being read: those units have changed - leave their questions out
+        self._queue = [q for q in queue if q.key not in excl and q.a.key not in touched and q.b.key not in touched]
+        self._total, self._touched, self._since_build = total, set(touched), len(touched)
+        self._more = total > len(queue)
+        if self.q is None:
+            self.next_question()
+
+    def _touch(self, *keys):
+        self._touched.update(keys)
+        if getattr(self, "_bg", None) is not None:
+            self._bg[3].update(keys)
+
+    def _pop(self):
+        excl = self.sess.exclude()
+        while self._queue:
+            q = self._queue.pop(0)
+            if q.key in excl or q.a.key in self._touched or q.b.key in self._touched:
+                continue
+            return q
+        return None
+
+    def next_question(self):
+        if not hasattr(self, "_queue"):
+            self._reset_queue()
+        q = None if self._opening else self._pop()
+        if q is None and (self._opening or (self._since_build and getattr(self, "_bg", None) is None)):
+            # opening, or this batch used up after answers: the next batch is read in the background - never
+            # while you wait on a keypress
+            self._build_later()
+        if q is None and getattr(self, "_bg", None) is not None:
+            self.q = None
+            self.question.setText("Finding the questions that sort the most…" if self._opening else
+                                  "Finding more questions…")
+            self.why.setText("")
+            for w in (self.left, self.right, self.name, self.name_label, self.yes_b, self.no_b, self.skip_b,
+                      self.full_b):
+                w.setVisible(False)
+            self.update_progress(0)
+            return
+        # more questions than one batch held, and it's running low - or answers have changed a lot since
+        if (len(self._queue) < self.QUEUE_LOW and getattr(self, "_more", False)) or \
+                self._since_build >= self.QUEUE_STALE:
+            self._build_later()
+        self.q = q
+        total = max(self._total - self._since_build, len(self._queue) + (1 if q else 0))
+        if q is not None:
+            self._shown.append(q)
         if self.q is None:
             self.question.setText("All done - nothing left to ask right now")
             self.why.setText("Name any remaining groups in the main window. New questions appear as you name "
@@ -323,8 +427,13 @@ class QuickReview(QWidget):
                 self.sess.yes(self.q)
         else:
             self.sess.no(self.q)
+        q = self.q
+        self._since_build += 1
+        self._touch(q.a.key, *((q.b.key,) if yes and q.b.kind != "person" else ()))
         if self.sess.answered % self.REGROUP_EVERY == 0:
-            store.regroup(self.win.conn, store.threshold(self.win.settings))   # new names -> new suggestions
+            # new names -> new suggestions: (1.61) in the background, not under your keypresses (it used
+            # to freeze the window for several seconds every fifth answer)
+            self.win.schedule_regroup(now=True)
         self.next_question()
 
     def skip(self):
@@ -334,4 +443,14 @@ class QuickReview(QWidget):
 
     def undo(self):
         if self.sess.undo():
+            # the question undone comes back first (its units are as they were again)
+            if self._shown:
+                if self.q is not None:
+                    self._queue.insert(0, self.q)
+                    self._shown.pop()
+                if self._shown:
+                    back = self._shown.pop()
+                    self._touched.discard(back.a.key)
+                    self._touched.discard(back.b.key)
+                    self._queue.insert(0, back)
             self.next_question()

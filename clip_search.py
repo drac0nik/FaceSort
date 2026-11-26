@@ -284,10 +284,26 @@ def index_photos(conn, progress=lambda d, t, m: None, cancelled=lambda: False, b
     return done
 
 
-def index_counts(conn):
+_COUNTS = {}             # (1.61) library -> (key, time, counts): counting reads every photo
+
+
+def index_counts(conn, max_age=120.0):
+    """(searchable photos, photos). Remembered until photos are added or indexed (or for a couple of
+    minutes) - it used to count the whole library each time it was asked."""
+    import time as _t
+    try:
+        key = (conn.execute("SELECT MAX(id) FROM photos").fetchone()[0],
+               conn.execute("SELECT MAX(rowid) FROM clip_emb").fetchone()[0])
+    except Exception:
+        key = None
+    who = id(conn)
+    hit = _COUNTS.get(who)
+    if hit and key is not None and hit[0] == key and _t.monotonic() - hit[1] < max_age:
+        return hit[2]
     total = conn.execute("SELECT COUNT(*) FROM photos WHERE error IS NULL AND COALESCE(is_other, 0)=0").fetchone()[0]
     have = conn.execute("""SELECT COUNT(*) FROM clip_emb e JOIN photos ph ON ph.id=e.photo_id
                            WHERE ph.error IS NULL""").fetchone()[0]
+    _COUNTS[who] = (key, _t.monotonic(), (have, total))
     return have, total
 
 

@@ -217,13 +217,15 @@ def tagged_waiting(conn, lib):
     if not lib:
         return []
     pre = store.norm_path(unsorted_dir(lib)).rstrip("\\/") + os.sep
+    # (1.61) the path index finds ~Unsorted, and each photo's own faces are looked up by photo (the "+"
+    # keeps SQLite from walking every named face in the library for each photo instead)
     rows = conn.execute("""SELECT p.id, p.path FROM photos p
-                           WHERE substr(p.path, 1, ?) = ? AND COALESCE(p.discarded, 0) = 0
+                           WHERE p.path >= ? AND p.path < ? AND COALESCE(p.discarded, 0) = 0
                              AND COALESCE(p.sort_later, 0) = 0
                              AND (EXISTS (SELECT 1 FROM faces f WHERE f.photo_id = p.id AND f.confirmed = 1
-                                          AND f.ignored = 0 AND f.person_id IS NOT NULL)
+                                          AND +f.ignored = 0 AND +f.person_id IS NOT NULL)
                                   OR EXISTS (SELECT 1 FROM photo_people pp WHERE pp.photo_id = p.id))""",
-                        (len(pre), pre)).fetchall()
+                        (pre, pre[:-1] + chr(ord(os.sep) + 1))).fetchall()
     held = held_back(conn)
     return [pid for pid, path in rows if path not in held and fsx.exists(path, conn)]
 
@@ -474,42 +476,65 @@ def _follow_table(conn):
 
 def _people_on(conn, ids):
     """People confirmed on these photos (face boxes or tags)."""
-    if not ids:
-        return set()
-    q = ",".join("?" * len(ids))
-    out = {r[0] for r in conn.execute(f"SELECT DISTINCT person_id FROM faces WHERE photo_id IN ({q}) "
-                                      "AND confirmed=1 AND ignored=0 AND person_id IS NOT NULL", ids)}
-    out |= {r[0] for r in conn.execute(f"SELECT DISTINCT person_id FROM photo_people WHERE photo_id IN ({q}) "
-                                       "AND src<>'follow'", ids)}
+    out = set()
+    ids = list(ids)
+    for k in range(0, len(ids), 900):
+        part = ids[k:k + 900]
+        q = ",".join("?" * len(part))
+        out |= {r[0] for r in conn.execute(f"SELECT DISTINCT person_id FROM faces WHERE photo_id IN ({q}) "
+                                           "AND confirmed=1 AND +ignored=0 AND +person_id IS NOT NULL", part)}
+        out |= {r[0] for r in conn.execute(f"SELECT DISTINCT person_id FROM photo_people WHERE photo_id IN ({q}) "
+                                           "AND src<>'follow'", part)}
     return out
+
+
+def _under(conn, d, deep):
+    """Photo ids in folder d (deep: and in the folders under it) - by the path index, not a scan."""
+    pre = d + os.sep
+    rows = conn.execute("SELECT id, path FROM photos WHERE path >= ? AND path < ? AND COALESCE(is_other, 0)=0 "
+                        "AND COALESCE(discarded, 0)=0", (pre, d + chr(ord(os.sep) + 1))).fetchall()
+    return [i for i, p in rows if deep or os.path.dirname(p) == d]
 
 
 def sync_follow(conn, lib=None):
     """An other file you haven't tagged or put in a folder yourself goes with the photos it came with:
     it's tagged (as "follow") with the people confirmed on the photos in its own folder - or, if there
     are none beside it, in the folders under it. A person you take off it isn't put back.
-    -> how many changed."""
+    -> how many changed. (1.61: a few bulk reads instead of several per file - it runs on the auto-move
+    timer, and used to freeze the window for ~0.4 s every 10 s.)"""
     _follow_table(conn)
     uns = store.norm_path(unsorted_dir(lib)) + os.sep if lib else None
-    rows = conn.execute("""SELECT id, path FROM photos WHERE is_other=1 AND category_id IS NULL
-                             AND COALESCE(discarded, 0)=0 AND COALESCE(sort_later, 0)=0""").fetchall()
-    rows = [(i, p) for i, p in rows if conn.execute("SELECT 1 FROM photos WHERE id=? AND dropped IS NOT NULL", (i,)).fetchone()
-            or (uns and p.startswith(uns))]
+    rows = [(i, p) for i, p, dropped in conn.execute(
+        """SELECT id, path, dropped FROM photos WHERE is_other=1 AND category_id IS NULL
+           AND COALESCE(discarded, 0)=0 AND COALESCE(sort_later, 0)=0""")
+            if dropped is not None or (uns and p.startswith(uns))]
     if not rows:
         return 0
-    photos = conn.execute("SELECT id, path FROM photos WHERE COALESCE(is_other, 0)=0 AND COALESCE(discarded, 0)=0").fetchall()
-    by_dir = {}
-    for i, p in photos:
-        by_dir.setdefault(os.path.dirname(p), []).append(i)
+    ids = [i for i, _p in rows]
+    tags, follow = {}, {}
+    for chunk in range(0, len(ids), 900):
+        part = ids[chunk:chunk + 900]
+        q = ",".join("?" * len(part))
+        for pid, person, src in conn.execute(f"SELECT photo_id, person_id, src FROM photo_people WHERE photo_id IN ({q})",
+                                             part):
+            tags.setdefault(pid, {})[person] = src
+        for pid, person in conn.execute(f"SELECT photo_id, person_id FROM extra_follow WHERE photo_id IN ({q})", part):
+            follow.setdefault(pid, set()).add(person)
+    people_in = {}                                   # folder -> people confirmed on its photos (or those under it)
+
+    def people(d):
+        got = people_in.get(d)
+        if got is None:
+            near = _under(conn, d, False) or _under(conn, d, True)
+            got = people_in[d] = _people_on(conn, near) if near else set()
+        return got
     changed = 0
     for pid, path in rows:
-        mine = {r[0]: r[1] for r in conn.execute("SELECT person_id, src FROM photo_people WHERE photo_id=?", (pid,))}
+        mine = tags.get(pid, {})
         if any(s != "follow" for s in mine.values()):
             continue                                  # tagged by you (or a drop rule): yours decides
-        d = os.path.dirname(path)
-        near = by_dir.get(d) or [i for k, ids in by_dir.items() if k.startswith(d + os.sep) for i in ids]
-        want = _people_on(conn, near)
-        done = {r[0] for r in conn.execute("SELECT person_id FROM extra_follow WHERE photo_id=?", (pid,))}
+        want = people(os.path.dirname(path))
+        done = follow.get(pid, set())
         for person in want - set(mine) - done:        # (never put back one you took off)
             conn.execute("INSERT OR IGNORE INTO photo_people(photo_id, person_id, src) VALUES(?,?,'follow')",
                          (pid, person))
@@ -519,7 +544,8 @@ def sync_follow(conn, lib=None):
             conn.execute("DELETE FROM photo_people WHERE photo_id=? AND person_id=? AND src='follow'", (pid, person))
             conn.execute("DELETE FROM extra_follow WHERE photo_id=? AND person_id=?", (pid, person))
             changed += 1
-    conn.commit()
+    if changed:
+        conn.commit()
     return changed
 
 

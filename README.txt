@@ -153,6 +153,32 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.61.0
+Speed: no more hiccups. Timed on a made-up library of 60,000 photos, 72,000 faces and 2,000 people
+(tools/bench_big.py), against 1.60.1:
+- Auto-move no longer freezes the window every 10 seconds (7 s each on that library; ~0.4 s in your
+  speed log). It only looks after something changed, on a background thread, and other files
+  following their photos is worked out with a few reads instead of several per file.
+- Quick review: the next question is instant (it used to work out the whole library again for every
+  question - 26 s on that library, plus 84 s every fifth answer while suggestions updated). Questions
+  are read a batch at a time in the background; suggestions update in the background too.
+- Opening: the window and its lists are there in about 0.3 s (2.1 s before): the lists as they were
+  when FaceSort closed are shown at once and brought up to date in the background. Folder counts are
+  worked out in the background, and the round face icons past the first screenful are made while idle.
+- After naming faces, the longest freeze is ~0.15 s (7 s before, mostly auto-move).
+- "Anything left to check?" questions (men / women, clarity, unknown faces) have their own small
+  indexes instead of reading every face. The search-by-description count is remembered.
+- The viewer's tag suggestions are made ready in the background (loading the description model and
+  training album models froze the first photo for 1-2 s).
+- Recently dropped works out where just that drop's photos go (it worked out the whole library, which
+  once ran out of memory).
+- The window's changes are saved as soon as it's idle, so background jobs never wait seconds for it.
+  The log now names the code that held a slow write (it always blamed dbgate.py).
+- Graphics card: the log says which device each job ran on ("clip_index_job: ran on the graphics card
+  (DirectML) in 412 s"). A job sent to the CPU after crashing the card tries the card again (without
+  FP16) after 3 crash-free days (then 10). Settings shows jobs on the CPU because of crashes, with
+  "Try the graphics card again".
+
 1.60.1
 - Fixed: since 1.60.0, saving who's who (names, tags, folders, tattoo and jewelry marks remembered for
   rescans) failed every time.

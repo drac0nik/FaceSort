@@ -18,6 +18,8 @@ def cryptbox_scrub(x):
     return cryptbox.scrub(str(x))
 
 
+AUTOMOVE_RECHECK = 300.0     # (1.61) seconds: auto-move looks again even with no change seen
+
 class SettingsMixin:
     """Part of MainWindow (see facesort.py): drag and drop from Explorer, folders and Settings."""
 
@@ -575,6 +577,28 @@ class SettingsMixin:
                 log(f"decrypting: {cryptbox_scrub(st.get('errors', [])[:3])}")
         return self.run_job("unseal", fsx.unseal_job, on_done=done)
 
+    def _am_look(self, lib):
+        """(1.61) Auto-move's look on a background thread (its own connection): other files follow their
+        photos, and which tagged photos are waiting in ~Unsorted. The next tick moves them."""
+        import threading
+
+        def work():
+            conn = None
+            try:
+                conn = store.connect()
+                libmove.sync_follow(conn, lib)
+                self._am_result = libmove.tagged_waiting(conn, lib)
+            except Exception as e:
+                log(f"auto-move: {e}")
+            finally:
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+        self._am_thread = threading.Thread(target=work, daemon=True, name="auto-move look")
+        self._am_thread.start()
+
     def automove_tick(self, force=False):
         """(1.57.3) Photos in ~Unsorted that now have someone confirmed on them move to where Sort into
         folders would put them - once you've stopped using FaceSort for a moment (so a quick fix to a
@@ -592,8 +616,25 @@ class SettingsMixin:
                 libmove.migrate_drop_extras(self.conn)
             except Exception as e:
                 log(f"other files: {e}")
-        libmove.sync_follow(self.conn, lib)          # (1.58.3) other files go with their photos
-        if not force:
+        # (1.61) only when something changed (a tag, a move, a scan) - or every few minutes to be sure - and
+        # the looking is done on a background thread; it used to run every 10 s on the window's thread
+        # whatever, freezing it for a moment each time
+        now = time.monotonic()
+        if force:
+            self._am_dirty, self._am_last, self._am_result = False, now, None
+            libmove.sync_follow(self.conn, lib)      # (1.58.3) other files go with their photos
+            pids = libmove.tagged_waiting(self.conn, lib)
+        else:
+            th = getattr(self, "_am_thread", None)
+            if th is not None and th.is_alive():
+                return False
+            if getattr(self, "_am_dirty", True) or now - getattr(self, "_am_last", 0.0) > AUTOMOVE_RECHECK:
+                self._am_dirty, self._am_last, self._am_result = False, now, None
+                self._am_look(lib)
+                return False
+            pids = getattr(self, "_am_result", None)
+            if not pids:
+                return False
             if time.monotonic() - (getattr(self, "_last_input", None) or 0) < libmove.PAUSE:
                 return False
             v = getattr(self, "viewer", None)
@@ -601,11 +642,12 @@ class SettingsMixin:
                 return False
             if getattr(getattr(self, "locker", None), "locked", False):
                 return False
-        pids = libmove.tagged_waiting(self.conn, lib)
+            self._am_result = None
         if not pids:
             return False
 
         def done(st):
+            self._am_dirty = True
             if not isinstance(st, dict):
                 return
             n = st.get("moved", 0)

@@ -16,6 +16,7 @@ import time
 SKIP = ("temp.", "scope_ids")      # (temp tables belong to the window's own connection)
 MAX_QUERIES = 400
 MAX_SECONDS = 20.0
+PARALLEL = 4             # (1.61) connections reading at once
 
 
 def _key(sql, params):
@@ -116,13 +117,42 @@ def read_ahead(conn, questions, in_scope=None, progress=None, cancelled=lambda: 
             scoped = True
         except Exception:
             scoped = False
-    for sql, params in questions:
-        if cancelled() or time.monotonic() > end:
-            break
-        if not scoped and any(s in sql for s in SKIP):
-            continue
-        try:
-            out[(sql, params)] = conn.execute(sql, params).fetchall()
-        except Exception:
-            pass
+    todo = [(sql, params) for sql, params in questions if scoped or not any(s in sql for s in SKIP)]
+    scoped_qs = [q for q in todo if any(s in q[0] for s in SKIP)]
+    plain = [q for q in todo if q not in scoped_qs] if scoped_qs else todo
+
+    def ask(c, items):
+        got = {}
+        for sql, params in items:
+            if cancelled() or time.monotonic() > end:
+                break
+            try:
+                got[(sql, params)] = c.execute(sql, params).fetchall()
+            except Exception:
+                pass
+        return got
+    # (1.61) the questions are shared out over a few connections at once (SQLite lets go of Python while it
+    # reads): the lists' numbers are ready in a fraction of the time - the window opens with them sooner
+    if len(plain) >= 8 and PARALLEL > 1:
+        from concurrent.futures import ThreadPoolExecutor
+
+        def ask_own(items):
+            import store
+            c = store.connect()               # (each thread its own connection)
+            try:
+                return ask(c, items)
+            finally:
+                c.close()
+        n = PARALLEL
+        share = [plain[i::n] for i in range(n)]
+        with ThreadPoolExecutor(max_workers=n - 1) as ex:
+            futs = [ex.submit(ask_own, items) for items in share[1:]]
+            out.update(ask(conn, share[0] + scoped_qs))
+            for f in futs:
+                try:
+                    out.update(f.result())
+                except Exception:
+                    pass
+    else:
+        out.update(ask(conn, todo))
     return out

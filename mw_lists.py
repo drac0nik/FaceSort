@@ -13,6 +13,72 @@ class ListsMixin:
     """Part of MainWindow (see facesort.py): the left-hand lists (People / Folders / Albums / Smart Groups)."""
 
     # ------------------------------------------------------------------ refresh
+    # ---- (1.61) the questions the side lists ask, kept between sessions: the window opens at once and the
+    # lists' numbers are read in the background, like after any change
+    def _questions_file(self):
+        return os.path.join(store.data_dir(), "list_questions.json")
+
+    def save_list_questions(self, answers=None):
+        """The questions (small); answers too (a few MB: only when closing, when a moment doesn't matter)."""
+        qs = list(getattr(self, "_seen_q", None) or getattr(self, "_tree_questions", None) or ())
+        if not qs:
+            return
+        with_answers = answers if answers is not None else getattr(self, "_closing", False)
+        self._save_lists(qs, getattr(self, "_last_answers", None) if with_answers else None,
+                         getattr(self, "_dest_cache", None))
+
+    def _save_lists(self, qs, ans, dest):
+        import json
+        try:
+            out = [[sql, list(params)] for sql, params in qs if isinstance(params, tuple)]
+            tmp = self._questions_file() + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"version": 1, "q": out}, f)
+            os.replace(tmp, self._questions_file())
+        except Exception:
+            pass
+        if ans:
+            import pickle
+            try:
+                tmp = self._answers_file() + ".tmp"
+                with open(tmp, "wb") as f:
+                    pickle.dump({"version": 1, "a": ans, "dest": dest[1:] if dest else None}, f,
+                                protocol=pickle.HIGHEST_PROTOCOL)
+                os.replace(tmp, self._answers_file())
+            except Exception:
+                pass
+
+    def _answers_file(self):
+        return os.path.join(store.data_dir(), "list_answers.cache")
+
+    def load_list_answers(self):
+        """(1.61) The lists' numbers as they were when FaceSort last closed - drawn at once on opening (then
+        brought up to date in the background, which changes nothing if nothing changed)."""
+        import pickle
+        try:
+            with open(self._answers_file(), "rb") as f:
+                data = pickle.load(f)
+            ans = data.get("a") if isinstance(data, dict) and data.get("version") == 1 else None
+            dest = data.get("dest") if isinstance(data, dict) else None
+            if dest and len(dest) == 2 and getattr(self, "_dest_cache", None) is None:
+                self._dest_cache = (None, dest[0], dest[1])       # (out of date: used, and worked out again)
+            return ans if isinstance(ans, dict) and ans else None
+        except Exception:
+            return None
+
+    def load_list_questions(self):
+        import json
+        try:
+            with open(self._questions_file(), encoding="utf-8") as f:
+                data = json.load(f)
+            qs = [(sql, tuple(params)) for sql, params in data.get("q", [])]
+        except Exception:
+            return False
+        if qs:
+            self._tree_questions = qs
+            return True
+        return False
+
     def refresh_all(self, first=False):
         self._pid_cache = {}
         self._data_gen += 1     # the background jobs write through their own connection
@@ -129,7 +195,13 @@ class ListsMixin:
         self.conn = rec
         try:
             if do_tree:
-                self._rebuild_tree()
+                for tw in self.trees:              # (1.61) one repaint at the end, not one per row
+                    tw.setUpdatesEnabled(False)
+                try:
+                    self._rebuild_tree()
+                finally:
+                    for tw in self.trees:
+                        tw.setUpdatesEnabled(True)
             rec.part = "grid"
             if grid:
                 self.refresh_grid()
@@ -143,6 +215,8 @@ class ListsMixin:
             self._tree_questions = list(rec.asked)
         else:                                  # (a part skipped: its questions are still wanted next time)
             self._tree_questions = list(dict.fromkeys(list(getattr(self, "_tree_questions", ())) + list(rec.asked)))
+        seen = list(getattr(self, "_seen_q", {})) + list(rec.asked)     # (1.61) all asked this session, for next time
+        self._seen_q = dict.fromkeys(seen[-400:])
         self._lists_hits = (rec.hits, rec.misses)
         self._lists_missed = rec.missed[:20]
         parts = dict(last) if last and last.get("view") == tuple(self.view or ()) else {}
@@ -150,6 +224,7 @@ class ListsMixin:
         if answers is not None:
             known = dict(answers)
             known.update(rec.fetched)
+            self._last_answers = known                 # (1.61) kept for the next start
             for part, keys in rec.parts.items():
                 ks = list(keys)
                 if all(k in known for k in ks):
@@ -236,6 +311,18 @@ class ListsMixin:
         self._tree_questions = list(rec.asked)
         self._last_parts = None
 
+    def _parent_items(self):
+        """(1.61) The rows that have rows under them (people with folders, folders) - without visiting the
+        thousands of rows that have none."""
+        def walk(it):
+            for j in range(it.childCount()):
+                ch = it.child(j)
+                if ch.childCount():
+                    yield ch
+                    yield from walk(ch)
+        for top in self.top_items():
+            yield from walk(top)
+
     def _rebuild_tree(self):
         c = self.conn
         for t in self.trees:
@@ -243,9 +330,7 @@ class ListsMixin:
         scrolls = [t.verticalScrollBar().value() for t in self.trees]
         collapsed = {top.text(0).split(" (")[0] for top in self.top_items() if not top.isExpanded()}
         multi_keys = list(self.view[1]) if self.view[0] == "multi" else []
-        for it in self.iter_items():
-            if not it.childCount():
-                continue
+        for it in self._parent_items():
             k = key_of(it)
             if k and k[0] == "person" and it.childCount():
                 k = ("category", ("p", k[1]))
@@ -255,7 +340,13 @@ class ListsMixin:
                 (self._cat_collapsed.discard if it.isExpanded() else self._cat_collapsed.add)(k[1])
         # (1.49.1) the row of what the gallery shows - not whatever a list last had current (a list
         # you left keeps its old current row, and its neighbours sent you to Unnamed group 1)
-        cur = self.find_tree_item(self.view) if self.view and self.view[0] not in ("multi", "none") else None
+        cur = None
+        if self.view and self.view[0] not in ("multi", "none"):
+            cc = self.current_item()               # (1.61) usually it: no walk through every row to find it
+            try:
+                cur = cc if cc is not None and key_of(cc) == tuple(self.view) else self.find_tree_item(self.view)
+            except RuntimeError:
+                cur = self.find_tree_item(self.view)
         if cur is None:
             cur = self.current_item()
             if cur is not None and (not self.view or key_of(cur) != tuple(self.view)):

@@ -120,7 +120,20 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         self.setAcceptDrops(True)       # drop photos, videos or folders anywhere on the window
         self._scan_after = False
         self.safe_view_changed()                   # (what Safe view blurs, before anything is drawn)
-        self.refresh_all(first=True)
+        if self.load_list_questions() and os.environ.get("FACESORT_SYNC_LISTS") != "1":
+            # (1.61) the lists as they were when FaceSort closed are drawn at once; their numbers are then
+            # read again in the background and anything that changed is swapped in
+            ans = self.load_list_answers()
+            if ans:
+                try:
+                    self.apply_lists(ans, True, True)
+                except Exception as e:
+                    log(f"lists from last time: {e}")
+            self.refresh_all()
+            QTimer.singleShot(60000, self.save_list_questions)
+        else:
+            self.refresh_all(first=True)
+            QTimer.singleShot(5000, self.save_list_questions)
         try:
             import known
             known.warm_names()                     # (1.51.1) the first right-click doesn't wait for it
@@ -134,6 +147,19 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
             self.settings["detector_version"] = DETECTOR_VERSION
             store.save_settings(self.settings)
         QTimer.singleShot(300, self.startup)
+        # (1.61) the window's changes are saved as soon as it's idle: an open transaction holds the write gate,
+        # and background jobs (and the helpers) wait for it - the log showed it held for 2-3 s at a time
+        self.commit_timer = QTimer(self, interval=150)
+        self.commit_timer.timeout.connect(self._commit_open)
+        self.commit_timer.start()
+
+    def _commit_open(self):
+        try:
+            c = self.conn
+            if c is not None and c.in_transaction and not getattr(c, "_block", 0):
+                c.commit()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------ layout
     def _build_toolbar(self):

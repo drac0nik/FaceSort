@@ -1,6 +1,7 @@
 """SQLite library, settings, and face grouping."""
 import hashlib
 import json
+import functools
 import os
 import re
 import time
@@ -564,6 +565,13 @@ def connect(path=None):
         conn.execute("ANALYZE")      # lets SQLite pick the right index for each query
         conn.commit()
     conn.execute("CREATE INDEX IF NOT EXISTS photo_people_person ON photo_people(person_id)")
+    # (1.61) small indexes of just the faces still waiting for a background look (men / women, clarity):
+    # "is there anything left?" was reading every face in the library, often, for an answer of "no"
+    conn.execute("CREATE INDEX IF NOT EXISTS faces_male_todo ON faces(id) WHERE male IS NULL AND thumb IS NOT NULL")
+    conn.execute("CREATE INDEX IF NOT EXISTS faces_clarity_todo ON faces(id) WHERE clarity IS NULL AND manual<2")
+    # (1.61) unnamed faces not in any look-alike group (Unknown faces): counted on every redraw
+    conn.execute("CREATE INDEX IF NOT EXISTS faces_single ON faces(photo_id) "
+                 "WHERE person_id IS NULL AND cluster IS NULL AND ignored=0")
     conn.execute("CREATE INDEX IF NOT EXISTS photo_folders_folder ON photo_folders(folder_id)")
     # 1.29: look-ups that scanned a whole table on big libraries (and on deleting a photo / person)
     for name, sql in (("album_photos_photo", "album_photos(photo_id)"),
@@ -1743,13 +1751,22 @@ def unnamed_per_folder(conn, dirs=None):
     return out
 
 
+@functools.lru_cache(maxsize=20000)
+def _folder_bits(d):
+    """(1.61) (folder name, camera-dump name?) - asked for the same folders on every list redraw."""
+    name = os.path.basename(d)
+    return name, is_generic_folder(name)
+
+
 def pick_folder(group_dirs, n_group, unnamed):
     """The folder a group of faces most likely 'belongs to': most of the group is in it, or
     most of the folder's unnamed faces are in the group. Camera-dump names never count."""
     best, best_score = None, 0
     for d, k in group_dirs.items():
-        name = os.path.basename(d)
-        if k < 2 or is_generic_folder(name):
+        if k < 2:
+            continue
+        name, generic = _folder_bits(d)
+        if generic:
             continue
         purity = k / max(unnamed.get(d, k), k)       # share of the folder's unnamed faces in this group
         share = k / max(n_group, 1)                  # share of the group in this folder

@@ -27,6 +27,16 @@ class EngineMixin:
     # ------------------------------------------------------------------ face engine
     def startup(self):
         s = self.settings
+        if s.get("tag_column", True) and not os.environ.get("FACESORT_NO_PROMPT"):
+            # (1.61) the viewer's tag suggestions are made ready in the background, before the first photo
+            def _warm():
+                if not getattr(self, "_closing", False):
+                    try:
+                        import tagcolumn
+                        tagcolumn.warm_scorer(self)
+                    except Exception as e:
+                        log(f"tag suggestions: {e}")
+            QTimer.singleShot(20000, self, _warm)
         if not s.get("engine_chosen") and not os.environ.get("FACESORT_NO_PROMPT"):
             s["engine_chosen"] = True
             store.save_settings(s)
@@ -137,9 +147,7 @@ class EngineMixin:
         if self.busy():
             QMessageBox.information(self, "Busy", "Wait for the current task to finish first.")
             return
-        if self.regroup_worker and self.regroup_worker.isRunning():
-            self.regroup_worker.wait()
-        self.regroup_timer.stop()
+        self.regroup_timer.stop()        # ((1.61) a regroup already running carries on in the background)
         self.close_viewer(refresh=False)
         r = getattr(self, "_review_widget", None)
         if r is None:                      # made once, then reused (only hidden in between)

@@ -15,6 +15,8 @@ from viewer_parts import PersonPicker
 from ui_common import blurred_pixmap, round_pixmap
 
 
+REP_ICONS_NOW = 80          # (1.61) side-list face icons made at once; the rest while idle
+
 class DataMixin:
     """Part of MainWindow (see facesort.py): data helpers (photo info, destinations, captions…)."""
 
@@ -161,19 +163,51 @@ class DataMixin:
             part = ids[i:i + 900]
             blobs.update(self.conn.execute(f"SELECT id, thumb FROM faces WHERE id IN ({','.join('?' * len(part))})",
                                            part).fetchall())
+        # (1.61) the first ones (what's on screen) now; new pictures past those are made a batch at a time
+        # while the window is idle - a library with thousands of people used to wait for all of them
+        self._rep_gen = getattr(self, "_rep_gen", 0) + 1
+        later = []
+        made = 0
         for it, fid in wanted:
             data = blobs.get(fid) or b""
             crc = zlib.crc32(data)
             got = self.rep_cache.get(fid)
             if got is None or got[0] != crc:
-                pm = QPixmap()
-                if data:
-                    pm.loadFromData(data, "JPG")
-                got = self.rep_cache[fid] = (crc, QIcon(round_pixmap(pm, 72)))
+                if made >= REP_ICONS_NOW:
+                    later.append((it, fid, data, crc))
+                    continue
+                got = self.rep_cache[fid] = (crc, QIcon(round_pixmap(self._jpg(data), 72)))
+                made += 1
             it.setIcon(0, got[1])
         if len(self.rep_cache) > 20000:
             self.rep_cache.clear()
         self.rep_cache_checked = self.pix_cache.gen
+        if later:
+            self._rep_later(later, self._rep_gen)
+
+    @staticmethod
+    def _jpg(data):
+        pm = QPixmap()
+        if data:
+            pm.loadFromData(data, "JPG")
+        return pm
+
+    def _rep_later(self, items, gen):
+        from PySide6.QtCore import QTimer
+        if gen != getattr(self, "_rep_gen", 0) or getattr(self, "_closing", False):
+            return                                # (the lists were rebuilt meanwhile: those items are gone)
+        t0 = time.perf_counter()
+        while items and time.perf_counter() - t0 < 0.012:
+            it, fid, data, crc = items.pop(0)
+            got = self.rep_cache.get(fid)
+            if got is None or got[0] != crc:
+                got = self.rep_cache[fid] = (crc, QIcon(round_pixmap(self._jpg(data), 72)))
+            try:
+                it.setIcon(0, got[1])
+            except RuntimeError:
+                return
+        if items:
+            QTimer.singleShot(0, lambda: self._rep_later(items, gen))
 
     def file_icon_pixmap(self, path, want):
         """An other file in the gallery: the file type's icon from Windows on a tile, with its

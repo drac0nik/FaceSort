@@ -36,6 +36,74 @@ def tag_list(settings):
     return generic_names({"generic_names": raw})
 
 
+_WARM = {"key": None, "scorer": None, "busy": None, "waiters": []}
+
+
+def _scorer_key(win):
+    return (repr(tag_list(win.settings)), win.conn.execute("SELECT COUNT(*) FROM albums").fetchone()[0],
+            bool(win.settings.get("content_on")))
+
+
+def warm_scorer(win, on_ready=None):
+    """(1.61) The shared tag scorer if it's ready for the current tags and albums; otherwise it's made on a
+    background thread (with its own connection) and on_ready is called once it's there."""
+    import threading
+    from PySide6.QtCore import QTimer
+    key = _scorer_key(win)
+    if _WARM["key"] == key and _WARM["scorer"] is not None:
+        _WARM["scorer"].conn = win.conn
+        return _WARM["scorer"]
+    if on_ready is not None:
+        _WARM["waiters"].append(on_ready)
+    if _WARM["busy"] == key:
+        return None
+    _WARM["busy"] = key
+    names = [t["name"] for t in tag_list(win.settings) if t["menu"]]
+    box = {}
+
+    def work():
+        conn = None
+        try:
+            conn = store.connect()
+            sc = content.TagScorer(conn, names)
+            if sc.clip:
+                sc._baseline()
+                for name in list(sc.albums):
+                    sc._album_model(name)
+            box["scorer"] = sc
+        except Exception as e:
+            box["error"] = e
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+    th = threading.Thread(target=work, daemon=True, name="tag scorer")
+    th.start()
+
+    def check():
+        if th.is_alive():
+            QTimer.singleShot(150, check)
+            return
+        _WARM["busy"] = None
+        sc = box.get("scorer")
+        if sc is None:
+            from ui_common import log
+            log(f"tag suggestions: {box.get('error')}")
+            sc = content.TagScorer(win.conn, names)     # (made here after all - without the head start)
+        sc.conn = win.conn
+        _WARM["key"], _WARM["scorer"] = key, sc
+        waiters, _WARM["waiters"] = _WARM["waiters"], []
+        for cb in waiters:
+            try:
+                cb()
+            except RuntimeError:                        # (the viewer closed meanwhile)
+                pass
+    QTimer.singleShot(150, check)
+    return None
+
+
 class TagColumn(QFrame):
     def __init__(self, viewer):
         super().__init__()
@@ -83,13 +151,11 @@ class TagColumn(QFrame):
         self._scorer_key = None
 
     def scorer(self):
-        key = (repr(tag_list(self.win.settings)), self.win.conn.execute("SELECT COUNT(*) FROM albums").fetchone()[0],
-               bool(self.win.settings.get("content_on")))
-        if self._scorer is None or self._scorer_key != key:
-            names = [t["name"] for t in tag_list(self.win.settings) if t["menu"]]
-            self._scorer = content.TagScorer(self.win.conn, names)
-            self._scorer_key = key
-        return self._scorer
+        """The tag scorer, made ready in the background (1.61: loading the description model and training the
+        album models used to freeze the viewer for a second or two on the first photo). None until ready."""
+        s = warm_scorer(self.win, on_ready=lambda: self.photo is not None and self.isVisible()
+                        and self.refresh(self.photo))
+        return s
 
     def refresh(self, photo_id):
         self.photo = photo_id
@@ -100,7 +166,8 @@ class TagColumn(QFrame):
         c = self.win.conn
         have = store.photo_tags(c, photo_id)
         try:
-            names = self.scorer().suggest(photo_id, have, MAX_TAGS)
+            sc = self.scorer()
+            names = sc.suggest(photo_id, have, MAX_TAGS) if sc is not None else have[:MAX_TAGS]
         except Exception as e:                     # (a model missing or a database hiccup: just what it has)
             from ui_common import log
             log(f"tag suggestions: {e}")

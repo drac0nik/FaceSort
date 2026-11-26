@@ -72,14 +72,16 @@ def _log(msg):
 def _caller():
     """The first line of FaceSort's own code that led here (for the watchdog). Walks the frames
     directly - no source files are read (this runs on every write)."""
-    here = os.path.abspath(__file__)
+    here = os.path.basename(__file__)
     f = sys._getframe(2)
     for _ in range(12):
         if f is None:
             break
         fn = f.f_code.co_filename
-        if (os.path.abspath(fn) != here and "sqlite3" not in fn
-                and os.path.basename(fn) != "contextlib.py"):
+        base = os.path.basename(fn)
+        # ((1.61) by name: in the packaged app the frames' file names are bare, so this file never matched
+        # and every slow write was blamed on dbgate.py itself)
+        if base != here and "sqlite3" not in fn and base != "contextlib.py":
             return f"{os.path.basename(fn)}:{f.f_lineno} {f.f_code.co_name}"
         f = f.f_back
     return "?"

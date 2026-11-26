@@ -40,6 +40,39 @@ MAX_CPU_HELPERS = 6
 GPU_CRASHES_MAX = 2                     # (1.49.2) a job that crashed the GPU helper this often runs on the CPU
                                         # (1.51.1: after one crash it tries the card again without FP16)
 GPU_CRASH_DAYS = 30                     # (1.51.1) remembered this long (was: until the next version)
+GPU_RETRY_DAYS = (3, 10)                # (1.61) a job sent to the CPU tries the card again (without FP16) after
+                                        # this many crash-free days (then after the second number)
+_USED = set()                           # (1.61) in a helper: the ONNX providers the current job ran models on
+
+
+def _track_sessions():
+    """(1.61) In a helper: note which device each model actually runs on (for the log)."""
+    try:
+        import onnxruntime as ort
+    except Exception:
+        return
+    base = ort.InferenceSession
+    if getattr(base, "_fs_tracked", False):
+        return
+
+    class Tracked(base):
+        _fs_tracked = True
+
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            try:
+                self._fs_prov = self.get_providers()[0]
+            except Exception:
+                self._fs_prov = "?"
+
+        def run(self, *a, **k):
+            _USED.add(self._fs_prov)
+            return super().run(*a, **k)
+    ort.InferenceSession = Tracked
+
+
+DEVICE_NAMES = {"DmlExecutionProvider": "graphics card (DirectML)", "CUDAExecutionProvider": "graphics card (CUDA)",
+                "CPUExecutionProvider": "CPU"}
 UI_QUIET = 1.5                          # seconds after your last click / key before housekeeping goes full speed
 
 
@@ -179,6 +212,7 @@ def helper_main(role_, slot, task_q, result_q, cancel, ui_active, xlock, xui, xo
     import dbgate
     dbgate.share(xlock, xui, xowner)
     import store
+    _track_sessions()
     conn, conn_dir = None, None
     result_q.put((None, "ready", (role_, slot, os.getpid())))
     while True:
@@ -200,6 +234,7 @@ def helper_main(role_, slot, task_q, result_q, cancel, ui_active, xlock, xui, xo
         else:
             os.environ.pop("FACESORT_NO_FP16", None)
         cancel.value = 0
+        _USED.clear()
         if data_dir != conn_dir:
             if conn is not None:
                 try:
@@ -231,6 +266,8 @@ def helper_main(role_, slot, task_q, result_q, cancel, ui_active, xlock, xui, xo
                 blob = pickle.dumps(res, protocol=pickle.HIGHEST_PROTOCOL)
             except Exception as e:
                 raise RuntimeError(f"the result of {func} can't be sent back: {e}")
+            if _USED:
+                result_q.put((tid, "device", sorted(_USED)))
             result_q.put((tid, "ok", blob))
         except BaseException:
             tb = traceback.format_exc()
@@ -300,13 +337,34 @@ class Pool:
                 import json
                 with open(self._crash_file(), encoding="utf-8") as f:
                     data = json.load(f)
+                self._retries = dict(data.get("retries", {}))
                 for k, v in data.get("jobs", {}).items():
                     n, at = (v[0], v[1]) if isinstance(v, list) else (int(v), time.time())
                     if time.time() - at < GPU_CRASH_DAYS * 86400:
                         self._crashes[k], self._crash_at[k] = int(n), at
+                # (1.61) sent to the CPU, but crash-free for a few days: the card again (without FP16)
+                for k, n in list(self._crashes.items()):
+                    tries = int(self._retries.get(k, 0))
+                    wait = GPU_RETRY_DAYS[min(tries, len(GPU_RETRY_DAYS) - 1)] * 86400
+                    if n >= GPU_CRASHES_MAX and time.time() - self._crash_at[k] > wait:
+                        self._crashes[k] = GPU_CRASHES_MAX - 1
+                        self._retries[k] = tries + 1
+                        self.log(f"{k}: no graphics card crash for {wait // 86400:.0f} days - trying the card "
+                                 "again (without FP16)")
+                        self._save_crashes()
             except Exception:
                 pass
         return self._crashes
+
+    def _save_crashes(self):
+        c = self._crashes or {}
+        try:
+            import json
+            with open(self._crash_file(), "w", encoding="utf-8") as f:
+                json.dump({"jobs": {k: [n, self._crash_at.get(k, time.time())] for k, n in c.items()},
+                           "retries": getattr(self, "_retries", {}) or {}}, f)
+        except Exception:
+            pass
 
     def _note_crash(self, func):
         c = self.gpu_crashes()
@@ -314,13 +372,22 @@ class Pool:
         if getattr(self, "_crash_at", None) is None:
             self._crash_at = {}
         self._crash_at[func] = time.time()
-        try:
-            import json
-            with open(self._crash_file(), "w", encoding="utf-8") as f:
-                json.dump({"jobs": {k: [n, self._crash_at.get(k, time.time())] for k, n in c.items()}}, f)
-        except Exception:
-            pass
+        self._save_crashes()
         return c[func]
+
+    def cpu_only_jobs(self):
+        """(1.61) [(job, until)] jobs running on the CPU because they crashed the graphics card."""
+        c = self.gpu_crashes()
+        return [(k, self._crash_at.get(k, time.time()) + GPU_CRASH_DAYS * 86400) for k, n in c.items()
+                if n >= GPU_CRASHES_MAX]
+
+    def reset_gpu_crashes(self):
+        """(1.61) Settings > Try the graphics card again: forget the crashes."""
+        self._crashes, self._crash_at, self._retries = {}, {}, {}
+        try:
+            os.remove(self._crash_file())
+        except OSError:
+            pass
 
     def gpu_safe(self, func):
         return self.gpu_crashes().get(func, 0) < GPU_CRASHES_MAX
@@ -330,6 +397,7 @@ class Pool:
         opts = {}
         if role_ == "gpu" and not self.gpu_safe(func):
             role_ = "cpu"                  # (it crashed the graphics card helper: the CPU does it, slower but sure)
+            opts["moved_to_cpu"] = True
         elif role_ == "gpu" and self.gpu_crashes().get(func, 0):
             opts["nofp16"] = True          # (crashed once: the card again, without FP16)
         import store
@@ -367,6 +435,11 @@ class Pool:
                 break
             except (EOFError, OSError):
                 break
+            if kind == "device":
+                t = self.tasks.get(tid)
+                if t is not None:
+                    t["device"] = data
+                continue
             if kind == "ready":
                 r, slot, pid = data
                 for h in self.helpers:
@@ -378,6 +451,7 @@ class Pool:
                 continue
             if kind in ("ok", "failed"):
                 self.tasks.pop(tid, None)
+                self._log_device(t)
                 if t["helper"] is not None:
                     t["helper"].tid = None
                 if kind == "ok":
@@ -388,6 +462,27 @@ class Pool:
             self._call(t, kind, data)
         self._check_helpers()
         self._dispatch()
+
+    def _log_device(self, t):
+        """(1.61) Which device a job ran its models on - so a graphics card that isn't being used shows up
+        in the log. (Only jobs that used a model and took a while.)"""
+        dev = t.get("device")
+        start = t.get("start")
+        if not dev or start is None:
+            return
+        secs = time.monotonic() - start
+        if secs < 3:
+            return
+        func, role_ = t["msg"][0], t["msg"][4]
+        names = ", ".join(DEVICE_NAMES.get(d, d) for d in dev)
+        note = ""
+        if (t.get("opts") or {}).get("moved_to_cpu"):
+            note = " - on the CPU because it crashed the graphics card before"
+        elif role_ == "gpu" and dev == ["CPUExecutionProvider"]:
+            note = " - the graphics card wasn't used (no DirectML / CUDA, or the card refused the model)"
+        elif (t.get("opts") or {}).get("nofp16"):
+            note = " (without FP16)"
+        self.log(f"{func.split(':')[-1]}: ran on the {names} in {secs:.0f} s{note}")
 
     def _call(self, t, kind, data):
         cb = t.get("cb")
@@ -436,6 +531,7 @@ class Pool:
                 skipped.append((pri, _seq, tid))
                 continue
             h.tid, t["helper"] = tid, h
+            t["start"] = time.monotonic()
             h.cancel.value = 0
             opts = dict(t.get("opts") or {})
             import cryptbox

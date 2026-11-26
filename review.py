@@ -21,6 +21,7 @@ EVENT_WINDOW = 30 * 60      # photos taken within 30 minutes count as the same e
 EVENT_BOOST = 0.04          # at most this much extra similarity for a shared event
 BAND = 0.12                 # ask about pairs down to (threshold - BAND)
 MAX_FACES = 40              # faces per group used for comparing
+TOP_PEOPLE = 6              # (1.61) people compared closely with each unnamed group / face
 
 
 class Unit:
@@ -46,7 +47,7 @@ class Unit:
             self.embs = E[keep]
         else:
             self.embs = E
-        self.times = sorted(t for t in self.times if t)
+        self.times = np.array(sorted(t for t in self.times if t), np.float64)
 
 
 class Question:
@@ -98,20 +99,22 @@ def load_units(conn):
 
 
 def _event(a, b):
-    """(boost, smallest time gap in seconds or None) for two units' photo dates."""
-    if not a.times or not b.times:
+    """(boost, smallest time gap in seconds or None) for two units' photo dates. (1.61: by sorted search
+    instead of comparing every pair - it ran for every candidate pair, and was most of the time.)"""
+    if not len(a.times) or not len(b.times):
         return 0.0, None
-    tb = np.array(b.times)
-    gaps = [np.min(np.abs(tb - t)) for t in a.times[:60]]
-    best = float(min(gaps))
-    frac = float(np.mean([g <= EVENT_WINDOW for g in gaps]))
-    return EVENT_BOOST * frac, best
+    ta, tb = a.times[:60], b.times
+    i = np.searchsorted(tb, ta)
+    lo = np.abs(ta - tb[np.clip(i - 1, 0, len(tb) - 1)])
+    hi = np.abs(tb[np.clip(i, 0, len(tb) - 1)] - ta)
+    gaps = np.minimum(lo, hi)
+    return EVENT_BOOST * float((gaps <= EVENT_WINDOW).mean()), float(gaps.min())
 
 
 def _sim_to_person(a, p):
     sims = p.embs @ a.centroid
     k = min(3, len(sims))
-    return float(np.sort(sims)[-k:].mean())
+    return float(np.partition(sims, len(sims) - k)[-k:].mean())
 
 
 def build_queue(conn, threshold, skipped=frozenset(), limit=200):
@@ -145,8 +148,10 @@ def build_queue(conn, threshold, skipped=frozenset(), limit=200):
     cands = []
 
     def consider(a, b, sim):
+        if sim + EVENT_BOOST < floor or (a.key, b.key) in skipped:
+            return                     # (can't reach the line even with the event boost: no need to look)
         boost, gap = _event(a, b)
-        if sim + boost < floor or (a.key, b.key) in skipped or blocked(a, b):
+        if sim + boost < floor or blocked(a, b):
             return
         q = Question(a, b, sim, boost, gap)
         p_yes = 1 / (1 + math.exp(-((sim + boost) - threshold) / 0.035))
@@ -158,9 +163,13 @@ def build_queue(conn, threshold, skipped=frozenset(), limit=200):
     # vectorised first pass, then exact scores for the promising pairs
     if people:
         P = np.stack([p.centroid for p in people])
-        for a in groups + singles:
-            rough = P @ a.centroid
-            for j in np.where(rough >= floor - 0.1)[0]:
+        R = np.stack([a.centroid for a in groups + singles]) @ P.T if groups or singles else None
+        for k, a in enumerate(groups + singles):
+            rough = R[k]
+            near = np.where(rough >= floor - 0.1)[0]
+            if len(near) > TOP_PEOPLE:          # (1.61) only its best few: one question per unnamed thing anyway
+                near = near[np.argsort(-rough[near])[:TOP_PEOPLE]]
+            for j in near:
                 consider(a, people[j], _sim_to_person(a, people[j]))
     if len(groups) > 1:
         G = np.stack([g.centroid for g in groups])

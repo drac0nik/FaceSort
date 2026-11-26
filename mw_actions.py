@@ -76,6 +76,7 @@ class ActionsMixin:
         except Exception as e:
             log(f"drop folders: {e}")
         self._remember_dirty = True              # saved to the known-people file a little later
+        self._am_dirty = True                    # (1.61) auto-move takes another look
         self.remember_timer.start()
         if self.view[0] == "misplaced":
             QTimer.singleShot(600, self.start_misplaced)   # tagged one: it can be put back now
@@ -1332,9 +1333,25 @@ class ActionsMixin:
         if stale_ok and cache:
             self._refresh_destinations(key)
             return cache[2 if include_suggestions else 1]
+        if stale_ok and os.environ.get("FACESORT_SYNC_LISTS") != "1":
+            # (1.61) none yet (the window opening): the folder counts fill in a moment later, worked out in
+            # the background - instead of the window waiting for every photo to be read
+            self._refresh_destinations_now(key)
+            return {}
         conf, sugg = store.photo_destinations(self.conn, "both")      # both kinds in one read
         self._dest_cache = (key, conf, sugg)
         return sugg if include_suggestions else conf
+
+    def destinations_for(self, ids, include_suggestions=True):
+        """(1.61) Destinations of just these photos (a drop's): the shared copy if it's up to date, else read
+        for them alone - working out the whole library's for one drop took seconds, and memory."""
+        key = (self.conn.total_changes, self._data_gen, self.conn_id())
+        cache = getattr(self, "_dest_cache", None)
+        if cache and cache[0] == key:
+            return cache[2 if include_suggestions else 1]
+        if not ids:
+            return {}
+        return store.photo_destinations(self.conn, include_suggestions, photo_ids=ids)
 
     def _refresh_destinations(self, key):
         # (1.44.2) worked out once you pause for a moment, not after every click: while it runs it
@@ -1361,30 +1378,42 @@ class ActionsMixin:
             if getattr(self, "_closing", False) or res is None:
                 return
             now = (self.conn.total_changes, self._data_gen, self.conn_id())
+            old = getattr(self, "_dest_cache", None)
+            same = old is not None and old[1] == res[0] and old[2] == res[1]
             self._dest_cache = (key, res[0], res[1])
             if now != key or self._dest_again:
                 self._refresh_destinations(now)          # changed again meanwhile: once more (after a pause)
-            else:
+            elif not same:                               # ((1.61) the same as shown: nothing to redraw)
                 self.refresh_timer.start()               # the folder counts catch up when you pause
         self.dest_worker = bg_job(self.settings, jobfuncs.destinations_job, priority=helpers.NOW)
         self.dest_worker.ok.connect(done)
         self.dest_worker.start_background(self.settings)
 
+    def _read_unnamed(self):
+        """(1.61) One read of just the photos with unnamed faces: {photo id: folder} for them, and the
+        number of unnamed faces per folder - instead of reading every photo in the library for both."""
+        key = (self._data_gen, self.conn_id(), self.conn.total_changes)
+        if getattr(self, "_unnamed_key", None) == key:
+            return
+        dirs, counts = {}, {}
+        sep = os.sep
+        for pid, path, n in self.conn.execute(
+                """SELECT f.photo_id, ph.path, COUNT(*) FROM faces f INDEXED BY faces_cover
+                   JOIN photos ph ON ph.id = f.photo_id
+                   WHERE f.person_id IS NULL AND f.ignored = 0 GROUP BY f.photo_id"""):
+            d = path.rpartition(sep)[0]
+            dirs[pid] = d
+            counts[d] = counts.get(d, 0) + n
+        self._dirs, self._unnamed, self._unnamed_key = dirs, counts, key
+
     def photo_dirs(self):
-        """{photo id: folder}, re-read only when photos were added, removed or moved (not on every
-        naming - this reads every photo)."""
-        sig = self.conn.execute("SELECT COUNT(*), MAX(id), TOTAL(LENGTH(path)) FROM photos").fetchone()
-        key = (self._data_gen, self.conn_id()) + tuple(sig)
-        if getattr(self, "_dirs_key", None) != key:
-            self._dirs, self._dirs_key = store.photo_dirs(self.conn), key
+        """{photo id: folder} of the photos with unnamed faces (what the folder hints need)."""
+        self._read_unnamed()
         return self._dirs
 
     def unnamed_counts(self):
-        """store.unnamed_per_folder, shared by the sidebar and the group views of one redraw."""
-        dirs = self.photo_dirs()
-        key = (self._dirs_key, self.conn.total_changes)
-        if getattr(self, "_unnamed_key", None) != key:
-            self._unnamed, self._unnamed_key = store.unnamed_per_folder(self.conn, dirs), key
+        """Unnamed faces per folder, shared by the sidebar and the group views of one redraw."""
+        self._read_unnamed()
         return self._unnamed
 
     def places(self, stale_ok=False):
@@ -1466,7 +1495,7 @@ class ActionsMixin:
         names = dict(c.execute("SELECT id, name FROM persons"))
         mine = {r[0] for r in c.execute("SELECT id FROM photos WHERE dropped=? AND error IS NULL "
                                         "AND COALESCE(sort_later, 0) != 2", (batch,))}
-        dests = self.destinations(True)
+        dests = self.destinations_for(mine)
         sections = {}
         for pid in mine:
             got = False
@@ -1497,8 +1526,9 @@ class ActionsMixin:
         paths = store.category_paths(c)
         names = dict(c.execute("SELECT id, name FROM persons"))
         dir_dests = {}
-        dests = self.destinations(True)
-        for pid, path in c.execute("SELECT id, path FROM photos WHERE dropped=?", (batch,)):
+        got = c.execute("SELECT id, path FROM photos WHERE dropped=?", (batch,)).fetchall()
+        dests = self.destinations_for({i for i, _p in got})
+        for pid, path in got:
             for base, person, inner in dests.get(pid, ()):
                 lbl = " › ".join(paths.get(base, []) + ([names.get(person, "?")] if person else []) + paths.get(inner, []))
                 lst = dir_dests.setdefault(os.path.normcase(os.path.dirname(path)), [])

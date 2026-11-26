@@ -332,6 +332,34 @@ class SettingsDialog(QDialog):
         self.gpu_label.setWordWrap(True)
         self.gpu_label.setContentsMargins(24, 0, 0, 0)
         lay.addWidget(self.gpu_label)
+        try:                                      # (1.61) jobs moved to the CPU after crashing the card
+            import helpers as _h
+            pool = _h.pool()
+            moved = pool.cpu_only_jobs()
+        except Exception:
+            pool, moved = None, []
+        if moved:
+            import time as _time
+            nice = {"content_job": "content check", "clip_index_job": "search by description", "scan_job": "face scan",
+                    "pose_job": "poses", "bodies_job": "same-shoot (figures)"}
+            txt = ", ".join(f"{nice.get(k.split(':')[-1], k.split(':')[-1])} (until "
+                            f"{_time.strftime('%b %d', _time.localtime(u))})" for k, u in moved)
+            row = QHBoxLayout()
+            row.setContentsMargins(24, 0, 0, 0)
+            lbl = QLabel(f"<span style='color:#d08a2c'>●</span> On the CPU after crashing the graphics card: {txt}")
+            lbl.setWordWrap(True)
+            row.addWidget(lbl, 1)
+            again = QPushButton("Try the graphics card again")
+            again.setToolTip("Forget the crashes: these jobs use the graphics card again (if one crashes again it "
+                             "goes back to the CPU)")
+
+            def retry():
+                pool.reset_gpu_crashes()
+                lbl.setText("These jobs use the graphics card again.")
+                again.setEnabled(False)
+            again.clicked.connect(retry)
+            row.addWidget(again)
+            lay.addLayout(row)
         names = gpu_names(wait=False)             # (asked in the background when FaceSort starts)
         if names or sys.platform == "win32":
             g = QLabel("Graphics cards in this PC: " + (", ".join(names) if names else "looking…"))
