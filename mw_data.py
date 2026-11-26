@@ -393,13 +393,13 @@ class DataMixin:
         hidden = self.hidden_names()
         return sorted((n for k, n in names.items() if k not in hidden), key=str.casefold)
 
-    def ask_name(self, title="Name these faces", current="", suggest=None):
+    def ask_name(self, title="Name these faces", current="", suggest=None, faces=None, photos=None):
         names = self.person_names()
         if suggest and not current:
             # a folder name: use the spelling of a person you already have, if it's them
             suggest = next((n for n in names if n.casefold() == suggest.casefold()), suggest)
             current = suggest
-        dlg = PersonPicker(self, title, current)
+        dlg = PersonPicker(self, title, current, faces=faces, photos=photos)
         if dlg.exec() != QDialog.Accepted:
             return None
         return dlg.result_name

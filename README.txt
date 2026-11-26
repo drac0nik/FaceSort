@@ -153,6 +153,14 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.59.1
+Easier to tell if it's the right person.
+- Name window (right-click > Name face, and Who's in this photo?): wider, with what you're naming shown
+  beside the highlighted person. Each side has the face close up, the whole photo with the face
+  outlined, and small pictures along the bottom - click one to see it big.
+- Quick review: Whole photo (F, or click the big picture) switches both sides between the faces close
+  up and the whole photos with the face outlined. Click a small face to see it big.
+
 1.59.0
 Faster sorting for big imports and collections.
 - Confirm the sure ones: on a person with 10 or more suggestions, Confirm all opens a match-strength

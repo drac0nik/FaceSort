@@ -981,16 +981,176 @@ class Filmstrip(QWidget):
         e.accept()
 
 
+class _Thumb(QLabel):
+    def __init__(self, cb):
+        super().__init__()
+        self._cb = cb
+        self.setCursor(Qt.PointingHandCursor)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self._cb()
+        super().mousePressEvent(e)
+
+
+class PicPanel(QWidget):
+    """(1.59.1) A close-up of the face, the whole photo it's in (the face outlined), and small pictures
+    along the bottom - click one to see it big."""
+    FACE, FW, FH, THUMB = 150, 340, 230, 50
+
+    def __init__(self, win, heading):
+        super().__init__()
+        self.win = win
+        self.items, self.cur = [], 0
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
+        self.head = QLabel(f"<b>{html.escape(heading)}</b>")
+        self.head.setStyleSheet("color: gray;")
+        lay.addWidget(self.head)
+        self.face = QLabel()
+        self.face.setFixedSize(self.FACE, self.FACE)
+        self.face.setAlignment(Qt.AlignCenter)
+        self.face.setStyleSheet("border-radius: 10px; background: rgba(127,127,127,0.15);")
+        lay.addWidget(self.face, 0, Qt.AlignHCenter)
+        self.frame = QLabel()
+        self.frame.setFixedSize(self.FW, self.FH)
+        self.frame.setAlignment(Qt.AlignCenter)
+        self.frame.setStyleSheet("border-radius: 8px; background: rgba(127,127,127,0.15);")
+        self.frame.setToolTip("The whole photo - the face is outlined")
+        lay.addWidget(self.frame)
+        self.info = QLabel()
+        self.info.setWordWrap(True)
+        self.info.setFixedWidth(self.FW)
+        lay.addWidget(self.info)
+        lay.addStretch(1)
+        self.strip = QHBoxLayout()
+        self.strip.setSpacing(4)
+        lay.addLayout(self.strip)
+        self.setFixedWidth(self.FW)
+
+    def show_items(self, items, info="", placeholder=None):
+        """items: [(face id or None, photo path, (x, y, w, h) or None)]."""
+        while self.strip.count():
+            w = self.strip.takeAt(0).widget()
+            if w:
+                w.setParent(None)
+                w.deleteLater()
+        self.items, self.cur = list(items), 0
+        self.info.setText(info)
+        if not self.items:
+            self.face.setPixmap(placeholder.pixmap(110, 110) if placeholder is not None else QPixmap())
+            self.frame.setPixmap(QPixmap())
+            return
+        if len(self.items) > 1:
+            for i, (fid, path, _box) in enumerate(self.items[:6]):
+                lb = _Thumb(lambda i=i: self.set_main(i))
+                lb.setPixmap(self._small(fid, path))
+                lb.setToolTip("Show this one big")
+                self.strip.addWidget(lb)
+            self.strip.addStretch(1)
+        self.set_main(0)
+
+    def set_main(self, i):
+        self.cur = i
+        fid, path, box = self.items[i]
+        if fid:
+            self.face.setPixmap(round_pixmap(self.win.face_pixmap(fid, want_px=self.FACE * 2, face_only=True),
+                                             self.FACE, 12))
+        else:
+            self.face.setPixmap(round_pixmap(self.frame_pixmap(path, None, self.FACE, self.FACE, crop=True),
+                                             self.FACE, 12))
+        self.frame.setPixmap(self.frame_pixmap(path, box, self.FW, self.FH))
+        for k in range(self.strip.count()):
+            w = self.strip.itemAt(k).widget()
+            if w is not None:
+                w.setStyleSheet("border: 2px solid #2d8cd1; border-radius: 6px;" if k == i else
+                                "border: 2px solid transparent; border-radius: 6px;")
+
+    def _small(self, fid, path):
+        if fid:
+            return round_pixmap(self.win.face_pixmap(fid, want_px=self.THUMB * 2, face_only=True), self.THUMB, 6)
+        return round_pixmap(self.frame_pixmap(path, None, self.THUMB, self.THUMB, crop=True), self.THUMB, 6)
+
+    def frame_pixmap(self, path, box, w, h, crop=False):
+        return framed_pixmap(path, box, w, h, crop)
+
+
+_FRAMES = {}             # (path, side) -> QImage, the last few photos shown whole
+
+
+def load_upright(path, side=700):
+    """The photo (or a video's cover frame), upright, about `side` px - the last few are kept."""
+    key = (path, side)
+    img = _FRAMES.get(key)
+    if img is not None:
+        return img
+    img = QImage()
+    try:
+        import engine
+        import fsx
+        real = fsx.plain(path)
+        if not (engine.is_video(real) or engine.is_raw(real)):
+            from PySide6.QtGui import QImageReader
+            rd = QImageReader(real)
+            rd.setAutoTransform(True)
+            sz = rd.size()
+            if sz.isValid() and max(sz.width(), sz.height()) > side:
+                s = side / max(sz.width(), sz.height())
+                rd.setScaledSize(QSize(max(1, int(sz.width() * s)), max(1, int(sz.height() * s))))
+            img = rd.read()
+        if img.isNull():
+            im = engine.load_image(path, max_side=side)
+            if im is not None and getattr(im, "bgr", None) is not None:
+                rgb = np.ascontiguousarray(im.bgr[:, :, ::-1])
+                img = QImage(rgb.data, rgb.shape[1], rgb.shape[0], rgb.strides[0], QImage.Format_RGB888).copy()
+    except Exception:
+        img = QImage()
+    if len(_FRAMES) > 40:
+        _FRAMES.pop(next(iter(_FRAMES)))
+    _FRAMES[key] = img
+    return img
+
+
+def framed_pixmap(path, box, w, h, crop=False, side=700):
+    """The whole photo fitted into w x h with the face box (normalized x, y, w, h) outlined; crop=True
+    fills the square instead (no outline)."""
+    img = load_upright(path, side)
+    if img.isNull():
+        return QPixmap()
+    pm = QPixmap.fromImage(img)
+    if crop:
+        return pm.scaled(w, h, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+    pm = pm.scaled(w, h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    try:
+        import engine
+        video = engine.is_video(path)
+    except Exception:
+        video = False
+    if box and all(v is not None for v in box) and not video:     # (a video's face may be on another frame)
+        x, y, bw, bh = box
+        qp = QPainter(pm)
+        pen = QPen(QColor(45, 140, 209))
+        pen.setWidth(3)
+        qp.setPen(pen)
+        qp.drawRoundedRect(int(x * pm.width()), int(y * pm.height()), max(4, int(bw * pm.width())),
+                           max(4, int(bh * pm.height())), 4, 4)
+        qp.end()
+    return pm
+
+
 class PersonPicker(QDialog):
     """Who is this? Type a name - the list below shows everyone you have, with their face (and
     where they're saved), narrowing down as you type, so "Ashley 1" and "Ashley 2" are easy to
     tell apart. Enter takes the highlighted person, or makes a new one from what you typed."""
 
-    def __init__(self, win, title, current=""):
+    def __init__(self, win, title, current="", faces=None, photos=None):
+        """faces / photos: what's being named (face ids, or photo ids for whole photos) - shown beside
+        the highlighted person to compare (1.59.1)."""
         super().__init__(win)
         self.win = win
         self.setWindowTitle(title)
-        self.resize(640, 560)
+        self.resize(1160, 660)
         lay = QVBoxLayout(self)
         head = QLabel(f"<b>{html.escape(title)}</b>")
         f = head.font()
@@ -1010,22 +1170,17 @@ class PersonPicker(QDialog):
         self.list.setIconSize(QSize(56, 56))
         self.list.setUniformItemSizes(True)
         self.list.setSpacing(1)
+        self.list.setMinimumWidth(300)
         body.addWidget(self.list, 1)
-        side = QVBoxLayout()
-        self.big = QLabel()
-        self.big.setFixedSize(180, 180)
-        self.big.setAlignment(Qt.AlignCenter)
-        self.big.setStyleSheet("border-radius: 10px; background: rgba(127,127,127,0.15);")
-        side.addWidget(self.big)
-        self.more = QHBoxLayout()
-        self.more.setSpacing(4)
-        side.addLayout(self.more)
-        self.info = QLabel()
-        self.info.setWordWrap(True)
-        self.info.setFixedWidth(180)
-        side.addWidget(self.info)
-        side.addStretch(1)
-        body.addLayout(side)
+        body.addSpacing(8)
+        # (1.59.1) what you're naming, beside the highlighted person - close-up, whole photo, more
+        self.tagging = PicPanel(win, "Naming")
+        self.tagging.show_items(self._tagging_items(faces, photos))
+        self.tagging.setVisible(bool(self.tagging.items))
+        body.addWidget(self.tagging)
+        body.addSpacing(8)
+        self.person = PicPanel(win, "Highlighted person")
+        body.addWidget(self.person)
         lay.addLayout(body, 1)
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(self.take)
@@ -1149,32 +1304,46 @@ class PersonPicker(QDialog):
         else:
             self.show_person(-1)
 
+    def _tagging_items(self, faces, photos):
+        c = self.win.conn
+        out = []
+        for fid in list(faces or [])[:6]:
+            r = c.execute("SELECT f.id, p.path, f.x, f.y, f.w, f.h FROM faces f JOIN photos p ON p.id=f.photo_id "
+                          "WHERE f.id=?", (fid,)).fetchone()
+            if r:
+                out.append((r[0], r[1], r[2:6]))
+        for pid in list(photos or [])[:6]:
+            r = c.execute("SELECT path FROM photos WHERE id=?", (pid,)).fetchone()
+            if r:
+                out.append((None, r[0], None))
+        n = len(faces or []) + len(photos or [])
+        if out:
+            what = "face" if faces else "photo"
+            self.tagging.head.setText(f"<b>Naming {'this ' + what if n == 1 else f'{n:,} {what}s'}</b>")
+        return out
+
     def show_person(self, row):
-        while self.more.count():
-            w = self.more.takeAt(0).widget()
-            if w:
-                w.setParent(None)
-                w.deleteLater()
         it = self.list.item(row) if row >= 0 else None
         data = it.data(Qt.UserRole) if it else None
         if not data or data[0] == "new":
-            self.big.setPixmap(app_icon("person", "orange" if data else "grey").pixmap(120, 120))
-            self.info.setText(f"<b>{html.escape(data[1])}</b><br>a new person" if data else "")
+            self.person.head.setText("<b>Highlighted person</b>")
+            self.person.show_items([], f"<b>{html.escape(data[1])}</b><br>a new person" if data else "",
+                                   placeholder=app_icon("person", "orange" if data else "grey"))
             return
         name, pid, fid, n, where, _u = data[1]
-        if fid:
-            self.big.setPixmap(round_pixmap(self.win.face_pixmap(fid), 180, 14))
-            for (other,) in self.win.conn.execute(
-                    """SELECT id FROM faces WHERE person_id=? AND ignored=0 AND id<>?
-                       ORDER BY confirmed DESC, px*score DESC LIMIT 4""", (pid, fid)):
-                lb = QLabel()
-                lb.setPixmap(round_pixmap(self.win.face_pixmap(other), 42, 6))
-                self.more.addWidget(lb)
-            self.more.addStretch(1)
-        else:
-            self.big.setPixmap(app_icon("person", "grey").pixmap(120, 120))
-        self.info.setText(f"<b>{html.escape(name)}</b><br>" + (f"{n:,} photo{'s' if n != 1 else ''}"
-                          if pid else "") + (f"<br>Saved in: {html.escape(where)}" if where else ""))
+        items = []
+        if pid:
+            rows = self.win.conn.execute(
+                """SELECT f.id, p.path, f.x, f.y, f.w, f.h FROM faces f JOIN photos p ON p.id=f.photo_id
+                   WHERE f.person_id=? AND f.ignored=0
+                   ORDER BY (f.id=?) DESC, f.confirmed DESC, f.px*f.score DESC LIMIT 6""", (pid, fid or -1)).fetchall()
+            items = [(r[0], r[1], r[2:6]) for r in rows]
+        self.person.head.setText(f"<b>{html.escape(name)}</b>")
+        self.person.show_items(items, (f"{n:,} photo{'s' if n != 1 else ''}" if pid else "")
+                               + (f"<br>Saved in: {html.escape(where)}" if where else "")
+                               + ("<br><span style='color:gray'>Click a small picture to see it big</span>"
+                                  if len(items) > 1 else ""),
+                               placeholder=app_icon("person", "grey"))
 
     def take(self):
         it = self.list.currentItem()

@@ -9,12 +9,29 @@ from icons import app_icon
 from ui_common import round_pixmap, SUGGEST
 
 
-class FaceStrip(QWidget):
-    """A few faces of one side of a question, plus a caption."""
+class _Click(QLabel):
+    def __init__(self, cb, tip=""):
+        super().__init__()
+        self._cb = cb
+        self.setCursor(Qt.PointingHandCursor)
+        if tip:
+            self.setToolTip(tip)
 
-    def __init__(self, win):
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self._cb()
+        super().mousePressEvent(e)
+
+
+class FaceStrip(QWidget):
+    """A few faces of one side of a question, plus a caption. (1.59.1) Click a small face to see it big;
+    the big picture is the face close up or the whole photo (F, or click it) with the face outlined."""
+
+    def __init__(self, win, on_toggle=None):
         super().__init__()
         self.win = win
+        self.unit, self.main_i, self.full = None, 0, False
+        self.on_toggle = on_toggle
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         self.title = QLabel()
@@ -26,7 +43,8 @@ class FaceStrip(QWidget):
         self.sub = QLabel()
         self.sub.setAlignment(Qt.AlignCenter)
         self.sub.setStyleSheet("color: gray;")
-        self.big = QLabel()
+        self.big = _Click(lambda: self.on_toggle and self.on_toggle(),
+                          "Click (or F) to switch between the face close up and the whole photo")
         self.big.setAlignment(Qt.AlignCenter)
         self.big.setMinimumSize(200, 200)
         self.big.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
@@ -40,7 +58,10 @@ class FaceStrip(QWidget):
     def show_unit(self, unit, big=None, small=84):
         if big is None:          # as big as there's room for
             big = max(200, min(720, self.big.width() - 10, self.big.height() - 10))
+        if unit is not self.unit:
+            self.main_i = 0
         self.unit = unit
+        self.main_i = min(self.main_i, max(0, len(unit.show[:7]) - 1))
         if unit.kind == "person":
             self.title.setText(unit.name)
             self.sub.setText(f"{unit.size:,} confirmed face{'s' if unit.size != 1 else ''}")
@@ -50,12 +71,22 @@ class FaceStrip(QWidget):
         else:
             self.title.setText("Single face")
             self.sub.setText("not grouped with anyone yet")
-        path = self.win.conn.execute("SELECT ph.path FROM faces f JOIN photos ph ON ph.id=f.photo_id WHERE f.id=?",
-                                     (unit.show[0],)).fetchone()
+        main = unit.show[self.main_i]
+        row = self.win.conn.execute("SELECT ph.path, f.x, f.y, f.w, f.h FROM faces f JOIN photos ph "
+                                    "ON ph.id=f.photo_id WHERE f.id=?", (main,)).fetchone()
         dpr = self.devicePixelRatioF()
-        # a sharp crop from the photo at this size (the small saved thumbnail until it's loaded)
-        pm = self.win.face_pixmap(unit.show[0], path[0] if path else None, want_px=big * dpr, face_only=True)
-        rp = round_pixmap(pm, int(big * dpr), radius=int(16 * dpr))
+        rp = None
+        if self.full and row:
+            from viewer_parts import framed_pixmap
+            bw = max(200, self.big.width() - 10)
+            bh = max(200, self.big.height() - 10)
+            rp = framed_pixmap(row[0], row[1:5], int(bw * dpr), int(bh * dpr), side=1400)
+            if rp.isNull():
+                rp = None
+        if rp is None:
+            # a sharp crop from the photo at this size (the small saved thumbnail until it's loaded)
+            pm = self.win.face_pixmap(main, row[0] if row else None, want_px=big * dpr, face_only=True)
+            rp = round_pixmap(pm, int(big * dpr), radius=int(16 * dpr))
         rp.setDevicePixelRatio(dpr)
         self.big.setPixmap(rp)
         while self.row.count():
@@ -65,15 +96,23 @@ class FaceStrip(QWidget):
                 w.setParent(None)
                 w.deleteLater()
         self.row.addStretch()
-        for fid in unit.show[1:7]:
-            lb = QLabel()
-            lb.setPixmap(round_pixmap(self.win.face_pixmap(fid, face_only=True), small, radius=10))
-            self.row.addWidget(lb)
+        shown = unit.show[:7]
+        if len(shown) > 1:
+            for i, fid in enumerate(shown):
+                lb = _Click(lambda i=i: self.pick(i), "Show this one big")
+                lb.setPixmap(round_pixmap(self.win.face_pixmap(fid, face_only=True), small, radius=10))
+                lb.setStyleSheet("border: 3px solid #2d8cd1; border-radius: 12px;" if i == self.main_i
+                                 else "border: 3px solid transparent; border-radius: 12px;")
+                self.row.addWidget(lb)
         self.row.addStretch()
+
+    def pick(self, i):
+        self.main_i = i
+        self.show_unit(self.unit)
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
-        if getattr(self, "unit", None) is not None:
+        if self.unit is not None:
             QTimer.singleShot(0, lambda: self.show_unit(self.unit))
 
 
@@ -108,6 +147,12 @@ class QuickReview(QWidget):
         tl.setFont(tf)
         top.addWidget(tl)
         top.addStretch(1)
+        self.full_b = QPushButton("Whole photo   (F)")
+        self.full_b.setCheckable(True)
+        self.full_b.setFocusPolicy(Qt.NoFocus)
+        self.full_b.setToolTip("Show the whole photos (the face outlined) instead of the faces close up")
+        self.full_b.toggled.connect(self.set_full)
+        top.addWidget(self.full_b)
         lay.addLayout(top)
         self.question = QLabel()
         f = self.question.font()
@@ -121,7 +166,7 @@ class QuickReview(QWidget):
         lay.addWidget(self.question)
         lay.addWidget(self.why)
         sides = QHBoxLayout()
-        self.left, self.right = FaceStrip(win), FaceStrip(win)
+        self.left, self.right = FaceStrip(win, self.toggle_full), FaceStrip(win, self.toggle_full)
         sides.addWidget(self.left, 1)
         vs = QLabel("?")
         vf = vs.font()
@@ -177,12 +222,23 @@ class QuickReview(QWidget):
         self.progress.setStyleSheet("color: gray;")
         lay.addWidget(self.progress)
         for key, fn in (("Y", lambda: self.answer(True)), ("N", lambda: self.answer(False)),
-                        ("Space", self.skip), ("Z", self.undo), ("Backspace", self.undo)):
+                        ("Space", self.skip), ("Z", self.undo), ("F", self.toggle_full), ("Backspace", self.undo)):
             sc = QShortcut(QKeySequence(key), self)
             sc.setContext(Qt.WidgetWithChildrenShortcut)       # only while Quick review is open
             sc.activated.connect(lambda fn=fn: None if self.name.hasFocus() else fn())
         self.win.hires.ready.connect(self.hires_ready)
         self.next_question()
+
+    def toggle_full(self):
+        self.full_b.toggle()
+
+    def set_full(self, on):
+        """Whole photos or faces close up, both sides together (1.59.1)."""
+        self.full_b.setText("Faces close up   (F)" if on else "Whole photo   (F)")
+        for s in (self.left, self.right):
+            s.full = on
+            if s.unit is not None and self.q is not None:
+                s.show_unit(s.unit)
 
     def restart(self):
         """Opened again: a fresh session (it's kept, just hidden, in between)."""
@@ -204,7 +260,7 @@ class QuickReview(QWidget):
         self.win.close_review()
 
     def hires_ready(self, fid):
-        if self.q and fid in (self.q.a.show[0], self.q.b.show[0]):
+        if self.q and fid in (self.q.a.show[self.left.main_i], self.q.b.show[self.right.main_i]):
             self.left.show_unit(self.q.a)
             self.right.show_unit(self.q.b)
 
@@ -216,11 +272,13 @@ class QuickReview(QWidget):
             self.question.setText("All done - nothing left to ask right now")
             self.why.setText("Name any remaining groups in the main window. New questions appear as you name "
                              "people and add photos.")
-            for w in (self.left, self.right, self.name, self.name_label, self.yes_b, self.no_b, self.skip_b):
+            for w in (self.left, self.right, self.name, self.name_label, self.yes_b, self.no_b, self.skip_b,
+                      self.full_b):
                 w.setVisible(False)
             self.update_progress(0)
             return
-        for w in (self.left, self.right, self.name, self.name_label, self.yes_b, self.no_b, self.skip_b):
+        for w in (self.left, self.right, self.name, self.name_label, self.yes_b, self.no_b, self.skip_b,
+                  self.full_b):
             w.setVisible(True)
         q = self.q
         if q.b.kind == "person":
@@ -249,7 +307,8 @@ class QuickReview(QWidget):
         s = self.sess
         self.progress.setText(f"Answered {s.answered}  ·  {s.sorted_faces:,} faces sorted"
                               + (f"  ·  about {total:,} question{'s' if total != 1 else ''} left" if total else "")
-                              + "      Y yes · N no · Space skip · Z undo · type a name to also name them")
+                              + "      Y yes · N no · Space skip · Z undo · F whole photo · click a small face to see it big"
+                              + " · type a name to also name them")
         self.undo_b.setEnabled(bool(s.history))
 
     def answer(self, yes):

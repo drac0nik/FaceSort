@@ -267,7 +267,7 @@ class ActionsMixin:
         if self.view[0] == "person":
             r = self.conn.execute("SELECT name FROM persons WHERE id=?", (self.view[1],)).fetchone()
             current = r[0] if r else ""
-        name = self.ask_name(f"Name {len(ids)} face{'s' if len(ids) > 1 else ''}", current)
+        name = self.ask_name(f"Name {len(ids)} face{'s' if len(ids) > 1 else ''}", current, faces=ids)
         if name:
             self.assign_ids(ids, name)
 
@@ -276,7 +276,7 @@ class ActionsMixin:
         if not ids:
             return
         folder = store.group_folder(self.conn, ids, self.unnamed_counts()) if self.settings.get("folder_hints", True) else None
-        name = self.ask_name(f"Who is this? ({len(ids)} faces)", suggest=folder)
+        name = self.ask_name(f"Who is this? ({len(ids)} faces)", suggest=folder, faces=ids)
         if name:
             self.assign_ids(ids, name)
 
@@ -338,7 +338,7 @@ class ActionsMixin:
         photos = self.sel_photos()
         if not photos:
             return
-        name = self.ask_name(f"Who's in {'this photo' if len(photos) == 1 else f'these {len(photos)} photos'}?")
+        name = self.ask_name(f"Who's in {'this photo' if len(photos) == 1 else f'these {len(photos)} photos'}?", photos=photos)
         if name:
             store.tag_photos(self.conn, photos, store.get_or_create_person(self.conn, name))
             self.quick_change(regroup=False)
