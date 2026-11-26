@@ -144,3 +144,35 @@ def test_lists_open_from_last_time(window, qapp):
     w._tree_questions = None
     assert w.load_list_questions() and w._tree_questions
     w.idle()
+
+
+def test_side_lists_are_patched_not_remade(window, qapp):
+    """1.62: only the rows that changed are touched; rows, selection and open / closed stay."""
+    import treespec
+    from ui_common import key_of
+    w = window
+    w.rebuild_tree()
+    before = {id(it): key_of(it) for it in w.iter_items()}
+    items_before = list(w.iter_items())            # (kept alive so ids can't be reused)
+    w.rebuild_tree()                               # nothing changed: nothing touched
+    assert w._tree_patch == (0, 0)
+    assert {id(it) for it in w.iter_items()} == set(before)
+    # a group named: a few rows change, the rest are the same objects
+    grp = next(k for k in before.values() if k and k[0] == "group")
+    fids = [r[0] for r in w.conn.execute("SELECT id FROM faces WHERE cluster=? AND person_id IS NULL",
+                                         (grp[1],))]
+    store.assign(w.conn, fids, store.get_or_create_person(w.conn, "Patched Person"))
+    w.conn.commit()
+    w.rebuild_tree()
+    touched, removed = w._tree_patch
+    assert 0 < touched < len(before) // 3 and removed >= 1
+    kept = sum(1 for it in w.iter_items() if id(it) in before)
+    assert kept > len(before) * 0.6
+    assert w.find_tree_item(grp) is None and any(k == ("person", store.get_or_create_person(w.conn, "Patched Person"))
+                                                  for k in (key_of(i) for i in w.iter_items()))
+    del items_before
+    # a worked-out spec digest: the same twice
+    ctx = w.tree_ctx()
+    a, b = treespec.build(w.conn, ctx), treespec.build(w.conn, ctx)
+    assert treespec.digest(a) == treespec.digest(b)
+    w.idle()

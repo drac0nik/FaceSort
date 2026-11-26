@@ -714,15 +714,21 @@ def test_selected_group_stays_or_moves_to_the_next(window):
     from ui_common import key_of
     want = [key_of(x) for x in sib[i + 1:]] + [key_of(x) for x in reversed(sib[:i])]
     w.select_item(it, switch=False)
-    orig = type(w).dup_sets
+    import treespec
+    real_build = treespec.build
+
+    def without_dupes(c, ctx):             # (1.62: the row really goes - the lists are patched, not remade)
+        tops = real_build(c, ctx)
+        for rows in tops.values():
+            for top in rows:
+                top.kids = [k for k in top.kids if k.dat.get(treespec.ROLE_USER) != ("dupes", None)]
+        return tops
+    treespec.build = without_dupes
     try:
-        type(w).dup_sets = lambda self, wait=False: []
-        real = w.find_tree_item
-        w.find_tree_item = lambda key, section=None: None if tuple(key) == ("dupes", None) else real(key, section)
         w.rebuild_tree()
     finally:
-        type(w).dup_sets = orig
-        del w.find_tree_item
+        treespec.build = real_build
+    assert w.find_tree_item(("dupes", None)) is None
     assert w.view == next(k for k in want if k)
 
 

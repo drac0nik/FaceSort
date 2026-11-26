@@ -48,7 +48,7 @@ def test_changes_redrawn_after_reading_ahead(window, qapp, monkeypatch):
     assert ("person", pid) not in all_keys(w, w.tree)          # not yet: being read
     wait_lists(w, qapp)
     assert ("person", pid) in all_keys(w, w.tree)
-    assert w._lists_hits[0] > 10
+    assert w._spec_digest is not None          # (1.62: the rows were worked out in the background, then patched)
     # changed again while reading: read again, and the newest change shows
     w.after_change(regroup=False)
     store.rename_person(c, pid, "Read Ahead Two")

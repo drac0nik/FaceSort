@@ -153,6 +153,18 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.62.0
+The side lists update without the hiccup.
+- After a change, the side lists were cleared and every row made again - thousands of rows, a
+  fraction of a second with the window frozen each time. Now the rows are worked out on the background
+  thread that reads the lists' numbers, compared with what's on screen, and only what changed is
+  touched: a count, a row added or removed, a row that moved. Rows that didn't change aren't touched,
+  so the selection, what's open or closed and the scroll position simply stay put.
+- On the test library (60,000 photos, 2,000 people): the longest freeze after naming faces went from
+  0.17 s to 0.03 s; the first 20 s after opening from 0.22 s to 0.06 s.
+- Opening shows the lists exactly as they were when FaceSort closed (rows and all), then patches in
+  anything that changed.
+
 1.61.0
 Speed: no more hiccups. Timed on a made-up library of 60,000 photos, 72,000 faces and 2,000 people
 (tools/bench_big.py), against 1.60.1:

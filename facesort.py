@@ -126,7 +126,10 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
             ans = self.load_list_answers()
             if ans:
                 try:
-                    self.apply_lists(ans, True, True)
+                    import treespec
+                    boot = getattr(self, "_boot_spec", None)
+                    self.apply_lists(ans, True, True, spec=(boot, treespec.digest(boot)) if boot else None)
+                    self._boot_spec = None
                 except Exception as e:
                     log(f"lists from last time: {e}")
             self.refresh_all()
