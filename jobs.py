@@ -589,6 +589,7 @@ def tattoo_search(conn, settings, person_ids=None, progress=lambda d, t, m: None
         args = list(person_ids)
     marks = conn.execute(f"""SELECT t.id, t.person_id, t.photo_id, ph.path, t.x, t.y, t.w, t.h
                              FROM tattoos t JOIN photos ph ON ph.id=t.photo_id {cond}""", args).fetchall()
+    kind_of = dict(conn.execute("SELECT id, COALESCE(kind, 'tattoo') FROM tattoos"))     # (1.60) jewelry too
     stats = {"tattoos": len(marks), "unusable": 0, "photos": 0, "found": 0}
     if not marks:
         return stats
@@ -637,7 +638,7 @@ def tattoo_search(conn, settings, person_ids=None, progress=lambda d, t, m: None
             for smp in todo:
                 m = tattoo.match(smp, feats, min_inl)
                 if m and m[0] > best.get(smp.person_id, (0,))[0]:
-                    best[smp.person_id] = m
+                    best[smp.person_id] = (*m, kind_of.get(smp.tattoo_id, "tattoo"))
         return photo_id, [s.tattoo_id for s in todo], best
 
     threads = max(1, int(settings.get("threads", 2)))
@@ -656,13 +657,13 @@ def tattoo_search(conn, settings, person_ids=None, progress=lambda d, t, m: None
                 photo_id, tested, best = fut.result()
                 conn.executemany("INSERT OR IGNORE INTO tattoo_checked(photo_id, tattoo_id) VALUES(?,?)",
                                  [(photo_id, t) for t in tested])
-                for person_id, (inl, (x, y, w, h)) in best.items():
-                    conn.execute("""INSERT OR REPLACE INTO tattoo_suggestions(photo_id, person_id, x, y, w, h, inliers)
-                                    VALUES(?,?,?,?,?,?,?)""", (photo_id, person_id, x, y, w, h, inl))
+                for person_id, (inl, (x, y, w, h), kind) in best.items():
+                    conn.execute("""INSERT OR REPLACE INTO tattoo_suggestions(photo_id, person_id, x, y, w, h, inliers,
+                                    kind) VALUES(?,?,?,?,?,?,?,?)""", (photo_id, person_id, x, y, w, h, inl, kind))
                     stats["found"] += 1
                 done += 1
                 _tick(conn)
-                progress(done, len(work), "Looking for tattoos…")
+                progress(done, len(work), "Looking for tattoos and jewelry…")
                 if not cancelled():
                     w = next(it, None)
                     if w is not None:

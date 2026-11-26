@@ -410,6 +410,62 @@ class SettingsMixin:
             QTimer.singleShot(1500, self, lambda: self.automove_tick(force=True))
         return self.run_job("bringin", libmove.bring_in_job, lib, paths, on_done=done)
 
+    # ------------------------------------------------------------ (1.60) reconnect files to their galleries
+    def reconnect_galleries(self, answers=None):
+        """Files in ~Unsorted matched back to the gallery folder they belong to, by shoot evidence (where
+        they came from, name and number, when taken, scene, outfit at that shoot, tattoo / jewelry).
+        answers (tests): {"pick": "sure" | "all", "tag": bool} - no window."""
+        import reconnect
+        if self.busy():
+            QMessageBox.information(self, "Reconnect to galleries", "Wait for the current task to finish first.")
+            return False
+        lib = libmove.library(self.settings) if answers is not None else self.library_or_ask(
+            "Files are reconnected to galleries inside your FaceSort library.")
+        if not lib:
+            return False
+
+        def found(res):
+            if not isinstance(res, tuple):
+                return
+            hits, gals = res
+            if not hits:
+                if answers is None:
+                    QMessageBox.information(self, "Reconnect to galleries",
+                                            f"Nothing in {libmove.UNSORTED} has enough shoot evidence to place it in a "
+                                            "gallery - those files stay where they are.")
+                self._reconnect_result = 0
+                return
+            if answers is None:
+                from reconnect_ui import ReconnectDialog
+                dlg = ReconnectDialog(self, hits, gals, lib)
+                if dlg.exec() != QDialog.Accepted:
+                    return
+                picks, tag = dlg.picks(), dlg.tag.isChecked()
+            else:
+                every = answers.get("pick") == "all"
+                picks = [(m["id"], gd, gals[gd].person) for gd, ms in hits.items() for m in ms if every or m["sure"]]
+                tag = bool(answers.get("tag", True))
+            if not picks:
+                return
+
+            def moved(st):
+                if not isinstance(st, dict):
+                    return
+                self._reconnect_result = st.get("moved", 0)
+                msg = f"Reconnected {st.get('moved', 0):,} files to their galleries"
+                if st.get("tagged"):
+                    msg += f" · {st['tagged']:,} tagged with the gallery's person"
+                if st.get("extra_files"):
+                    msg += f" · {st['extra_files']:,} other files followed"
+                if st.get("errors"):
+                    msg += f" · {len(st['errors'])} couldn't be moved"
+                self.statusBar().showMessage(msg + " · Undo in History", 15000)
+                self.pix_cache.clear()
+                self.refresh_all()
+            self.run_job("reconnect", reconnect.reconnect_job, lib, picks, tag, on_done=moved)
+
+        return self.run_job("reconnect_find", reconnect.find, lib, on_done=found)
+
     # ------------------------------------------------------------ (1.58) encrypted photo and video files
     def seal_soon(self):
         """Encrypt what isn't yet (new photos, edits, copies) - when that's on and nothing else runs."""

@@ -183,6 +183,7 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         m = QMenu(self)                          # (1.57.5) the arrow beside it
         m.addAction("Sort into folders…", self.export_folders)
         m.addAction("Bring everything into the library…", lambda: self.bring_into_library())
+        m.addAction("Reconnect files to their galleries…", lambda: self.reconnect_galleries())
         self.a_export.setMenu(m)
         b = tb.widgetForAction(self.a_export)
         if isinstance(b, QToolButton):

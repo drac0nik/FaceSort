@@ -71,6 +71,7 @@ class PhotoViewer(ViewerEditMixin, QWidget):
         self.marking = False                # drawing a box: M = tattoo, T = a face the scan missed
         self.mark_kind = "tattoo"
         self.pending_tattoo = None
+        self.pending_jewel = None           # (1.60) what the pending mark is, when it's jewelry
         self.pending_face = None
         self.image, self.error, self.faces, self.path, self.focus_id = None, None, [], None, None
         self.sel_faces = set()               # faces picked with a drag (I / N / right-click act on all)
@@ -429,8 +430,14 @@ class PhotoViewer(ViewerEditMixin, QWidget):
                                "Shift + drag works any time. Right-click a mark to remove it.")
         self.mark_b.toggled.connect(lambda on: self.set_marking(on, "tattoo"))
         btns.addWidget(self.mark_b)
-        self.find_b = QPushButton("Find tattoo matches")
-        self.find_b.setToolTip("Search your photos for the tattoos marked so far")
+        self.jewel_b = QPushButton("Mark jewelry (J)")      # (1.60) piercings, rings, bracelets…
+        self.jewel_b.setCheckable(True)
+        self.jewel_b.setToolTip("Drag a box around a piercing or piece of jewelry, pick what it is, then type whose "
+                                "it is.\nWorks best on distinctive pieces seen close up. Right-click a mark to remove it.")
+        self.jewel_b.toggled.connect(lambda on: self.set_marking(on, "jewelry"))
+        btns.addWidget(self.jewel_b)
+        self.find_b = QPushButton("Find tattoo / jewelry matches")
+        self.find_b.setToolTip("Search your photos for the tattoos and jewelry marked so far")
         self.find_b.clicked.connect(lambda: (self.win.start_tattoo_search(), self.toast.setText(
             "Searching… (results appear under Tattoo matches)")))
         btns.addWidget(self.find_b)
@@ -470,6 +477,7 @@ class PhotoViewer(ViewerEditMixin, QWidget):
                         ("T", lambda: self.tag_b.setChecked(not self.tag_b.isChecked())),
                         ("A", self.cat_bar.setFocus),
                         ("M", lambda: self.mark_b.setChecked(not self.mark_b.isChecked())),
+                        ("J", lambda: self.jewel_b.setChecked(not self.jewel_b.isChecked())),
                         ("I", self.key_ignore),
                         ("+", lambda: self.canvas.zoom_by(1.25)), ("=", lambda: self.canvas.zoom_by(1.25)),
                         ("-", lambda: self.canvas.zoom_by(1 / 1.25)), ("0", self.fit),
@@ -500,12 +508,13 @@ class PhotoViewer(ViewerEditMixin, QWidget):
         nothing that arrives late can find it gone)."""
         self.slideshow.stop()
         self.play_b.setIcon(app_icon("play"))
-        for b in (self.tag_b, self.mark_b):
+        for b in (self.tag_b, self.mark_b, self.jewel_b):
             b.blockSignals(True)
             b.setChecked(False)
             b.blockSignals(False)
         self.marking, self.mark_kind = False, "tattoo"
         self.pending_tattoo = self.pending_face = None
+        self.pending_jewel = None
         self.people_bar.clear()
         self.cat_bar.clear()
         self.people_bar.setPlaceholderText(self.people_placeholder)
@@ -540,6 +549,7 @@ class PhotoViewer(ViewerEditMixin, QWidget):
             if self.marking:
                 self.tag_b.setChecked(False)
                 self.mark_b.setChecked(False)
+                self.jewel_b.setChecked(False)
             elif self.pending_tattoo or self.pending_face:
                 self.cancel_tattoo()
             elif self.sel_faces:
@@ -1313,10 +1323,14 @@ class PhotoViewer(ViewerEditMixin, QWidget):
             return
         if kind == "people" and self.pending_tattoo:
             person = store.get_or_create_person(self.win.conn, name)
-            store.add_tattoo(self.win.conn, person, pid, self.pending_tattoo)
+            jewel = self.pending_jewel
+            store.add_tattoo(self.win.conn, person, pid, self.pending_tattoo,
+                             kind="jewelry" if jewel else "tattoo", label=jewel)
             self.pending_tattoo = None
+            self.pending_jewel = None
             self.people_bar.setPlaceholderText(self.people_placeholder)
-            self.done_action(f"✓ Tattoo marked: {name} - click “Find tattoo matches” to search", advance=False)
+            self.done_action(f"✓ {jewel or 'Tattoo'} marked: {name} - click “Find tattoo / jewelry matches” to search",
+                             advance=False)
             return
         if kind == "people":
             f = self.focused()
@@ -1338,22 +1352,24 @@ class PhotoViewer(ViewerEditMixin, QWidget):
 
     # ---- tattoos
     def set_marking(self, on, kind="tattoo"):
-        other = self.tag_b if kind == "tattoo" else self.mark_b
-        if on and kind == "tattoo" and self.is_video:
-            self.mark_b.setChecked(False)
-            self.toast.setText("Tattoos can only be marked on photos")
+        mine = {"face": self.tag_b, "tattoo": self.mark_b, "jewelry": self.jewel_b}
+        if on and kind in ("tattoo", "jewelry") and self.is_video:
+            mine[kind].setChecked(False)
+            self.toast.setText("Tattoos and jewelry can only be marked on photos")
             return
-        if on and other.isChecked():
-            other.blockSignals(True)
-            other.setChecked(False)
-            other.blockSignals(False)
+        for k, other in mine.items():
+            if on and k != kind and other.isChecked():
+                other.blockSignals(True)
+                other.setChecked(False)
+                other.blockSignals(False)
         if not on and kind != self.mark_kind:
             return
         self.marking = on
         self.mark_kind = kind
         self.canvas.setCursor(Qt.CrossCursor if on else Qt.ArrowCursor)
         if on:
-            self.toast.setText("Drag a box around the face" if kind == "face" else "Drag a box around the tattoo")
+            self.toast.setText({"face": "Drag a box around the face", "jewelry": "Drag a box around the piercing or "
+                                "jewelry"}.get(kind, "Drag a box around the tattoo"))
         self.canvas.setFocus()
         self.canvas.update()
 
@@ -1471,13 +1487,33 @@ class PhotoViewer(ViewerEditMixin, QWidget):
             self.toast.setText("Tattoos can only be marked on photos")
             self.canvas.update()
             return
+        jewel = self.marking and self.mark_kind == "jewelry"
+        label = None
+        if jewel:                                   # (1.60) what it is
+            label = self.pick_jewel_label()
+            if not label:
+                self.canvas.update()
+                return
         self.pending_tattoo = box
+        self.pending_jewel = label
         self.mark_b.setChecked(False)
-        self.people_bar.setPlaceholderText("Whose tattoo is this?   (Enter saves · Esc cancels)")
+        self.jewel_b.setChecked(False)
+        self.people_bar.setPlaceholderText((f"Whose {label.lower()} is this?" if label else "Whose tattoo is this?")
+                                           + "   (Enter saves · Esc cancels)")
         self.people_bar.setFocus()
         self.canvas.update()
 
+    def pick_jewel_label(self):
+        from PySide6.QtGui import QCursor
+        from PySide6.QtWidgets import QMenu
+        m = QMenu(self)
+        for lab in store.JEWELRY_LABELS:
+            m.addAction(lab)
+        a = m.exec(QCursor.pos())
+        return a.text() if a else None
+
     def cancel_tattoo(self):
+        self.pending_jewel = None
         self.pending_tattoo = None
         self.pending_face = None
         self.people_bar.setPlaceholderText(self.people_placeholder)
@@ -1545,6 +1581,7 @@ class PhotoViewer(ViewerEditMixin, QWidget):
         self.load_picture()
         self.canvas.reset_zoom()
         self.mark_b.setEnabled(not self.is_video)
+        self.jewel_b.setEnabled(not self.is_video)
         self.strip.update()
         QTimer.singleShot(0, self.zoom_changed)
         self.setWindowTitle(os.path.basename(path))
@@ -1776,16 +1813,18 @@ class PhotoViewer(ViewerEditMixin, QWidget):
                                      WHERE ph.id=?""", (pid,)).fetchone()
         self.category = r[0] if r else None
         self.tattoos = self.win.conn.execute(
-            """SELECT t.id, t.x, t.y, t.w, t.h, p.name, t.src FROM tattoos t JOIN persons p ON p.id=t.person_id
+            """SELECT t.id, t.x, t.y, t.w, t.h, p.name, t.src, COALESCE(t.kind, 'tattoo'), t.label FROM tattoos t
+               JOIN persons p ON p.id=t.person_id
                WHERE t.photo_id=?""", (pid,)).fetchall()
         self.tsugg = self.win.conn.execute(
-            """SELECT s.person_id, p.name, s.x, s.y, s.w, s.h, s.inliers FROM tattoo_suggestions s
+            """SELECT s.person_id, p.name, s.x, s.y, s.w, s.h, s.inliers, COALESCE(s.kind, 'tattoo') FROM tattoo_suggestions s
                JOIN persons p ON p.id=s.person_id WHERE s.photo_id=?""", (pid,)).fetchall()
         self.rebuild_chips()
         self.counter.setText(f"{self.pos + 1} / {len(self.items)}" + (f"   ·   {self.context}" if self.context else ""))
         f = self.focused()
         if f is None and self.tsugg:
-            self.state.setText("Tattoo match: " + ", ".join(t[1] for t in self.tsugg)
+            self.state.setText(("Jewelry match: " if all(t[7] == "jewelry" for t in self.tsugg) else "Tattoo match: ")
+                               + ", ".join(t[1] for t in self.tsugg)
                                + "?   C = yes, it's them · R = not them")
         elif f is None:
             if self.win.conn.execute("SELECT sort_later FROM photos WHERE id=?", (pid,)).fetchone() == (1,):

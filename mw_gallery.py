@@ -713,7 +713,7 @@ class GalleryMixin:
                                   AND NOT EXISTS (SELECT 1 FROM faces f WHERE f.photo_id=pp.photo_id
                                                   AND f.person_id=pp.person_id AND f.ignored=0)
                                   ORDER BY ph.path""", (ident,)).fetchall()
-            tsug = c.execute("""SELECT -ph.id, ph.path, 'tattoo match', 0 FROM tattoo_suggestions ts
+            tsug = c.execute("""SELECT -ph.id, ph.path, COALESCE(ts.kind, 'tattoo') || ' match', 0 FROM tattoo_suggestions ts
                                 JOIN photos ph ON ph.id=ts.photo_id WHERE ts.person_id=? AND ph.sort_later=0
                                 ORDER BY ts.inliers DESC""", (ident,)).fetchall()
             pcat = c.execute("SELECT category_id FROM persons WHERE id=?", (ident,)).fetchone()

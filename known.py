@@ -249,8 +249,9 @@ def sync_from_library(conn):
                WHERE f.manual>0 AND f.confirmed=1""").fetchall())
         k.execute("DELETE FROM tattoo_marks WHERE path IN (SELECT path FROM lib)")
         k.executemany("INSERT OR REPLACE INTO tattoo_marks VALUES(?,?,?,?,?,?,?)", [
-            (p, n, round(x, 4), round(y, 4), w, h, src) for p, n, x, y, w, h, src in conn.execute(
-                """SELECT ph.path, pe.name, t.x, t.y, t.w, t.h, t.src FROM tattoos t
+            (p, n, round(x, 4), round(y, 4), w, h, store.mark_src(src, kind, label))
+            for p, n, x, y, w, h, src, kind, label in conn.execute(
+                """SELECT ph.path, pe.name, t.x, t.y, t.w, t.h, t.src, t.kind, t.label FROM tattoos t
                    JOIN photos ph ON ph.id=t.photo_id JOIN persons pe ON pe.id=t.person_id""")])
         k.execute("DELETE FROM tattoo_rejects WHERE path IN (SELECT path FROM lib)")
         k.executemany("INSERT OR IGNORE INTO tattoo_rejects VALUES(?,?)", conn.execute(

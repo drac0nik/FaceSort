@@ -455,6 +455,13 @@ def connect(path=None):
         _add_column(conn, "ALTER TABLE photos ADD COLUMN is_other INTEGER DEFAULT 0")
     if "body_done" not in pc2:          # 1.36: same-shoot suggestions (people found by their whole figure)
         _add_column(conn, "ALTER TABLE photos ADD COLUMN body_done INTEGER DEFAULT 0")
+    tc = {r[1] for r in conn.execute("PRAGMA table_info(tattoos)")}
+    if "kind" not in tc:                # 1.60: jewelry and piercings are marked and matched like tattoos
+        _add_column(conn, "ALTER TABLE tattoos ADD COLUMN kind TEXT DEFAULT 'tattoo'")
+    if "label" not in tc:
+        _add_column(conn, "ALTER TABLE tattoos ADD COLUMN label TEXT")
+    if "kind" not in {r[1] for r in conn.execute("PRAGMA table_info(tattoo_suggestions)")}:
+        _add_column(conn, "ALTER TABLE tattoo_suggestions ADD COLUMN kind TEXT DEFAULT 'tattoo'")
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS bodies(id INTEGER PRIMARY KEY, photo_id INTEGER, x REAL, y REAL, w REAL, h REAL,
             score REAL, desc BLOB, face_id INTEGER, person_id INTEGER, thumb BLOB);
@@ -682,8 +689,9 @@ def store_photo(conn, path, mtime, size, img, faces, hints=(), marks=(), photo_n
                 conn.execute("UPDATE photos SET category_id=? WHERE id=?", (cid, pid))
         marks = [m for m in marks if m[0] >= 0]
         for name, x, y, w, h, src in tattoo_marks:
-            conn.execute("INSERT INTO tattoos(person_id, photo_id, x, y, w, h, src) VALUES(?,?,?,?,?,?,?)",
-                         (get_or_create_person(conn, name), pid, x, y, w, h, src))
+            src, kind, label = split_mark_src(src)
+            conn.execute("INSERT INTO tattoos(person_id, photo_id, x, y, w, h, src, kind, label) "
+                         "VALUES(?,?,?,?,?,?,?,?,?)", (get_or_create_person(conn, name), pid, x, y, w, h, src, kind, label))
     gps = getattr(img, "gps", None) or (None, None)
     conn.execute("UPDATE photos SET bright=?, dark_seen=?, lat=COALESCE(?, lat), lon=COALESCE(?, lon), body_done=0 "
                  "WHERE id=?",
@@ -1393,11 +1401,32 @@ def clear_drop_rules(conn):
 
 
 # ----------------------------------------------------------------- tattoos
-def add_tattoo(conn, person_id, photo_id, box, src="mark"):
-    """Mark a tattoo. The person is also tagged on that photo (marking it says they're in it)."""
+JEWELRY_LABELS = ("Navel piercing", "Nose ring / stud", "Lip ring", "Eyebrow piercing", "Ear piercing",
+                  "Tongue piercing", "Other piercing", "Necklace / pendant", "Bracelet", "Ring", "Anklet",
+                  "Other jewelry")
+
+
+def mark_src(src, kind="tattoo", label=None):
+    """How a mark is remembered in the known-people file (1.60: jewelry as "mark|jewelry|Navel piercing")."""
+    return src if (kind or "tattoo") == "tattoo" else f"{src}|{kind}|{label or ''}"
+
+
+def split_mark_src(src):
+    parts = (src or "mark").split("|")
+    return parts[0], (parts[1] if len(parts) > 1 and parts[1] else "tattoo"), (parts[2] if len(parts) > 2 and parts[2]
+                                                                                 else None)
+
+
+def mark_word(kind):
+    return "jewelry" if kind == "jewelry" else "tattoo"
+
+
+def add_tattoo(conn, person_id, photo_id, box, src="mark", kind="tattoo", label=None):
+    """Mark a tattoo (or, 1.60, a piece of jewelry / a piercing: kind="jewelry", label what it is). The
+    person is also tagged on that photo (marking it says they're in it)."""
     x, y, w, h = box
-    tid = conn.execute("INSERT INTO tattoos(person_id, photo_id, x, y, w, h, src) VALUES(?,?,?,?,?,?,?)",
-                       (person_id, photo_id, x, y, w, h, src)).lastrowid
+    tid = conn.execute("INSERT INTO tattoos(person_id, photo_id, x, y, w, h, src, kind, label) "
+                       "VALUES(?,?,?,?,?,?,?,?,?)", (person_id, photo_id, x, y, w, h, src, kind, label)).lastrowid
     if not conn.execute("SELECT 1 FROM faces WHERE photo_id=? AND person_id=? AND confirmed=1 AND ignored=0",
                         (photo_id, person_id)).fetchone():
         conn.execute("INSERT OR IGNORE INTO photo_people(photo_id, person_id, src) VALUES(?,?,'user')",
@@ -1421,17 +1450,18 @@ def confirm_tattoo_matches(conn, photo_ids, person_id=None):
     another reference for that person's tattoo (so later searches find more)."""
     q = ",".join("?" * len(photo_ids))
     cond, args = (" AND person_id=?", [person_id]) if person_id else ("", [])
-    rows = conn.execute(f"SELECT photo_id, person_id, x, y, w, h FROM tattoo_suggestions "
+    rows = conn.execute(f"SELECT photo_id, person_id, x, y, w, h, COALESCE(kind, 'tattoo') FROM tattoo_suggestions "
                         f"WHERE photo_id IN ({q}){cond}", [*photo_ids, *args]).fetchall()
-    for photo_id, pid, x, y, w, h in rows:
+    for photo_id, pid, x, y, w, h, kind in rows:
         if not conn.execute("SELECT 1 FROM faces WHERE photo_id=? AND person_id=? AND confirmed=1 AND ignored=0",
                             (photo_id, pid)).fetchone():
             conn.execute("INSERT OR IGNORE INTO photo_people(photo_id, person_id, src) VALUES(?,?,'tattoo')",
                          (photo_id, pid))
-        learned = conn.execute("SELECT COUNT(*) FROM tattoos WHERE person_id=? AND src='match'", (pid,)).fetchone()[0]
+        learned = conn.execute("SELECT COUNT(*) FROM tattoos WHERE person_id=? AND src='match' "
+                               "AND COALESCE(kind, 'tattoo')=?", (pid, kind)).fetchone()[0]
         if learned < MAX_LEARNED_TATTOOS:
-            conn.execute("INSERT INTO tattoos(person_id, photo_id, x, y, w, h, src) VALUES(?,?,?,?,?,?,'match')",
-                         (pid, photo_id, x, y, w, h))
+            conn.execute("INSERT INTO tattoos(person_id, photo_id, x, y, w, h, src, kind) VALUES(?,?,?,?,?,?,'match',?)",
+                         (pid, photo_id, x, y, w, h, kind))
         conn.execute("DELETE FROM tattoo_suggestions WHERE photo_id=? AND person_id=?", (photo_id, pid))
         touch_person(conn, pid)
     conn.commit()

@@ -19,7 +19,8 @@ from ui_common import (APP_VERSION, bodies_job, clarity_job, log, log_path, open
                        scan_and_group, stats_job, Worker, bg_job, ProcessWorker)
 from dialogs import ExportDialog, ScanDialog
 
-LOOK_ONLY_JOBS = {"discardlook", "colordl", "facedl", "contentdl", "posedl", "exportfiles", "contactsheet"}   # jobs that only read or download (no redraw after)
+LOOK_ONLY_JOBS = {"discardlook", "colordl", "facedl", "contentdl", "posedl", "exportfiles", "contactsheet",
+                  "reconnect_find"}   # jobs that only read or download (no redraw after)
 REGROUP_IDLE = 3.0       # (gentle background mode) seconds without a key / click before suggestions update
 
 

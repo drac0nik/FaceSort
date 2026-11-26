@@ -653,28 +653,31 @@ class PhotoCanvas(QWidget):
                 p.drawRect(QRectF(self.crop_from, self.crop_to).normalized())
             return
         # tattoos: your marks (solid purple) and matches to check (dashed orange)
-        for tid, x, y, w, h, name, src in ([] if self.viewer.hide_boxes else self.viewer.tattoos):
+        for tid, x, y, w, h, name, src, *more in ([] if self.viewer.hide_boxes else self.viewer.tattoos):
             rr = self.box_rect(x, y, w, h, ir)
             p.setBrush(Qt.NoBrush)
             p.setPen(QPen(QColor(0, 0, 0, 140), 4))
             p.drawRoundedRect(rr, 4, 4)
             p.setPen(QPen(TATTOO_COL, 2))
             p.drawRoundedRect(rr, 4, 4)
-            self.draw_label(p, rr, f"{name} · tattoo", TATTOO_COL, below=False)
-        for person_id, name, x, y, w, h, inl in ([] if self.viewer.hide_boxes else self.viewer.tsugg):
+            what = ((more[1] or "jewelry").lower() if more and more[0] == "jewelry" else "tattoo")
+            self.draw_label(p, rr, f"{name} · {what}", TATTOO_COL, below=False)
+        for person_id, name, x, y, w, h, inl, *more in ([] if self.viewer.hide_boxes else self.viewer.tsugg):
             rr = self.box_rect(x, y, w, h, ir)
             p.setBrush(Qt.NoBrush)
             p.setPen(QPen(QColor(0, 0, 0, 140), 5))
             p.drawRoundedRect(rr, 4, 4)
             p.setPen(QPen(SUGGEST, 3, Qt.DashLine))
             p.drawRoundedRect(rr, 4, 4)
-            self.draw_label(p, rr, f"{name}'s tattoo?", SUGGEST, below=False)
+            self.draw_label(p, rr, f"{name}'s {'jewelry' if more and more[0] == 'jewelry' else 'tattoo'}?", SUGGEST,
+                            below=False)
         if self.viewer.pending_tattoo:
             rr = self.box_rect(*self.viewer.pending_tattoo, ir)
             p.setBrush(QColor(170, 110, 240, 40))
             p.setPen(QPen(TATTOO_COL, 2, Qt.DashLine))
             p.drawRoundedRect(rr, 4, 4)
-            self.draw_label(p, rr, "Whose tattoo?", TATTOO_COL, below=False)
+            jl = getattr(self.viewer, "pending_jewel", None)
+            self.draw_label(p, rr, f"Whose {jl.lower()}?" if jl else "Whose tattoo?", TATTOO_COL, below=False)
         if self.viewer.pending_face:
             rr = self.box_rect(*self.viewer.pending_face, ir)
             p.setBrush(QColor(255, 255, 255, 40))

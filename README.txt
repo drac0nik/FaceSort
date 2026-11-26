@@ -153,6 +153,22 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.60.0
+Reconnect files to their galleries, and jewelry matching.
+- Reconnect files to their galleries (the arrow beside Sort into folders): files left in ~Unsorted -
+  often by earlier versions, when a face wasn't picked up - are matched back to the gallery folder
+  they belong to, by shoot evidence only: the same original folder as photos already in the gallery,
+  a folder name that matches, a file number that fits the gallery's numbering, taken during the
+  gallery's shoot, the same scene, the same outfit and figure at that shoot, and a tattoo or jewelry
+  match for the gallery's person as a tiebreaker. Sure ones are ticked; likely ones and close calls
+  are shown with their reasons for you to tick. Click a file to see it beside photos from the
+  gallery. Their other files follow, and the gallery's person can be tagged on them. Files with no
+  shoot evidence stay in ~Unsorted. Undo is in History.
+- Mark jewelry (J) in the photo viewer: drag a box around a piercing or piece of jewelry, pick what it
+  is (navel piercing, nose ring, lip ring, bracelet...), and say whose it is. "Find tattoo / jewelry
+  matches" then looks for it in your own library, like tattoos. Works best on distinctive pieces seen
+  close up.
+
 1.59.1
 Easier to tell if it's the right person.
 - Name window (right-click > Name face, and Who's in this photo?): wider, with what you're naming shown
