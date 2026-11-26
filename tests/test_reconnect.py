@@ -83,6 +83,10 @@ def test_jewelry_marks(data_dir):
     assert store.split_mark_src(store.mark_src("mark", "jewelry", "Navel piercing")) == ("mark", "jewelry",
                                                                                          "Navel piercing")
     assert store.split_mark_src("match") == ("match", "tattoo", None)
+    import known
+    known.sync_from_library(conn)                         # (1.60.0 broke this - saving who's who failed)
+    assert known.tattoo_marks_for(conn.execute("SELECT path FROM photos WHERE id=?", (p,)).fetchone()[0])[0][5] \
+        == "mark|jewelry|Navel piercing"
     conn.execute("INSERT INTO tattoo_suggestions(photo_id, person_id, x, y, w, h, inliers, kind) "
                  "VALUES(?,?,0.1,0.1,0.1,0.1,30,'jewelry')", (p, who))
     assert store.confirm_tattoo_matches(conn, [p]) == 1

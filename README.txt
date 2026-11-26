@@ -153,6 +153,10 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.60.1
+- Fixed: since 1.60.0, saving who's who (names, tags, folders, tattoo and jewelry marks remembered for
+  rescans) failed every time.
+
 1.60.0
 Reconnect files to their galleries, and jewelry matching.
 - Reconnect files to their galleries (the arrow beside Sort into folders): files left in ~Unsorted -

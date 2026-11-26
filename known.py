@@ -258,7 +258,6 @@ def sync_from_library(conn):
             """SELECT ph.path, pe.name FROM tattoo_rejects r JOIN photos ph ON ph.id=r.photo_id
                JOIN persons pe ON pe.id=r.person_id""").fetchall())
         k.execute("DELETE FROM photo_categories WHERE path IN (SELECT path FROM lib)")
-        import store
         tree = store.folder_tree(conn)
         paths = store.category_paths(conn)
         k.executemany("INSERT OR REPLACE INTO photo_categories(path, name) VALUES(?,?)", [
