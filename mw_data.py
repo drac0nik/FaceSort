@@ -370,6 +370,14 @@ class DataMixin:
         """A heading that stands for a folder (photos can be dropped onto it)."""
         return not r[0] and isinstance(r[2], tuple) and bool(r[2]) and r[2][0] in ("pf", "cat")
 
+    def toggle_view_mode(self):
+        """F: Sort (faces) / Viewer (whole photos) - the same key as in Quick review."""
+        i = 0 if self.viewer_mode else 1
+        b = self.mode_group.button(i)
+        if b is not None:
+            b.setChecked(True)
+        self.set_view_mode(i)
+
     def set_view_mode(self, i):
         self.viewer_mode = i == 1
         self.settings["view_mode"] = "viewer" if self.viewer_mode else "sort"

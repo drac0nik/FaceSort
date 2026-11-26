@@ -711,17 +711,28 @@ class ActionsMixin:
             cond += " AND " + face_attrs.unsure_sql()
         return cond
 
-    def ignore_untagged_on(self, photo_ids):
-        """Partially tagged: ignore every face box on these photos nobody is confirmed on (the tagged
-        people stay). Undo: Smart Groups > Ignored."""
-        q = ",".join("?" * len(photo_ids))
-        ids = [r[0] for r in self.conn.execute(
-            f"""SELECT id FROM faces WHERE photo_id IN ({q}) AND ignored=0
-                AND NOT (person_id IS NOT NULL AND confirmed=1)""", photo_ids)]
+    def other_faces_on(self, photo_ids, keep=()):
+        """Face boxes on these photos nobody is confirmed on, other than the faces in keep (the ones you
+        right-clicked)."""
+        keep = set(keep)
+        out = []
+        for k in range(0, len(photo_ids), 900):
+            part = list(photo_ids[k:k + 900])
+            q = ",".join("?" * len(part))
+            out += [r[0] for r in self.conn.execute(
+                f"""SELECT id FROM faces WHERE photo_id IN ({q}) AND ignored=0
+                    AND NOT (person_id IS NOT NULL AND confirmed=1)""", part) if r[0] not in keep]
+        return out
+
+    def ignore_untagged_on(self, photo_ids, keep=()):
+        """Ignore every face box on these photos nobody is confirmed on (the tagged people stay, and the
+        faces you right-clicked). (1.62.1: in every gallery - it was only in Partially tagged.)
+        Undo: Smart Groups > Ignored."""
+        ids = self.other_faces_on(photo_ids, keep)
         if not ids:
             return
         store.set_ignored(self.conn, ids, True)
-        self.statusBar().showMessage(f"✓ {len(ids):,} untagged face{'s' if len(ids) != 1 else ''} ignored on "
+        self.statusBar().showMessage(f"✓ {len(ids):,} other face{'s' if len(ids) != 1 else ''} ignored on "
                                      f"{len(photo_ids):,} photo{'s' if len(photo_ids) != 1 else ''} "
                                      "(bring any back from Ignored)", 8000)
         self.quick_change(regroup=False, drop=ids)

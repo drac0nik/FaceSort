@@ -176,3 +176,15 @@ def test_side_lists_are_patched_not_remade(window, qapp):
     a, b = treespec.build(w.conn, ctx), treespec.build(w.conn, ctx)
     assert treespec.digest(a) == treespec.digest(b)
     w.idle()
+
+
+def test_f_switches_sort_and_viewer(window, qapp):
+    """1.62.1: F in the gallery switches Sort / Viewer (as F does in Quick review)."""
+    w = window
+    was = w.viewer_mode
+    sc = next(s for s in w._main_shortcuts if s.key().toString() == "F")
+    sc.activated.emit()
+    assert w.viewer_mode != was and w.mode_group.button(1 if w.viewer_mode else 0).isChecked()
+    w.toggle_view_mode()
+    assert w.viewer_mode == was
+    w.idle()

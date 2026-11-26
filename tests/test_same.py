@@ -103,3 +103,42 @@ def test_same_view_in_window(window, qapp, monkeypatch):
     w.idle()
     assert c.execute("SELECT COUNT(*) FROM persons WHERE id IN (?,?)", (alice, bob)).fetchone()[0] == 1
 
+
+
+def test_partial_faces_tattoos_and_never_together(library):
+    """1.62.1: one person named twice for two looks (only some faces match), a tattoo of one on the
+    other's photos - and never two people confirmed on the same photo."""
+    c = library.conn
+    model = store.get_model(c)
+    dim = store.model_dim(model)
+    rng = np.random.default_rng(21)
+    look1, look2, other = (unit(rng.normal(size=dim)) for _ in range(3))
+    # Ana: 8 faces of look 1 and 4 of look 2; "Ana B" only look 2 -> some of their faces match
+    ana = person_with_faces(c, "Ana Quill", look1, 8, 31)
+    for i in range(4):
+        ph = add_photo(c, os.path.abspath(os.path.join(os.sep, "lib", "Same", f"ana_look2_{i}.jpg")),
+                       [unit(look2 + rng.normal(size=dim) * 0.02)], seed=700 + i)
+        c.execute("UPDATE faces SET person_id=?, confirmed=1 WHERE photo_id=?", (ana, ph))
+    anb = person_with_faces(c, "Bea Zorn", look2, 5, 32)
+    # Kim: a tattoo of hers suggested on two of Lou's photos
+    kim = person_with_faces(c, "Kim Vale", other, 4, 33)
+    lou = person_with_faces(c, "Lou Marsh", unit(rng.normal(size=dim)), 3, 34)
+    for (ph,) in c.execute("SELECT photo_id FROM faces WHERE person_id=? LIMIT 2", (lou,)).fetchall():
+        c.execute("INSERT INTO tattoo_suggestions(photo_id, person_id, x, y, w, h, inliers) VALUES(?,?,0.1,0.1,0.1,0.1,30)",
+                  (ph, kim))
+    c.commit()
+    settings = {"engine": model}
+    samepeople.compute(c, settings)
+    got = {(a, b): why for a, b, _s, why in samepeople.pairs(c)}
+    key = tuple(sorted((ana, anb)))
+    assert key in got and "match closely" in got[key], got
+    assert "tattoo" in got[tuple(sorted((kim, lou)))]
+    # both confirmed on one photo: never the same
+    ph = add_photo(c, os.path.abspath(os.path.join(os.sep, "lib", "Same", "both.jpg")),
+                   [unit(look1), unit(look2)], seed=900)
+    f1, f2 = [r[0] for r in c.execute("SELECT id FROM faces WHERE photo_id=? ORDER BY id", (ph,))]
+    c.execute("UPDATE faces SET person_id=?, confirmed=1 WHERE id=?", (ana, f1))
+    c.execute("UPDATE faces SET person_id=?, confirmed=1 WHERE id=?", (anb, f2))
+    c.commit()
+    samepeople.compute(c, settings)
+    assert key not in {(a, b) for a, b, *_ in samepeople.pairs(c)}

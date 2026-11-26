@@ -970,7 +970,7 @@ class GalleryMixin:
             import samepeople
             rows, self._same_of, self._same_pairs = [], {}, []
             names = dict(c.execute("SELECT id, name FROM persons"))
-            for a_, b_, score, why in samepeople.pairs(c)[:60]:
+            for a_, b_, score, why in samepeople.pairs(c)[:150]:
                 self._same_pairs.append((a_, b_, why))
                 rows.append((0, f"{names.get(a_, '?')}   ⟷   {names.get(b_, '?')}   ·   {why}", ("same_pair", a_, b_), 1))
                 for pid in (a_, b_):
@@ -985,7 +985,9 @@ class GalleryMixin:
                     rows += got
             self.title.setText("Possibly the same person")
             self.subtitle.setText(f"{len(self._same_pairs)} pair{'s' if len(self._same_pairs) != 1 else ''} of people who "
-                                  "may be one. Click a face in a pair, then Merge… or Not the same (FaceSort remembers).")
+                                  "may be one - by faces first (all of them alike, or several matching closely), then tattoos / "
+                                  "jewelry, then names; never two people tagged on the same photo. Click a face in a "
+                                  "pair, then Merge… or Not the same (FaceSort remembers).")
             self.set_buttons([("Merge…", self.merge_selected_pair, True), ("Not the same", self.not_same_selected_pair),
                               ("Look again", lambda: self.start_same_people(force=True))] if self._same_pairs else
                              [("Look again", lambda: self.start_same_people(force=True))])

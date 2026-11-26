@@ -530,8 +530,8 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         self.mode_group = QButtonGroup(self)
         self.mode_group.setExclusive(True)
         for i, (text, icon, tip) in enumerate((
-                ("Sort", "person", "Sort: face thumbnails - name, confirm and sort people"),
-                ("Viewer", "image", "Viewer: the whole photo instead of the face (everything still works)"))):
+                ("Sort", "person", "Sort: face thumbnails - name, confirm and sort people   (F switches)"),
+                ("Viewer", "image", "Viewer: the whole photo instead of the face (everything still works)   (F switches)"))):
             b = tool_button(text, icon, tip, checkable=True)
             b.setChecked((i == 1) == self.viewer_mode)
             self.mode_group.addButton(b, i)
@@ -791,7 +791,8 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
                               (("A",), self.act_category, Qt.WindowShortcut),
                               (("L",), self.act_sort_later, Qt.WindowShortcut),
                               (("[",), lambda: self.rotate_selected(False), Qt.WindowShortcut),
-                              (("]",), lambda: self.rotate_selected(True), Qt.WindowShortcut)):
+                              (("]",), lambda: self.rotate_selected(True), Qt.WindowShortcut),
+                              (("F",), self.toggle_view_mode, Qt.WindowShortcut)):     # (1.62.1) Sort / Viewer
             for k in keys:
                 sc = QShortcut(QKeySequence(k), self.grid if ctx == Qt.WidgetShortcut else self)
                 sc.setContext(ctx)

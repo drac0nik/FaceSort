@@ -376,4 +376,11 @@ def test_ignore_untagged_on_partially_tagged(window, photos):
         w.grid_menu(w.grid.visualRect(w.model.index(i)).center())
     finally:
         mw_engine.QMenu = orig
-    assert any(t.startswith("Ignore the other untagged faces on this photo") for t in seen)
+    assert any(t.startswith("Ignore other faces (1) on this photo") for t in seen)
+    # (1.62.1) and in any gallery: the face right-clicked stays, the others are ignored
+    duo = face_ids(c, photos["duo"])
+    c.execute("UPDATE faces SET ignored=0, person_id=NULL, confirmed=0 WHERE photo_id=?", (photos["duo"],))
+    c.commit()
+    w.ignore_untagged_on([photos["duo"]], keep=duo[:1])
+    states = dict(c.execute("SELECT id, ignored FROM faces WHERE photo_id=?", (photos["duo"],)))
+    assert states[duo[0]] == 0 and all(states[f] == 1 for f in duo[1:])

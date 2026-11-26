@@ -153,6 +153,21 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.62.1
+- F in the gallery switches between Sort (faces) and Viewer (whole photos) - the same key as in Quick
+  review.
+- Possibly the same person finds far more real pairs. It always compared faces too, but only counted
+  two people whose faces matched almost all the way through - one person named twice for two looks
+  (hair, years apart, side-on) rarely does. Now it also suggests pairs where several of their faces
+  match closely, and where a tattoo or piece of jewelry of one is found on the other's photos. Each
+  person is compared face by face with the people nearest to them, not only those over the line.
+  Never suggested: two people confirmed on the same photo. Photos in the same folders back a pair up
+  (never on their own). Pairs are listed strongest first - faces, then tattoos / jewelry, then names -
+  and up to 150 are shown (was 60).
+- Ignore other faces is in the right-click menu in every gallery (it was only in Partially tagged):
+  every face box on the selected photos nobody is confirmed on is ignored - except the faces you
+  right-clicked. Bring any back from Ignored.
+
 1.62.0
 The side lists update without the hiccup.
 - After a change, the side lists were cleared and every row made again - thousands of rows, a
