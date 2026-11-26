@@ -359,8 +359,12 @@ class ListsMixin:
         if batches:
             secd.setToolTip(0, "What you dragged in, laid out the way it'll be saved. Check it's tagged right, then "
                                "right-click > Done checking. Sort into folders leaves these out until then.")
+            sq = self.sorted_photo_sql()
+            done_of = dict(c.execute(f"""SELECT ph.dropped, TOTAL(CASE WHEN {sq} THEN 1 ELSE 0 END) FROM photos ph
+                                         WHERE ph.dropped IS NOT NULL AND ph.error IS NULL GROUP BY ph.dropped"""))
             for b, name, n in batches:
-                it = QTreeWidgetItem([f"{name}   {n:,}"])
+                pct = int(100 * done_of.get(b, 0) // n) if n else 0          # (1.59) how far along
+                it = QTreeWidgetItem([f"{name}   {n:,}" + (f"  · {pct}% sorted" if pct else "")])
                 it.setIcon(0, app_icon("drop"))
                 it.setData(0, Qt.UserRole, ("dropped", b))
                 it.setToolTip(0, "Dropped " + time.strftime("%d %b %Y, %H:%M", time.localtime(b))
@@ -551,7 +555,14 @@ class ListsMixin:
                 return ""
             name = store.pick_folder(gdirs[cl], n, unnamed)
             return f"  · {name}?" if name else ""
-        glist = sorted(((n, cl, fid) for cl, (n, fid, _) in groups.items() if n >= 2), reverse=True)
+        # (1.59) biggest jobs first: the groups that would sort the most photos not sorted yet on top
+        try:
+            import triage
+            impact = triage.group_impact(c, self.sorted_photo_sql())
+        except Exception:
+            impact = {}
+        glist = sorted(((n, cl, fid) for cl, (n, fid, _) in groups.items() if n >= 2),
+                       key=lambda g: (impact.get(g[1], 0), g[0]), reverse=True)
         mode = self.settings.get("bottom_sort", "face")
         if mode != "face":
             self.add_buckets(section, mode)
@@ -562,8 +573,9 @@ class ListsMixin:
         for i, (n, cl, fid) in enumerate(glist_shown[:1000]):
             hint = folder_hint(cl, n)
             it = QTreeWidgetItem([f"Group {i + 1}   {n} faces{hint}"])
-            if hint:
-                it.setToolTip(0, f"Most of these faces are in the folder “{hint[4:-1]}”")
+            todo = impact.get(cl, 0)
+            it.setToolTip(0, (f"Most of these faces are in the folder “{hint[4:-1]}”\n" if hint else "") +
+                          f"Naming it sorts about {todo:,} photo{'s' if todo != 1 else ''} not sorted yet")
             rep_icon(it, fid)
             it.setData(0, Qt.UserRole, ("group", cl))
             it.setData(0, Qt.UserRole + 2, i + 1)

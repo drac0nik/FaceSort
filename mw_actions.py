@@ -30,6 +30,15 @@ DUP_KEY_SQL = """SELECT COUNT(*), TOTAL(phash), TOTAL(discarded), TOTAL(sort_lat
                         (SELECT COUNT(*) FROM photo_folders), TOTAL(COALESCE(category_id, 0))
                  FROM photos WHERE error IS NULL"""
 
+def _ago(secs):
+    """3 min / 1 h 20 min / under a minute."""
+    secs = int(secs or 0)
+    if secs < 60:
+        return "under a minute"
+    m = secs // 60
+    return f"{m} min" if m < 60 else f"{m // 60} h {m % 60} min"
+
+
 class ActionsMixin:
     """Part of MainWindow (see facesort.py): actions on faces and photos (name, confirm, discard, duplicates…)."""
 
@@ -739,6 +748,84 @@ class ActionsMixin:
                                     FROM faces f JOIN photos ph ON ph.id=f.photo_id
                                     WHERE {self.smart_faces_sql(kind)}""").fetchone()
         return int(row[0]), int(row[1] or 0), int(row[2] or 0)
+
+    # ------------------------------------------------- (1.59) import progress
+    def drop_progress(self, batch):
+        """How far along a drop is: {"total", "sorted", "groups", "suggestions", "nofaces", "others",
+        "scan": (done, total, seconds left) or None}."""
+        c = self.conn
+        sq = self.sorted_photo_sql()
+        total, done = c.execute(f"""SELECT COUNT(*), TOTAL(CASE WHEN {sq} THEN 1 ELSE 0 END) FROM photos ph
+                                    WHERE ph.dropped=? AND ph.error IS NULL""", (batch,)).fetchone()
+        groups, sugg = c.execute("""SELECT COUNT(DISTINCT CASE WHEN f.person_id IS NULL THEN f.cluster END),
+                                           TOTAL(CASE WHEN f.person_id IS NOT NULL AND f.confirmed=0 THEN 1 ELSE 0 END)
+                                    FROM faces f JOIN photos ph ON ph.id=f.photo_id
+                                    WHERE ph.dropped=? AND f.ignored=0""", (batch,)).fetchone()
+        nof, oth = c.execute(f"""SELECT TOTAL(CASE WHEN COALESCE(ph.is_other, 0)=0 AND ph.nfaces=0 THEN 1 ELSE 0 END),
+                                        TOTAL(CASE WHEN ph.is_other=1 THEN 1 ELSE 0 END)
+                                 FROM photos ph WHERE ph.dropped=? AND ph.error IS NULL AND NOT {sq}""",
+                             (batch,)).fetchone()
+        scan = getattr(self, "_scan_eta", None) if self.busy() and getattr(self, "_job", None) == "scan" else None
+        return {"total": total, "sorted": int(done), "groups": groups, "suggestions": int(sugg),
+                "nofaces": int(nof), "others": int(oth), "scan": scan}
+
+    def drop_progress_text(self, batch):
+        p = self.drop_progress(batch)
+        parts = []
+        if p["scan"]:
+            d, t, left = p["scan"]
+            parts.append(f"Scanning {d:,} / {t:,}" + (f" (about {_ago(left)} left)" if left else ""))
+        pct = 100 * p["sorted"] // p["total"] if p["total"] else 0
+        parts.append(f"Sorted {p['sorted']:,} of {p['total']:,} ({pct}%)")
+        left = [(p["groups"], "group", "groups", "to name"), (p["suggestions"], "suggestion", "suggestions", "to confirm"),
+                (p["nofaces"], "photo", "photos", "with no faces"), (p["others"], "other file", "other files", "")]
+        rest = [f"{n:,} {one if n == 1 else many}" + (f" {what}" if what else "") for n, one, many, what in left if n]
+        if rest:
+            parts.append("left: " + ", ".join(rest))
+        elif p["total"] and p["sorted"] >= p["total"]:
+            parts.append("all sorted - Done checking when you're happy")
+        return " · ".join(parts)
+
+    # ------------------------------------------------- (1.59) biggest jobs first
+    def next_task(self, skip=()):
+        """Open the job that would sort the most photos not sorted yet. -> (photos, key) or None."""
+        import triage
+        for n, key, what in triage.tasks(self.conn, self.sorted_photo_sql()):
+            if key in skip:
+                continue
+            it = self.find_tree_item(key)
+            if it is None:                         # (hidden - a locked vault's person, a list cut short)
+                continue
+            self.select_item(it)
+            try:
+                it.treeWidget().scrollToItem(it)
+            except RuntimeError:
+                pass
+            self.statusBar().showMessage(f"Next: {what} - about {n:,} photo{'s' if n != 1 else ''} not sorted yet", 10000)
+            return n, key
+        self.statusBar().showMessage("Nothing big left: no suggestions to confirm or groups to name", 8000)
+        return None
+
+    def set_aside_one_offs(self, ask=True):
+        """Faces seen only once or twice, all in one folder, with no suggestion: set aside as strangers."""
+        import triage
+        ids = triage.one_offs(self.conn)
+        if not ids:
+            if ask:
+                QMessageBox.information(self, "One-off faces", "No one-off faces to set aside.")
+            return 0
+        if ask and QMessageBox.question(
+                self, "Set aside one-off faces",
+                f"Set aside {len(ids):,} face{'s' if len(ids) != 1 else ''} seen only once or twice (all in one "
+                "folder) that nobody is suggested for, as strangers?\n\nOn a big import these are mostly people in "
+                "the background. Their photos aren't touched, and you can bring any of them back from the "
+                "Strangers list.") != QMessageBox.Yes:
+            return 0
+        store.set_ignored(self.conn, ids, True)
+        self.after_change(regroup=False)
+        self.statusBar().showMessage(f"Set aside {len(ids):,} one-off faces as strangers (Strangers list to bring "
+                                     "any back)", 10000)
+        return len(ids)
 
     def sorted_photo_sql(self, alias="ph"):
         """SQL condition: the photo is already sorted - someone confirmed on it (face or whole-photo

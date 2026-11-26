@@ -109,7 +109,8 @@ def scan_options(settings, opts=None):
     o = {"mode": "both", "folders": None, "limit": settings.get("import_limit", 0) or 0, "order": "folder",
          "videos": vm != "separate", "video_mode": "with" if vm == "with" else "after", "others": False,
          "min_kb": 0, "exclude": [], "missing": "remove", "nofaces_again": False, "dark_again": False,
-         "dupes_after": False, "shoot_after": True, "light": False, "roots": None}
+         "dupes_after": False, "shoot_after": True, "light": False, "roots": None,
+         "group_midway": None, "extras_later": False}          # (1.59)
     o.update({k: v for k, v in (opts or {}).items() if k in o})
     try:
         o["limit"] = max(0, int(o["limit"] or 0))
@@ -230,6 +231,12 @@ def find_dark_photos(conn, progress=lambda done, total, msg: None, cancelled=lam
         conn.execute(f"UPDATE photos SET mtime=NULL WHERE id IN ({','.join('?' * len(part))})", part)
     conn.commit()
     return len(dark)
+
+
+MIDWAY_MIN_PHOTOS = 500      # (1.59) scans this big group the faces found so far as they go...
+MIDWAY_MIN_LEFT = 200        # ...while at least this many are still to come...
+MIDWAY_SECS = 150            # ...every 2 1/2 minutes (or 4 x as long as grouping took, if longer)
+GROUPED_MSG = "\x01grouped:"  # (a progress message: the lists can show the groups so far)
 
 
 def scan_library(conn, settings, progress=lambda done, total, msg: None, cancelled=lambda: False,
@@ -386,7 +393,7 @@ def scan_library(conn, settings, progress=lambda done, total, msg: None, cancell
             engine.get_gpu(True)
         if not drop_scan:                 # (catch-up work for the whole library: not for a drop)
             read_existing_tags(conn, settings, progress, cancelled)
-            if not check_only:
+            if not check_only and not o.get("extras_later"):
                 check_extras(conn, settings, progress, cancelled)
         return stats
 
@@ -414,6 +421,10 @@ def scan_library(conn, settings, progress=lambda done, total, msg: None, cancell
         engine.get_gpu(True)
     done = 0
     it = iter(todo)
+    # (1.59) a big scan groups the faces found so far every few minutes, so you can start naming
+    # people while it carries on
+    midway = o.get("group_midway") if len(todo) >= MIDWAY_MIN_PHOTOS else None
+    last_group, group_took = time.monotonic(), 0.0
     with ThreadPoolExecutor(max_workers=threads) as ex:
         pending = set()
         for _ in range(threads * 3):
@@ -446,6 +457,19 @@ def scan_library(conn, settings, progress=lambda done, total, msg: None, cancell
                 stats["scanned"] = done
                 _tick(conn)
                 progress(done, len(todo), ("Video · " if engine.is_video(path) else "") + path)
+                if midway and len(todo) - done >= MIDWAY_MIN_LEFT and not cancelled() and \
+                        time.monotonic() - last_group >= max(MIDWAY_SECS, 4 * group_took):
+                    conn.commit()
+                    progress(done, len(todo), "Grouping the faces found so far…")
+                    t0 = time.monotonic()
+                    try:
+                        store.regroup(conn, midway, sync=False, cancelled=cancelled)
+                        conn.commit()
+                        progress(done, len(todo), GROUPED_MSG + f"{done}")
+                    except Exception as e:
+                        stats.setdefault("notes", []).append(f"grouping midway: {e}")
+                    group_took = time.monotonic() - t0
+                    last_group = time.monotonic()
                 if not cancelled():
                     p = next(it, None)
                     if p is not None:
@@ -456,7 +480,8 @@ def scan_library(conn, settings, progress=lambda done, total, msg: None, cancell
             store.clear_drop_rules(conn)          # everything dropped in has been imported and tagged
         if not drop_scan:
             read_existing_tags(conn, settings, progress, cancelled)
-            check_extras(conn, settings, progress, cancelled)
+            if not o.get("extras_later"):          # (1.59) else after the faces are grouped
+                check_extras(conn, settings, progress, cancelled)
         try:
             stats["copies_named"] = store.names_from_copies(conn)     # copies of group photos keep their names
         except Exception:

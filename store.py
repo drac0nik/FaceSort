@@ -1755,6 +1755,52 @@ def _write_flagged(conn, flagged):
 SUGG_SPAN = 0.10      # (1.46) match strength: this far past the line (and ahead of the next) = 100%
 
 
+NAME_HINT_BONUS = 0.035     # (1.59) a face in a folder named after someone: this much closer to them
+NAME_HINT_DEPTH = 3         # folder names looked at: the photo's folder and the two above it
+
+
+def _name_words(s):
+    return re.sub(r"[^\w]+", " ", s.casefold().replace("_", " ")).split()
+
+
+def name_hints(conn, face_ids, col_of_person):
+    """(rows, cols): faces (by position in face_ids) whose folder - or one of the two above it - is
+    named after someone you've named (their whole name, as words: "Anna Reyes" in "2019 Anna Reyes
+    shoot", not "Ann" in "Annual"), with that person's column. Names under 3 letters don't count."""
+    import numpy as np
+    people = []
+    for pid, name in conn.execute("SELECT id, name FROM persons"):
+        if pid in col_of_person and name and len(name.strip()) >= 3:
+            w = _name_words(name)
+            if w:
+                people.append((w, col_of_person[pid]))
+    rows, cols = [], []
+    if not people or not len(face_ids):
+        return np.array(rows, dtype=np.int64), np.array(cols, dtype=np.int64)
+    pos = {int(f): i for i, f in enumerate(face_ids)}
+    memo = {}
+    ids = [int(x) for x in face_ids]
+    for k in range(0, len(ids), 900):
+        chunk = ids[k:k + 900]
+        for fid, path in conn.execute(f"""SELECT f.id, ph.path FROM faces f JOIN photos ph ON ph.id=f.photo_id
+                                          WHERE f.id IN ({','.join('?' * len(chunk))})""", chunk):
+            d = os.path.dirname(path)
+            if d not in memo:
+                hit = set()
+                parts = [p for p in d.replace("\\", "/").split("/") if p][-NAME_HINT_DEPTH:]
+                for part in parts:
+                    words = _name_words(part)
+                    for w, col in people:
+                        n = len(w)
+                        if any(words[i:i + n] == w for i in range(len(words) - n + 1)):
+                            hit.add(col)
+                memo[d] = hit
+            for col in memo[d]:
+                rows.append(pos[fid])
+                cols.append(col)
+    return np.array(rows, dtype=np.int64), np.array(cols, dtype=np.int64)
+
+
 def regroup(conn, threshold=0.42, progress=None, cancelled=lambda: False, sync=True):
     """1) Suggest a name for unknown faces that clearly match someone you've named.
        2) Cluster the rest into unnamed groups of look-alike faces."""
@@ -1906,6 +1952,8 @@ def regroup(conn, threshold=0.42, progress=None, cancelled=lambda: False, sync=T
                         rej_rows.append(i)
                         rej_cols.append(col_of[rp])
         rej_rows, rej_cols = np.array(rej_rows, dtype=np.int64), np.array(rej_cols, dtype=np.int64)
+        # (1.59) a folder named after someone ("Anna Reyes 2019"): faces in it lean toward them
+        hint_rows, hint_cols = name_hints(conn, ids, {p: j for p, j in col_of.items() if p > 0})
         col_person = np.repeat(np.arange(len(persons)), counts_p)   # reference column -> person
         is_big = counts_p > 3
         small = np.where(counts_p <= 3)[0]              # people with 1-3 reference faces: all at once
@@ -1945,6 +1993,11 @@ def regroup(conn, threshold=0.42, progress=None, cancelled=lambda: False, sync=T
                     per_person[rows_, j] = np.partition(cols, cols.shape[1] - 3, axis=1)[:, -3:].mean(axis=1)
                     if n_ % 64 == 63:
                         time.sleep(0)                      # let the window breathe
+            if len(hint_rows):
+                m = (hint_rows >= s) & (hint_rows < s + sims.shape[0])
+                hr, hc = hint_rows[m] - s, hint_cols[m]
+                per_person[hr, hc] = np.where(per_person[hr, hc] > -1, per_person[hr, hc] + NAME_HINT_BONUS,
+                                              per_person[hr, hc])
             if len(rej_rows):
                 m = (rej_rows >= s) & (rej_rows < s + sims.shape[0])
                 per_person[rej_rows[m] - s, rej_cols[m]] = -1

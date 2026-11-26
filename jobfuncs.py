@@ -93,12 +93,18 @@ def scan_and_group(conn, settings, progress, cancelled, videos_only=False, check
             conn.commit()
         if o.get("dark_again"):
             jobs.find_dark_photos(conn, progress, cancelled)
+    # (1.59) faces first: grouped as the scan goes (big scans) and straight after it; the duplicate
+    # check and AI detector after that, so you can start naming people sooner
+    o2 = dict(o, group_midway=store.threshold(settings), extras_later=True)
     stats = jobs.scan_library(conn, settings, progress, cancelled, videos_only=videos_only, check_only=check_only,
-                              only=only, opts=opts)
+                              only=only, opts=o2)
     if not cancelled() and (stats.get("scanned") or stats.get("removed") or not check_only):
         progress(0, 0, "Grouping faces…")
         store.regroup(conn, store.threshold(settings), progress=lambda d, t: progress(d, t, "Grouping faces…"),
                       cancelled=cancelled)
+        progress(0, 0, jobs.GROUPED_MSG + "all")
+    if not cancelled() and not check_only and only is None and not o.get("roots"):   # (not for a drop)
+        jobs.check_extras(conn, settings, progress, cancelled)
     stats["cancelled"] = cancelled()
     return stats
 

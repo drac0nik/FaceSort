@@ -615,6 +615,8 @@ class GalleryMixin:
     def _sync_view(self):
         """Show what's selected on the left: one row, or several together (Ctrl+click / drag)."""
         self._sync_pending = False
+        if self._gone():                           # (closing: nothing to show)
+            return
         t = self._active_tree
         keys = t.selected_keys()
         if len(keys) > 1:
@@ -693,6 +695,7 @@ class GalleryMixin:
         and selection. False: a different view was opened - start at the top."""
         kind, ident = self.view
         c = self.conn
+        self.subtitle.setToolTip("")
         sel = set(self.selected_ids()) if keep_selection else set()
         sel_rows = sorted(i.row() for i in self.grid.selectionModel().selectedIndexes()) if keep_selection else []
         scroll = self.grid.verticalScrollBar().value() if keep_selection else 0
@@ -739,7 +742,8 @@ class GalleryMixin:
                                       sum(1 for r in rows if r[0] == 0 and isinstance(r[2], tuple) and r[2]
                                           and r[2][0] == "sugg"))))
             self.set_buttons([("Rename…", self.rename_person),
-                              (("Confirm suggestion" if sugg == 1 else f"Confirm all {sugg} suggestions"), self.confirm_all) if sugg else None,
+                              (("Confirm suggestion" if sugg == 1 else f"Confirm all {sugg} suggestions"
+                                + ("…" if sugg >= 10 else "")), self.confirm_all) if sugg else None,
                               (f"Confirm {len(tsug)} tattoo match{'es' if len(tsug) != 1 else ''}",
                                self.confirm_all_tattoos) if tsug else None,
                               ("Find tattoo matches", lambda: self.start_tattoo_search([ident])) if nmarks else None,
@@ -999,11 +1003,13 @@ class GalleryMixin:
             n_other = c.execute("SELECT COUNT(*) FROM photos WHERE is_other=1 AND dropped=? AND error IS NULL",
                                 (ident,)).fetchone()[0]
             n_ph = len(pids) - n_other
-            self.subtitle.setText(f"{n_ph:,} photo{'s' if n_ph != 1 else ''}"
-                                  + (f" and {n_other:,} other file{'s' if n_other != 1 else ''}" if n_other else "")
-                                  + ", shown the way they'll be saved (folder › person › folder). Other files go "
-                                  "with the photos beside them - or tag them, or drag them onto a person or folder, "
-                                  "yourself. Fix anything that's wrong, then Done checking.")
+            # (1.59) how far along it is, first
+            self.subtitle.setText(self.drop_progress_text(ident))
+            self.subtitle.setToolTip(f"{n_ph:,} photo{'s' if n_ph != 1 else ''}"
+                                     + (f" and {n_other:,} other file{'s' if n_other != 1 else ''}" if n_other else "")
+                                     + ", shown the way they'll be saved (folder › person › folder).\nOther files go "
+                                     "with the photos beside them - or tag them, or drag them onto a person or "
+                                     "folder, yourself.\nFix anything that's wrong, then Done checking.")
             self.set_buttons([("Done checking", lambda: self.done_checking(ident), True)])
         elif kind == "ai":
             cond = "ph.ai>0" if ident is None else f"ph.ai={int(ident)}"

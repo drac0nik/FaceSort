@@ -432,6 +432,12 @@ class JobsMixin:
         return True
 
     def on_progress(self, done, total, msg):
+        if msg.startswith(jobs.GROUPED_MSG):                # (1.59) the faces found so far are grouped
+            if msg[len(jobs.GROUPED_MSG):] != "all":
+                self.statusBar().showMessage("The faces found so far are grouped - you can start naming people "
+                                             "while the scan carries on", 12000)
+            self.refresh_all()
+            return
         if msg.startswith(jobfuncs.ENGINE_MSG):             # the helper's face engine status
             st = msg[len(jobfuncs.ENGINE_MSG):]
             self._engine_status = (st[:1] == "1", st[1:])
@@ -454,8 +460,26 @@ class JobsMixin:
                 self.prog_label.setText(msg)
             else:
                 self.prog_label.setText(f"{label} {done:,} / {total:,}  ·  {msg}")
+        if self._job == "scan" and total > 0 and done:
+            # (1.59) time left, from how fast it's going (the last few minutes count most)
+            now = time.monotonic()
+            st = getattr(self, "_scan_rate", None)
+            if st is None or st[2] != total or done < st[1]:
+                self._scan_rate = (now, done, total)
+                self._scan_eta = (done, total, None)
+            else:
+                t0, d0, _t = st
+                if now - t0 > 20 and done > d0:
+                    left = (total - done) * (now - t0) / (done - d0)
+                    self._scan_eta = (done, total, left)
+                    if now - t0 > 300:
+                        self._scan_rate = (now - 150, d0 + (done - d0) // 2, total)
+                else:
+                    self._scan_eta = (done, total, (self._scan_eta or (0, 0, None))[2])
         if self._job == "scan" and done and done % 200 == 0:
             self.refresh_stats()
+            if self.view and self.view[0] == "dropped":
+                self.subtitle.setText(self.drop_progress_text(self.view[1]))
         if self._job == "scan" and done:
             self.update_engine_label()
 

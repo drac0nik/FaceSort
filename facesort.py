@@ -190,6 +190,17 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         tb.addSeparator()
         self.a_review = act("Quick review", QStyle.SP_MediaPlay, self.quick_review,
                             "Answer yes/no questions that sort the most faces per keypress")
+        # (1.59) biggest jobs first
+        self.a_next = act("Next", QStyle.SP_MediaSkipForward, lambda: self.next_task(),
+                          "Go to the job that sorts the most photos: the person whose suggestions, or the unnamed "
+                          "group, covering the most photos not sorted yet")
+        mn = QMenu(self)
+        mn.addAction("Next job (sorts the most photos)", lambda: self.next_task())
+        mn.addAction("Set aside one-off faces as strangers…", lambda: self.set_aside_one_offs())
+        self.a_next.setMenu(mn)
+        bn = tb.widgetForAction(self.a_next)
+        if isinstance(bn, QToolButton):
+            bn.setPopupMode(QToolButton.MenuButtonPopup)
         self.a_galleries = act("Check galleries", QStyle.SP_ArrowDown, self.check_galleries,
                                "Gallery watcher: download what's new in the galleries you watch (and set them up)")
         self.a_browser = act("Gallery Watcher", QStyle.SP_ComputerIcon, lambda: self.open_gallery_watcher(),

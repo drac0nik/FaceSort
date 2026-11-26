@@ -18,6 +18,9 @@ from viewer import PhotoViewer
 from quick_review import QuickReview
 
 
+SURE_MIN = 10          # (1.59) this many suggestions or more: Confirm all asks how sure
+
+
 class EngineMixin:
     """Part of MainWindow (see facesort.py): the face engine, scanning and grouping."""
 
@@ -187,9 +190,33 @@ class EngineMixin:
 
     def confirm_all(self):
         ids = [r[0] for r in self.model.rows if not r[3]]
+        if self.view[0] == "person" and len(ids) >= SURE_MIN:
+            return self.confirm_sure(self.view[1])          # (1.59) down to a match-strength line
         if ids:
             store.confirm(self.conn, ids)
             self.after_change()
+
+    def confirm_sure(self, person_id, answer=None):
+        """(1.59) Confirm the sure ones: a person's suggestions down to the match strength you choose,
+        with the weakest of those shown to check first. answer: (line, unticked ids) for tests."""
+        import sure_ui
+        items = sure_ui.suggestions(self.conn, person_id)
+        if not items:
+            return 0
+        name = (self.conn.execute("SELECT name FROM persons WHERE id=?", (person_id,)).fetchone() or ("",))[0]
+        dlg = sure_ui.SureDialog(self, person_id, name, items)
+        if answer is not None:
+            dlg.slider.setValue(answer[0])
+            dlg.unticked = set(answer[1])
+        elif dlg.exec() != sure_ui.QDialog.Accepted:
+            return 0
+        ids = dlg.chosen()
+        if ids:
+            store.confirm(self.conn, ids)
+            self.after_change()
+            self.statusBar().showMessage(f"Confirmed {len(ids):,} of {name}'s suggestions · "
+                                         f"{len(items) - len(ids):,} left to look at", 8000)
+        return len(ids)
 
     def act_remove(self):
         keys = self.selected_ids()

@@ -153,6 +153,36 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.59.0
+Faster sorting for big imports and collections.
+- Confirm the sure ones: on a person with 10 or more suggestions, Confirm all opens a match-strength
+  slider. Everything at or above the line is confirmed in one go, and the rest stay suggestions to
+  look at. The weakest ones above the line are shown so you can check them first - untick any that
+  aren't the person. It starts at 80%.
+- Biggest jobs first:
+  - Unnamed groups are listed by how many photos not sorted yet naming them would sort (hover for
+    the number), not by how many faces they have.
+  - The new Next button (beside Quick review) opens the job that sorts the most photos: the person
+    whose suggestions, or the unnamed group, covering the most photos not sorted yet. The status
+    bar says what it picked and why.
+  - Next's arrow › Set aside one-off faces as strangers: faces seen only once or twice, all in one
+    folder, that nobody is suggested for (on a big import, mostly people in the background). It
+    asks first, leaves the photos alone, and you can bring any of them back from the Strangers list.
+- Folder names as hints for people: a face in a folder named after someone you've named (their whole
+  name, as words - "2019 Anna Reyes shoot" for Anna Reyes, but not "Annual party" for Ann) leans
+  toward them. A face that only just misses being suggested as them gets the suggestion, but a
+  clearly different person still wins. The photo's folder and the two above it count, including
+  after the photo moves into ~Unsorted.
+- Start sorting sooner:
+  - A scan of 500 photos or more groups the faces found so far every couple of minutes (less often
+    if grouping takes a while), so groups and suggestions show up and you can start naming people
+    while it carries on.
+  - The duplicate check and AI detector now run after the faces are grouped, not before.
+- Import progress: Recently dropped shows how far each drop is - "Drop · 34% sorted" in the list, and
+  at the top of the drop "Sorted 340 of 1,000 (34%) · left: 12 groups to name, 210 suggestions to
+  confirm, 95 photos with no faces, 6 other files". While it's still scanning it also shows
+  "Scanning 820 / 1,000 (about 3 min left)", worked out from how fast the scan is going.
+
 1.58.4
 - Fixed: photos moved into ~Unsorted didn't show under "To sort by original location" (or the Smart
   Groups by original location). ~Unsorted is inside the library, so they were counted as already
