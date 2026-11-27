@@ -70,7 +70,7 @@ QPushButton {{ background: {RAISED}; border: 1px solid {LINE2}; border-radius: 8
 QPushButton:hover {{ background: #2C2E34; }}
 QPushButton:pressed {{ background: #303238; }}
 QPushButton:disabled {{ color: #6B6D74; border-color: {LINE}; }}
-QPushButton:default {{ background: {ACCENT}; color: {ACCENT_INK}; border: 0; font-weight: 600; }}
+QPushButton:default {{ background: {ACCENT}; color: {ACCENT_INK}; border: 1px solid {ACCENT}; }}
 QToolButton {{ border-radius: 7px; padding: 4px 8px; color: {TEXT}; }}
 QToolButton:hover {{ background: {HOVER}; }}
 QToolButton:checked {{ background: #2C2E34; color: #FFFFFF; }}

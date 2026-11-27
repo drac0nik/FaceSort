@@ -153,6 +153,13 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.64.1
+- Fixed: the main button of pop-ups (e.g. "Download and install" in Update available) had its first
+  and last letters cut off. The button turned its text bold after its width had already been
+  measured; it now keeps normal text and shows in the accent color.
+- The update pop-up's "What's new" shows the version's notes again (it had only been showing the
+  version number).
+
 1.64.0
 Unassociated files is now a list, like Windows Explorer's Details view.
 - Columns: File name, Type, Location, Description, Size, Date modified. Drag the edges between
