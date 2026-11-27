@@ -1,4 +1,4 @@
-/* Max Image Saver - content script, as used inside FaceSort's browser (1.56).
+/* Max Image Saver - content script, as used inside FaceSort's browser (1.56; Max Image Saver 2.15.1 since 1.63.3).
  * The only change from the Chrome extension: the hook at the end, so FaceSort's gallery watcher
  * can start the same ALL / GALLERY listing it would start with a click, and see when it's done.
  * chrome.* comes from FaceSort (mis/shim.js), and the downloads are made by FaceSort. */
@@ -781,13 +781,15 @@
     if (IS_SG) { ensureSgBar(); ensureSgListBar(); }
     const busyJob = bulk.phase !== 'idle';
     const sgList = IS_SG && !!sgListModel();
-    const allOk = isActive() && (sgList || (IS_MS && !!msOwner()) || bulkAvailable());
-    const galOk = isActive() && !IS_FLICKR && !IS_YOUPIC && !IS_MS && !(IS_SG && (sgAlbum() || sgList)) && galleryCount() >= 2; // hidden on Flickr, YouPic, Model Society, SG albums/set lists
+    const allOk = isActive() && (sgList || (IS_MS && !!msOwner()) || (IS_VB && !!vbMember()) || (IS_RC && !!rcUser()) || bulkAvailable());
+    const galOk = isActive() && !IS_FLICKR && !IS_YOUPIC && !IS_MS && !IS_VB && !IS_RC && !(IS_SG && (sgAlbum() || sgList)) && galleryCount() >= 2; // hidden on Flickr, YouPic, Model Society, SG albums/set lists
     btnAll.hidden = !(allOk || (busyJob && bulk.mode === 'all'));
     btnGal.hidden = !(galOk || (busyJob && bulk.mode === 'gallery'));
     btnAll.title = IS_FLICKR ? 'Download every photo in this Flickr gallery'
       : sgList ? 'Download every set of this model'
-      : IS_MS && msOwner() ? 'Download this whole gallery (every page)' : 'Download every image on this page (largest versions)';
+      : IS_MS && msOwner() ? 'Download this whole gallery (every page)'
+      : IS_VB && vbMember() ? 'Download this member’s whole gallery (no scrolling needed)'
+      : IS_RC && rcUser() ? 'Download every image of this user (all gallery pages)' : 'Download every image on this page (largest versions)';
     const capN = settings.captureList !== false && isActive() ? capturedList().length : 0;
     btnCap.hidden = !(capN > 0 || !cpanel.hidden);
     btnCapLabel.textContent = (capN ? `LIST ${capN}` : 'LIST') + (capAuto ? ' · AUTO' : '');
@@ -910,7 +912,7 @@
     return { name: safeName(name, 80) || 'image', ext };
   }
 
-  // ── Default layout for other sites: <Sitename>\<Username>\<Album>\<file> ──
+  // ── Default layout for other sites: <Sitename>\<path parts of the page address>\<file> ──
   // Username and album are included only when the page clearly identifies them.
   const metaContent = (sel) => {
     const el = document.querySelector(sel);
@@ -969,8 +971,23 @@
     try { return decodeURIComponent(m[1]).replace(/[-_+]+/g, ' '); } catch { return m[1]; }
   }
 
+  // Folders follow the page's address: sitename.com/name1/name2 → <Site>/<name1>/<name2>.
+  // Only the parts that exist are used (sitename.com/name1 → <Site>/<name1>; the home page → <Site>).
+  // Query strings and #fragments are ignored; "page.html" counts as "page", "index.html" is dropped,
+  // and a trailing "page/2" is left out so every page of one gallery lands in the same folder.
+  function urlFolders(pathname = location.pathname) {
+    const segs = pathname.split('/').filter(Boolean).map((s) => { try { return decodeURIComponent(s); } catch { return s; } });
+    if (segs.length) {
+      const last = segs.length - 1;
+      segs[last] = segs[last].replace(/\.(s?html?|php\d?|aspx?|jsp|cgi|cfm)$/i, '');
+      if (/^(index|default|home)$/i.test(segs[last]) || !segs[last]) segs.pop();
+    }
+    if (segs.length >= 2 && /^page$/i.test(segs[segs.length - 2]) && /^\d+$/.test(segs[segs.length - 1])) segs.splice(-2);
+    return segs.map((s) => safeName(s.replace(/\+/g, ' '), 80)).filter(Boolean).slice(0, 8);
+  }
+
   function genericFolder() {
-    return [siteName(), pageUsername(), pageAlbum()].map((s) => safeName(s, 80)).filter(Boolean).join('/') || 'Images';
+    return [safeName(siteName(), 80), ...urlFolders()].filter(Boolean).join('/') || 'Images';
   }
 
   // File names that tell you nothing (image.jpg, 12.jpg, long hashes) — GALLERY swaps in the linked page's title.
@@ -988,6 +1005,8 @@
       if (!it.path) { const sp = smugmugPath(it.url); if (sp) it.path = sp; }
       const ref = it.referer ? { referer: it.referer } : {};
       if (it.datePrefix === false) ref.datePrefix = false; // e.g. numbered albums that must stay in grid order
+      // A path that already carries its extension (e.g. videos) is downloaded as-is, straight from the link.
+      if (it.path && it.keepExt) return { url: it.url, filename: it.path, autoExt: false, dateTaken: '', tags: [], ...ref, datePrefix: false };
       if (it.path) return { url: it.url, filename: it.path, autoExt: true, dateTaken, tags, ...ref };
       const { name, ext } = nameAndExt(it.url);
       const nm = it.nameHint && isOpaqueName(name) ? (safeName(it.nameHint, 100) || name) : name;
@@ -1233,7 +1252,11 @@
       let res;
       const sg = IS_SG ? sgItems() : null;
       const ms = IS_MS && msOwner() ? await msItems(progress) : null;
+      const vb = !ms && IS_VB && vbMember() ? await vbItems(progress) : null;
+      const rc = !ms && !vb && IS_RC && rcUser() ? await rcItems(progress) : null;
       if (ms) res = ms; // Model Society: the owner's whole gallery, every page
+      else if (rc) res = rc; // r-cover: every grid page, large versions
+      else if (vb) res = vb; // ViewBug: the member's whole gallery (all scroll pages)
       else if (sg) res = sg; // SuicideGirls album: only the album grid, full size
       else if (mode === 'gallery') res = await listGallery(progress);
       else res = IS_FLICKR ? await listFlickrGallery(ctx, progress) : await listPageImages(progress);
@@ -1246,7 +1269,7 @@
       if (!res.items.length) throw new Error(mode === 'gallery' ? 'No full-size images found on the linked pages' : `No downloadable ${noun} found`);
       bulk.items = res.items;
       bulk.title = res.title;
-      bulk.missed = mode === 'gallery' || res.msFolder ? res.missed || 0 : 0;
+      bulk.missed = mode === 'gallery' || res.msFolder || vb ? res.missed || 0 : 0;
       if (res.msFolder) saveMsLink(res.msFolder, res.msOwner);
       startBulk(); // one click: scan, then download straight away
     } catch (err) {
@@ -1577,9 +1600,9 @@
   const postIdFrom = (h) => (String(h || '').match(/\/posts\/(?:[^/?#]*-)?(\d{4,})(?:[/?#]|$)/) || [])[1] || null;
 
   function patreonPostId(el) {
-    if (!IS_PATREON) return null;
+    if (!el || !IS_PATREON) return null;
     // 1) A post card in a feed: its own link to the post.
-    const card = el && el.closest && el.closest('[data-tag="post-card"]');
+    const card = el.closest && el.closest('[data-tag="post-card"]');
     if (card) {
       const a = card.querySelector('a[href*="/posts/"]');
       const id = a && postIdFrom(a.getAttribute('href'));
@@ -1589,7 +1612,7 @@
     const here = postIdFrom(location.pathname);
     if (here) return here;
     // 3) Nearest container that links to exactly one post.
-    let n = el && el.parentElement;
+    let n = el.parentElement;
     for (let d = 0; n && d < 14; d++, n = n.parentElement) {
       const ids = new Set([...n.querySelectorAll('a[href*="/posts/"]')].map((a) => postIdFrom(a.getAttribute('href'))).filter(Boolean));
       if (ids.size === 1) return [...ids][0];
@@ -1725,7 +1748,7 @@
     return { items, title };
   }
 
-  async function patreonStart(el) {
+  async function patreonStart(el) {      // (FaceSort: also run by the gallery watcher)
     const { items, title } = await patreonGalleryItems(el);
     bulk.mode = 'patreon';
     bulk.kind = 'page';
@@ -1984,8 +2007,7 @@
     return { items: all, added };
   }
 
-  // MM+: the member's whole portfolio + their credited photos, tagged, into one folder.
-  async function mmPlusStart(id, onProgress) {
+  async function mmPlusStart(id, onProgress) {   // (FaceSort: also run by the gallery watcher)
     if (!id) throw new Error('Not a ModelMayhem member page');
     const [port, credits, folder] = await Promise.all([
       mmPortfolio(id).catch(() => ({ urls: [], pids: {} })), mmCredits(id), mmFolder(id)]);
@@ -2627,6 +2649,243 @@
     };
   }
 
+  // ───────────────────────── r-cover.net ─────────────────────────
+  // Profile: /u/<username>. The grid (120 per page, any number of pages) comes from
+  // /api/user/<username>?page=N; thumbnails are media.r-cover.net/thumb/<user>/<file> and the
+  // large version that opens on click is the same path under /media/.
+  // Saved as r-cover/<username>/<original file name>.
+  const IS_RC = /(^|\.)r-cover\.net$/i.test(location.hostname);
+  const RC_MEDIA = 'https://media.r-cover.net';
+
+  function rcUser(pathname = location.pathname) {
+    if (!IS_RC) return '';
+    const m = pathname.match(/^\/u\/([^/?#]+)/i);
+    if (!m) return '';
+    try { return decodeURIComponent(m[1]); } catch { return m[1]; }
+  }
+
+  // media.r-cover.net/(thumb|media)/<user>/<file> → { user, file }
+  function rcParts(src) {
+    let u;
+    try { u = new URL(src, location.href); } catch { return null; }
+    if (!/(^|\.)r-cover\.net$/i.test(u.hostname)) return null;
+    const m = u.pathname.match(/^\/(thumb|media)\/([^/]+)\/([^/]+)$/i);
+    if (!m) return null;
+    const dec = (s) => { try { return decodeURIComponent(s); } catch { return s; } };
+    return { kind: m[1].toLowerCase(), user: dec(m[2]), file: dec(m[3]) };
+  }
+
+  function rcMediaUrl(user, file) {
+    return `${RC_MEDIA}/media/${encodeURIComponent(user)}/${encodeURIComponent(file)}`;
+  }
+
+  function rcPath(user, file) {
+    return `r-cover/${safeName(user, 80) || 'Unknown'}/${nameAndExt(file).name}`;
+  }
+
+  // Every image of the user, through all of the grid's pages.
+  async function rcItems(onProgress) {
+    const user = rcUser();
+    if (!user) return null;
+    const files = [];
+    const seen = new Set();
+    for (let page = 1; page <= 500 && !bulk.abort; page++) {
+      onProgress(files.length, 0, `Reading gallery page ${page}…`);
+      let j;
+      try {
+        const r = await fetch(`/api/user/${encodeURIComponent(user)}?page=${page}`, { credentials: 'include' });
+        if (!r.ok) break;
+        j = await r.json();
+      } catch { break; }
+      let fresh = 0;
+      for (const x of (j && j.files) || []) {
+        const f = x && x.f;
+        if (!f || seen.has(f)) continue;
+        seen.add(f);
+        fresh++;
+        files.push(f);
+      }
+      if (!fresh || page >= Number(j.pages || 0)) break;
+    }
+    return {
+      items: files.map((f) => {
+        const vid = f.match(/\.(mp4|webm|mov|m4v|mkv)$/i);
+        // Videos keep their own extension and go straight to Downloads (no image processing).
+        return vid
+          ? { url: rcMediaUrl(user, f), path: `${rcPath(user, f)}.${vid[1].toLowerCase()}`, keepExt: true }
+          : { url: rcMediaUrl(user, f), path: rcPath(user, f) };
+      }),
+      title: user,
+    };
+  }
+
+  // ───────────────────────── ViewBug ─────────────────────────
+  // Gallery: /member/<name> loads 15 photos at a time as you scroll, from
+  // /member/<name>/galleryv3?page=N (JSON) — read directly here, so no scrolling is needed.
+  // Photo page: /photo/<id>, title + "May, 2023". Image files live at
+  // …/mediafiles/YYYY/MM/DD/<id>_<size>.jpg; "_large1600" is the biggest the site serves.
+  // Saved as Viewbug/<member>/<YYYY-MM Title>.
+  const IS_VB = /(^|\.)viewbug\.com$/i.test(location.hostname);
+  const VB_SIZES = ['_large1600', '_large', '_medium'];
+
+  function vbMember(pathname = location.pathname) {
+    if (!IS_VB) return '';
+    const m = pathname.match(/^\/member\/([^/?#]+)/i);
+    if (!m) return '';
+    try { return decodeURIComponent(m[1]); } catch { return m[1]; }
+  }
+
+  function vbParts(src) {
+    const m = String(src || '').match(/^(.*\/mediafiles\/(\d{4})\/(\d\d)\/\d\d\/(\d+))_[a-z0-9]+(\.(?:jpe?g|png|gif|webp))(?=$|[?#])/i);
+    return m ? { stem: m[1], ym: `${m[2]}-${m[3]}`, id: m[4], ext: m[5] } : null;
+  }
+
+  function vbSizeUrl(src, size) {
+    const p = vbParts(src);
+    return p ? `${p.stem}${size}${p.ext}` : '';
+  }
+
+  const VB_MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+  // "May, 2023" → "2023-05"
+  function vbMonth(text) {
+    const m = String(text || '').match(/\b(January|February|March|April|May|June|July|August|September|October|November|December),?\s+(\d{4})\b/i);
+    return m ? `${m[2]}-${String(VB_MONTHS.indexOf(m[1].toLowerCase()) + 1).padStart(2, '0')}` : '';
+  }
+
+  // First size that really loads: 1600 px, then the smaller ones.
+  async function vbBest(src) {
+    for (const s of VB_SIZES) {
+      const u = vbSizeUrl(src, s);
+      if (!u) break;
+      const ok = await new Promise((res) => {
+        const i = new Image();
+        const t = setTimeout(() => res(false), 15000);
+        i.onload = () => { clearTimeout(t); res(i.naturalWidth > 0); };
+        i.onerror = () => { clearTimeout(t); res(false); };
+        i.src = u;
+      });
+      if (ok) return u;
+    }
+    return '';
+  }
+
+  // Open /photo/<id>: full-size image, title, "Month, YYYY", member.
+  async function vbPhotoInfo(id) {
+    const r = await fetch(`/photo/${id}`, { credentials: 'include' });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const doc = new DOMParser().parseFromString(await r.text(), 'text/html');
+    const pics = [...doc.images].map((i) => i.getAttribute('src') || i.getAttribute('data-src') || '')
+      .filter((s) => { const p = vbParts(s); return p && p.id === String(id); });
+    const src = pics.find((s) => /_large1600\./.test(s)) || pics[0] || '';
+    const t = doc.title.match(/^(.*?)\s+by\s+(.+?)\s+-\s+VIEWBUG/i);
+    const h = [...doc.querySelectorAll('h1,h2')].map((x) => x.textContent.replace(/\s+/g, ' ').trim()).find((x) => x && !/watermark/i.test(x));
+    const ma = doc.querySelector('a[href^="/member/"]');
+    let member = (t && t[2]) || (ma ? ma.getAttribute('href').split('/')[2] || '' : '');
+    try { member = decodeURIComponent(member); } catch { /* keep raw */ }
+    const title = (t && t[1]) || h || '';
+    // The date sits just under the title ("Amber Anne 3 · amberaaaaanne · May, 2023"); other dates
+    // elsewhere on the page are ignored. Without one, the upload month from the file address is used.
+    const body = doc.body ? doc.body.textContent.replace(/\s+/g, ' ') : '';
+    // Description under the title (often the model, e.g. "Ali-Blue"); the "Read more/less" links are left out.
+    const dEl = doc.querySelector('.photo-description .complete-description') || doc.querySelector('.complete-description') ||
+      doc.querySelector('.partial-description');
+    let desc = '';
+    if (dEl) {
+      const c = dEl.cloneNode(true);
+      c.querySelectorAll('a.read, .read-less, .read-more').forEach((x) => x.remove());
+      desc = c.textContent.replace(/\s+/g, ' ').replace(/(\.\.\.|…)?\s*Read (more|less)\s*$/i, '').trim();
+    }
+    let pageMonth = '';
+    for (let at = title ? body.indexOf(title) : -1; at >= 0 && !pageMonth; at = body.indexOf(title, at + 1)) {
+      pageMonth = vbMonth(body.slice(at, at + title.length + 200)); // the title appears a few times; the date follows one of them
+    }
+    return {
+      id: String(id),
+      src: src ? new URL(src, location.href).href : '',
+      title,
+      desc,
+      month: pageMonth || (vbParts(src) || {}).ym || '',
+      member,
+    };
+  }
+
+  // A short description is usually the model's name; long ones are sentences and stay out of the name.
+  const VB_DESC_MAX = 40;
+  function vbDescPart(it) {
+    const d = safeName(it.desc || '', 100);
+    if (!d || d.length > VB_DESC_MAX || /[.!?]\s+\S/.test(d)) return '';
+    if (it.title && d.toLowerCase() === String(it.title).trim().toLowerCase()) return '';
+    return d;
+  }
+
+  // "Viewbug/<member>/2023-05 Tied in lace - Ali-Blue"; NN only if a name would repeat.
+  function vbPaths(list, member) {
+    const folder = `Viewbug/${safeName(member, 80) || 'Unknown'}`;
+    const groups = new Map();
+    for (const it of list) {
+      const d = vbDescPart(it);
+      const base = [it.month, (safeName(it.title, 100) || `Photo ${it.id}`) + (d ? ` - ${d}` : '')].filter(Boolean).join(' ');
+      if (!groups.has(base)) groups.set(base, []);
+      groups.get(base).push(it);
+    }
+    for (const [base, g] of groups) {
+      g.sort((a, b) => Number(a.id) - Number(b.id));
+      const w = Math.max(2, String(g.length).length);
+      g.forEach((it, i) => { it.path = `${folder}/${base}${g.length > 1 ? ' ' + String(i + 1).padStart(w, '0') : ''}`; });
+    }
+    return folder;
+  }
+
+  // Every photo of the member: the same pages the site loads while you scroll.
+  async function vbItems(onProgress) {
+    const member = vbMember();
+    if (!member) return null;
+    const api = `/member/${encodeURIComponent(member)}/galleryv3`;
+    const photos = [];
+    const seen = new Set();
+    for (let page = 1; page <= 500 && !bulk.abort; page++) {
+      onProgress(photos.length, 0, `Reading gallery page ${page}…`);
+      let j;
+      try {
+        const r = await fetch(`${api}?page=${page}&v3=1`, { credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+        if (!r.ok) break;
+        j = await r.json();
+      } catch { break; }
+      const list = Array.isArray(j && j.photos) ? j.photos : Object.values((j && j.photos) || {});
+      let fresh = 0;
+      for (const x of list) {
+        if (!x || !x.id || seen.has(String(x.id)) || !vbParts(x.url)) continue;
+        seen.add(String(x.id));
+        fresh++;
+        photos.push({ id: String(x.id), src: new URL(x.url, location.href).href, title: x.title || x.title_alt || '', month: vbParts(x.url).ym });
+      }
+      if (!fresh) break; // past the last page the site repeats it
+    }
+    let next = 0;
+    let done = 0;
+    const worker = async () => {
+      while (next < photos.length && !bulk.abort) {
+        const p = photos[next++];
+        // Each photo's own page holds its description (often the model) and the date shown there.
+        try {
+          const info = await vbPhotoInfo(p.id);
+          p.desc = info.desc;
+          if (info.title) p.title = info.title;
+          if (info.month) p.month = info.month;
+        } catch { /* keep what the gallery list gave */ }
+        p.url = await vbBest(p.src);
+        onProgress(++done, photos.length, 'Opening photos…');
+      }
+    };
+    await Promise.all(Array.from({ length: 4 }, worker));
+    const ok = photos.filter((p) => p.url);
+    vbPaths(ok, member);
+    return {
+      items: ok.map((p) => ({ url: p.url, path: p.path, datePrefix: false })),
+      title: member, missed: photos.length - ok.length,
+    };
+  }
+
   // ───────────────────────── SuicideGirls: every set of a model ─────────────────────────
   // /girls/ or /members/<model>/photos/ lists the model's sets; more appear through "Load more"
   // (/photos/?partial=true&offset=N), sometimes several times. Each set is then opened (fetched
@@ -3075,6 +3334,12 @@
       if (m && m[1].length % 2 === 0 && m[2].toLowerCase() !== '00ffff') mod((x) => { x.pathname = `/i/${m[1]}00ffff`; x.search = ''; });
     }
 
+    // r-cover: /thumb/<user>/<file> → /media/<user>/<file> (the large version shown on click).
+    { const rp = rcParts(src); if (rp && rp.kind === 'thumb') add(rcMediaUrl(rp.user, rp.file)); }
+
+    // ViewBug: "<id>_medium.jpg", "_280x280", "_widepreview400"… → "_large1600" (largest served).
+    if (/(^|\.)viewbug\.com$/i.test(h) && vbParts(src) && !/_large1600\./i.test(p)) add(vbSizeUrl(src, '_large1600'));
+
     // Model Society: the image server only hands out fixed sizes; 1200 px wide is the largest.
     if (h === 'images.modelsociety.com' && /\/edge\/rs:fit:\d+:\d+\//.test(p) && !p.includes(`/${MS_MAX}/`)) {
       mod((x) => { x.pathname = x.pathname.replace(/\/edge\/rs:fit:\d+:\d+\//, `/edge/${MS_MAX}/`); });
@@ -3391,6 +3656,30 @@
           datePrefix = false;
           tags = msTags(info);
           msLink = [f, owner];
+        }
+      } catch { /* fall back to the generic name */ }
+    }
+    // r-cover: large version, r-cover/<username>/<original name>.
+    const rcp = IS_RC && (rcParts(url) || rcParts(el && (el.currentSrc || el.src)));
+    if (rcp) {
+      url = rcMediaUrl(rcp.user, rcp.file);
+      filename = rcPath(rcp.user, rcp.file);
+      autoExt = true;
+    }
+    // ViewBug: open the photo's own page for the full-size image, title and month.
+    const vbId = IS_VB && !msId && ((vbParts(url) || vbParts(el && (el.currentSrc || el.src)) || {}).id ||
+      ((location.pathname.match(/^\/photo\/(\d+)/) || [])[1]));
+    if (vbId) {
+      try {
+        const info = await vbPhotoInfo(vbId);
+        const src = info.src || (vbParts(url) ? url : '');
+        const full = src && (/_large1600\./.test(src) ? src : await vbBest(src));
+        if (full) {
+          vbPaths([info], vbMember() || info.member);
+          url = full;
+          filename = info.path;
+          autoExt = true;
+          datePrefix = false;
         }
       } catch { /* fall back to the generic name */ }
     }

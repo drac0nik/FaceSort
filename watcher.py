@@ -29,7 +29,10 @@ SITE_MODES = [("mm", "modelmayhem.com", "ModelMayhem: whole portfolio + credited
               ("patreon", "patreon.com", "Patreon: the post's whole gallery, full size (like P+)"),
               ("flickr", "flickr.com", "Flickr: the photostream or album, largest size, with date taken"),
               ("youpic", "youpic.com", "YouPic: the photos, with date taken and name tags"),
-              ("ms", "modelsociety.com", "Model Society: the owner's whole gallery, every page")]
+              ("ms", "modelsociety.com", "Model Society: the owner's whole gallery, every page"),
+              # (1.63.3) new in Max Image Saver 2.15
+              ("vb", "viewbug.com", "ViewBug: the member's whole gallery (every scroll page), with titles and month"),
+              ("rc", "r-cover.net", "r-cover: every grid page of the profile, large versions")]
 SCROLLS = 25
 
 

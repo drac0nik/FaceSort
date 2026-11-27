@@ -300,3 +300,18 @@ def test_browser_tabs(library, qapp, site):
     assert b2.view is b2.browse_views()[1]
     b2.close()
     w.close()
+
+
+def test_mis_content_script_is_2_15_with_the_watcher_hook():
+    """(1.63.3) Max Image Saver 2.15.1 baked in: the watcher's hook and the functions it runs by name
+    are still there; ViewBug and r-cover are offered in the watcher."""
+    import os
+    import watcher
+    js = open(os.path.join(os.path.dirname(__file__), "..", "mis", "content.js"), encoding="utf-8").read()
+    for bit in ("window.__fsMIS", "async function patreonStart(", "async function mmPlusStart(",
+                "const IS_VB", "const IS_RC", "onBulkClick("):
+        assert bit in js, bit
+    assert js.count("window.__maxImageSaverLoaded") >= 1
+    assert [k for k, _l in watcher.modes_for("viewbug.com")][0] == "vb"
+    assert [k for k, _l in watcher.modes_for("r-cover.net")][0] == "rc"
+    assert watcher.js_mode("vb") == "all" and watcher.js_mode("rc") == "all"

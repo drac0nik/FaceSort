@@ -153,6 +153,19 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.63.3
+- Gallery Watcher's browser has the latest Max Image Saver (2.15.1) built in:
+  - ViewBug: ALL reads a member's whole gallery (every page the site loads as you scroll), saved as
+    Viewbug/<member>/<YYYY-MM Title>, at the largest size the site serves (1600 px).
+  - r-cover.net: ALL reads every grid page of a profile, large versions, saved as
+    r-cover/<username>/<original name>.
+  - Videos found on a page are saved as they are, with their own extension.
+  - Other sites: folders follow the page's address (site/name1/name2), and every page of one gallery
+    lands in the same folder.
+  - The other fixes and site updates from the extension.
+- The watcher offers ViewBug and r-cover under "Read:" for those sites.
+- MM+, P+, SuicideGirls sets, Flickr, YouPic and Model Society still work from the watcher as before.
+
 1.63.2
 - Fixed: dragging photos onto a folder (or anything else that changed the selection) made a row of
   little windows flash in the top left corner. They were the selection bar's old buttons, shown for
