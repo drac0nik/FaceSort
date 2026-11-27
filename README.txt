@@ -153,6 +153,12 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.63.2
+- Fixed: dragging photos onto a folder (or anything else that changed the selection) made a row of
+  little windows flash in the top left corner. They were the selection bar's old buttons, shown for
+  a moment as windows of their own while the bar was redrawn. The bar now also skips redrawing when
+  nothing about the selection changed.
+
 1.63.1
 - Gallery Watcher has its own button on the left rail (Watcher, under Smart). Check galleries stays
   in the Library menu.

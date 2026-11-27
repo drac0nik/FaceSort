@@ -31,8 +31,11 @@ class SelectionBar(QFrame):
         host.installEventFilter(self._filter)
 
     def _clear(self):
+        # (1.63.2) hidden and taken out of the bar where they are - setParent(None) made each old button
+        # a window of its own for a moment (they flashed in the corner of the screen)
         for b in self.buttons:
-            b.setParent(None)
+            b.hide()
+            self.lay.removeWidget(b)
             b.deleteLater()
         self.buttons = []
 
@@ -51,8 +54,14 @@ class SelectionBar(QFrame):
     def update_for(self, n_faces, n_photos, kind):
         n = n_faces + n_photos
         if not n or kind in NO_BAR or self.win.center.currentWidget() is not self.win.grid:
+            self._sig = None
             self.hide()
             return False
+        sig = (n_faces, n_photos, kind, self.host.width())
+        if sig == getattr(self, "_sig", None) and self.buttons and self.isVisible():
+            self.place()
+            return True                  # (nothing changed: the bar stays as it is)
+        self._sig = sig
         self._clear()
         what = (f"{n_faces:,} face{'s' if n_faces != 1 else ''}" if n_faces and not n_photos else
                 f"{n:,} selected")

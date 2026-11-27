@@ -102,3 +102,36 @@ def test_theme_setting():
     assert "QToolBar#header" in theme.stylesheet()
     s = store.load_settings()
     assert theme.current(s) in theme.THEMES
+
+
+def test_selection_bar_never_flashes_windows(window, qapp):
+    """(1.63.2) Rebuilding the bar's buttons must not turn the old ones into windows of their own."""
+    from PySide6.QtCore import QEvent, QItemSelectionModel, QObject
+    from PySide6.QtWidgets import QWidget
+    w = window
+    alice = w.conn.execute("SELECT id FROM persons WHERE name='Alice'").fetchone()[0]
+    w.show()
+    w.show_view(("person", alice))
+    pump(qapp, 0.3)
+    shown = []
+
+    class Spy(QObject):
+        def eventFilter(self, o, e):
+            if e.type() == QEvent.Show and isinstance(o, QWidget) and o.isWindow() and o is not w:
+                shown.append(type(o).__name__)
+            return False
+    spy = Spy()
+    qapp.installEventFilter(spy)
+    try:
+        for i in range(4):                     # selections of different sizes: the bar is rebuilt each time
+            w.grid.clearSelection()
+            for r in range(i + 1):
+                idx = w.model.index(r, 0)
+                if idx.isValid():
+                    w.grid.selectionModel().select(idx, QItemSelectionModel.Select)
+            w.update_hint()
+            w.selbar.update_for(i + 1, 0, "person")
+            pump(qapp, 0.1)
+    finally:
+        qapp.removeEventFilter(spy)
+    assert not shown, shown
