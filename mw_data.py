@@ -8,7 +8,7 @@ import engine
 import jobs
 import known
 import store
-from PySide6.QtCore import QEvent, QSize, Qt
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import QApplication, QDialog
 from viewer_parts import PersonPicker
@@ -414,6 +414,8 @@ class DataMixin:
             helpers.pool().touch()
 
     def eventFilter(self, obj, ev):
+        if obj is getattr(self, "_header", None) and ev.type() in (QEvent.Resize, QEvent.LayoutRequest, QEvent.Show):
+            QTimer.singleShot(0, self.place_omni)       # (1.63.1) keep the search box centred
         if ev.type() in (QEvent.KeyPress, QEvent.MouseButtonPress, QEvent.Wheel):
             self._mark_input()
         # Ctrl + mouse wheel resizes the thumbnails

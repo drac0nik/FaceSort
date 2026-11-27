@@ -195,20 +195,20 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
             logo.setPixmap(QIcon(icon_path).pixmap(24, 24))
         tb.addWidget(logo)
         tb.addWidget(brand)
+        self._brand = brand
         # one search box: typing narrows the lists on the left; Enter searches photos by description
         self.omni = QLineEdit()
         self.omni.setObjectName("omni")
         self.omni.setPlaceholderText("Search people, folders, photos - or describe one: “beach at sunset”   (Ctrl K)")
         self.omni.addAction(app_icon("search"), QLineEdit.LeadingPosition)
         self.omni.setClearButtonEnabled(True)
-        self.omni.setMinimumWidth(320)
-        self.omni.setMaximumWidth(620)
-        self.omni.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.omni.setToolTip("Type to find a person or folder in the lists (Smart Groups: file names too).\n"
                              "Press Enter to search your photos by what's in them - a small AI model on this PC.")
         self.omni.textChanged.connect(self.omni_changed)
         self.omni.returnPressed.connect(self.omni_enter)
-        tb.addWidget(self.omni)
+        self.omni.setParent(tb)                 # (1.63.1) centred on the window, over the header row
+        self._header = tb
+        tb.installEventFilter(self)
         sc = QShortcut(QKeySequence("Ctrl+K"), self)
         sc.setContext(Qt.WindowShortcut)
         sc.activated.connect(lambda: (self.omni.setFocus(), self.omni.selectAll()))
@@ -307,12 +307,11 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         ml.addAction(self.a_tags)
         ml.addSeparator()
         ml.addAction(self.a_galleries)
-        ml.addAction(self.a_browser)
         ml.addSeparator()
         ml.addAction(self.a_safe)
         ml.addAction(self.a_history)
         self.library_btn = menu_button("Library", app_icon("folder"), ml,
-                                       "Sort into folders, write tags, galleries, Safe view and History")
+                                       "Sort into folders, write tags, check galleries, Safe view and History")
         self.a_export.changed.connect(self._library_badge)
         # Import: add a folder, scan, the import limit
         mi = QMenu(self)
@@ -338,23 +337,32 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         self.update_btn.clicked.connect(self.update_clicked)
         self.a_update = tb.addWidget(self.update_btn)
         self.show_update_state(None)
-        # Settings, and Help
-        bs = QToolButton()
-        bs.setDefaultAction(self.a_settings)
-        bs.setToolButtonStyle(Qt.ToolButtonIconOnly)
-        tb.addWidget(bs)
-        mh = QMenu(self)
+        QTimer.singleShot(0, self.place_omni)
+
+    def place_omni(self):
+        """(1.63.1) The search box in the middle of the window's width - as wide as it can be without
+        running into the name on the left or the buttons on the right."""
+        tb = getattr(self, "_header", None)
+        if tb is None or not hasattr(self, "omni"):
+            return
+        right = [w for w in (self.status_pill, self.next_btn, self.library_btn, self.import_btn, self.update_btn)
+                 if w.isVisible()]
+        right_x = min((w.geometry().x() for w in right), default=tb.width())
+        left_x = self._brand.geometry().right() if self._brand.isVisible() else 0
+        half = min(tb.width() // 2 - left_x, right_x - tb.width() // 2) - 14
+        w = max(160, min(620, 2 * half))
+        h = self.omni.sizeHint().height()
+        self.omni.setGeometry((tb.width() - w) // 2, (tb.height() - h) // 2, w, h)
+        self.omni.raise_()
+        self.omni.show()
+
+    def help_menu(self, parent):
+        mh = QMenu(parent)
         mh.addAction(self.a_help)
         mh.addAction("Keyboard keys…", self.show_keys)
         mh.addSeparator()
         mh.addAction("Check for updates", self.update_clicked)
-        bh = QToolButton()
-        bh.setIcon(std_icon(QStyle.SP_DialogHelpButton))
-        bh.setToolTip("Help, the keyboard keys, updates")
-        bh.setMenu(mh)
-        bh.setPopupMode(QToolButton.InstantPopup)
-        bh.setStyleSheet("QToolButton::menu-indicator { image: none; width: 0; }")
-        tb.addWidget(bh)
+        return mh
 
     def _library_badge(self):
         """The Library button shows how many photos are waiting to be sorted into folders."""
@@ -653,6 +661,24 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
             self.rail_group.addButton(b, i)
             rl.addWidget(b)
         self.rail_group.idClicked.connect(self.side_tabs.setCurrentIndex)
+        rl.addSpacing(8)
+
+        def rail_button(text, icon, tip, fn=None, size=20):
+            b = QToolButton()
+            b.setText(text)
+            b.setIcon(icon)
+            b.setIconSize(QSize(size, size))
+            b.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+            b.setProperty("rail", "true")
+            b.setFixedSize(52, 54)
+            b.setToolTip(tip)
+            if fn is not None:
+                b.clicked.connect(fn)
+            rl.addWidget(b)
+            return b
+        # (1.63.1) Gallery Watcher: its own place on the rail (opens its window)
+        self.watcher_btn = rail_button("Watcher", self.a_browser.icon(), self.a_browser.toolTip(),
+                                       self.a_browser.trigger, 22)
         rl.addStretch(1)
         hb = QToolButton()
         hb.setText("History")
@@ -664,6 +690,11 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         hb.setToolTip("Everything you've done in the last 30 days - undo any of it")
         hb.clicked.connect(self.show_history)
         rl.addWidget(hb)
+        self.settings_btn = rail_button("Settings", self.a_settings.icon(), "Settings", self.a_settings.trigger)
+        self.help_btn = rail_button("Help", std_icon(QStyle.SP_DialogHelpButton), "Help, the keyboard keys, updates")
+        self.help_btn.setMenu(self.help_menu(self.help_btn))
+        self.help_btn.setPopupMode(QToolButton.InstantPopup)
+        self.help_btn.setStyleSheet("QToolButton::menu-indicator { image: none; width: 0; }")
 
         def rail_sync(i):
             b = self.rail_group.button(i)

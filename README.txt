@@ -153,6 +153,13 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.63.1
+- Gallery Watcher has its own button on the left rail (Watcher, under Smart). Check galleries stays
+  in the Library menu.
+- Settings and Help moved to the bottom of the left rail, under History.
+- The search box sits in the middle of the top bar, centred on the window. It gets as wide as it can
+  without running into the name on the left or the buttons on the right.
+
 1.63.0
 A new look - every feature is still there, just easier to find.
 - Graphite: a dark theme with one blue accent, amber for "waiting for you" and green for "confirmed",
