@@ -74,6 +74,18 @@ class SettingsDialog(QDialog):
                 layout.addSpacing(10)
             layout.addWidget(lb)
 
+        heading("Appearance", lay)                # (1.63)
+        ar = QHBoxLayout()
+        ar.addWidget(QLabel("Look:"))
+        self.theme_box = QComboBox()
+        self.theme_box.addItem("Graphite (dark)", "graphite")
+        self.theme_box.addItem("Classic (light)", "classic")
+        self.theme_box.setCurrentIndex(0 if self.s.get("theme", "graphite") == "graphite" else 1)
+        self.theme_box.setToolTip("Graphite: dark, quiet panels so the photos stand out. Classic: the light look "
+                                  "of earlier versions. (A change shows the next time FaceSort starts.)")
+        ar.addWidget(self.theme_box)
+        ar.addStretch(1)
+        lay.addLayout(ar)
         heading("Photos library", lay)
         rl = QLabel("The main folder FaceSort sorts your photos into and looks after (Sort into folders uses "
                     "it). A reference file inside it remembers every confirmation, tag and folder, so choosing "
@@ -740,6 +752,7 @@ class SettingsDialog(QDialog):
         s["keywords_all_people"] = self.cb_kw.isChecked()
         s["folder_hints"] = self.cb_folders.isChecked()
         s["import_into_library"] = self.cb_import_lib.isChecked()
+        s["theme"] = self.theme_box.currentData()
         s["auto_move"] = self.cb_auto_move.isChecked()
         s["scan_on_start"] = self.cb_start.isChecked()
         s["ai_detector"] = self.cb_ai.isChecked()

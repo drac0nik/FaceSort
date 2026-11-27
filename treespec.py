@@ -340,7 +340,8 @@ def build(c, ctx):
         it.dat[ROLE_USER + 1] = name.lower()
         return it
     pending_only = bool(S.get("people_pending_only"))
-    for row in listed:
+    # (1.63) people with suggestions waiting come first; once confirmed they go back in A-Z order
+    for row in sorted(listed, key=lambda r: (not r[3], r[1].casefold())):
         if pending_only and not row[3]:
             continue
         sec.addChild(person_item(*row))
@@ -536,7 +537,7 @@ def build(c, ctx):
             it.dat[ROLE_USER + 2] = i + 1
             sec2.addChild(it)
 
-    sec3 = section("Other", tree=3)
+    sec3 = Row(["Other"])                       # (1.63: shared out into sections below)
     disc = c.execute("""SELECT COUNT(*) FROM photos WHERE sort_later=0 AND (discarded=1
                         OR id IN (SELECT photo_id FROM faces WHERE ignored=2))""").fetchone()[0]
     nof = c.execute(f"""SELECT COUNT(*) FROM photos ph WHERE {ctx['nofaces_sql']}""").fetchone()[0]
@@ -678,8 +679,48 @@ def build(c, ctx):
         it.setIcon(0, std_icon(SP["MessageBoxWarning"]))
         it.setData(0, ROLE_USER, ("errors", None))
         sec3.addChild(it)
-    sort_other(sec3, S.get("other_sort", "default"))
+    # (1.63) the smart groups in sections: what needs you first, then faces, photos, the library's health
+    groups_sec = list(tops[3])
+    by_kind = {k.dat.get(ROLE_USER, ("",))[0]: k for k in sec3.kids}
+    order = {"needs": ("same", "shoot", "tattoos", "maybe_notfaces"),
+             "faces": ("unknown", "partial"),
+             "photos": ("nofaces", "nopeople", "sortlater", "ai"),
+             "health": ("dupes", "misplaced", "unassoc", "discarded", "errors")}
+    used = {k for ks in order.values() for k in ks}
+    order["photos"] += tuple(k for k in by_kind if k not in used)          # (anything new: under Photos)
+    titles = {"needs": "Needs you", "faces": "Faces", "photos": "Photos", "health": "Library health"}
+    made = {}
+    for key, kinds in order.items():
+        kids = [by_kind[k] for k in kinds if k in by_kind]
+        if not kids:
+            continue
+        if key == "needs":
+            n = sum(_count(k.txt) for k in kids)
+            sec = Row([f"{titles[key]} ({n:,})"])
+            sec.setToolTip(0, "Things only you can decide: pairs that may be one person, faces matched by their "
+                              "clothes or a tattoo, things that may not be faces")
+        else:
+            sec = Row([titles[key]])
+        sec.setFlags(F_ENABLED)
+        sec.bold = True
+        for k in kids:
+            sec.addChild(k)
+        sort_other(sec, S.get("other_sort", "default"))
+        sec.setExpanded(True)
+        made[key] = sec
+    home = Row(["Overview"])
+    home.setIcon(0, app_icon("sparkle"))
+    home.setData(0, ROLE_USER, ("smart_home", None))
+    home.setToolTip(0, "All the smart groups at a glance - open one to work through it")
+    tops[3] = [home] + [made[k] for k in ("needs",) if k in made] + groups_sec + \
+        [made[k] for k in ("faces", "photos", "health") if k in made]
     return tops
+
+
+def _count(text):
+    import re
+    m = re.search(r"([\d,]+)\D*$", text)
+    return int(m.group(1).replace(",", "")) if m else 0
 
 
 def sort_other(sec, mode):

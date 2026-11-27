@@ -742,6 +742,16 @@ class EngineMixin:
             self.statusBar().hide()
             self.showFullScreen()
 
+    def reveal_selection(self):
+        """Ctrl+Shift+E: open the folder window with the selected photos picked."""
+        ids = self.sel_photos() if hasattr(self, "sel_photos") else []
+        if not ids:
+            return
+        paths = [r[0] for r in self.conn.execute(
+            f"SELECT path FROM photos WHERE id IN ({','.join('?' * len(ids))})", ids)]
+        if paths:
+            show_in_folder(paths[0], paths[1:])
+
     def grid_menu(self, pos):
         idx = self.grid.indexAt(pos)
         if idx.isValid() and self.model.rows[idx.row()][0] and not self.grid.selectionModel().isSelected(idx):
@@ -926,7 +936,12 @@ class EngineMixin:
                 others = [r[0] for r in self.conn.execute(
                     f"SELECT path FROM photos WHERE id IN ({','.join('?' * len(ids))})", ids)] if len(ids) > 1 else []
                 show_in_folder(path, [o for o in others if o != path])
-            m.addAction("Open window to this image" + ("s" if len(self.sel_photos()) > 1 else ""), reveal)
+            m.addAction("Show in folder\tCtrl+Shift+E", reveal)
+        import menu_sections                     # (1.63) in sections: this view, naming, faces, organise…
+        nf, np_ = len(faces), len(photos)
+        what = (f"{nf:,} face{'s' if nf != 1 else ''}" if nf else "") + \
+            (" and " if nf and np_ else "") + (f"{np_:,} photo{'s' if np_ != 1 else ''}" if np_ else "")
+        menu_sections.organize(m, what)
         m.exec(self.grid.viewport().mapToGlobal(pos))
 
     def rotate_selected(self, clockwise):

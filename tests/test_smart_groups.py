@@ -124,29 +124,33 @@ def test_untagged_only_groups_and_no_faces(window, photos):
 
 
 def test_other_list_order(window, photos):
+    """(1.63) the smart groups are in sections; each is sorted by the chosen order on its own."""
     w = window
-    sec = None
 
-    def other_names():
-        nonlocal sec
+    def section(start):
         for i in range(w.tree2.topLevelItemCount()):
             t = w.tree2.topLevelItem(i)
-            if t.text(0).startswith("Other"):
-                sec = t
-        return [sec.child(i).text(0) for i in range(sec.childCount())]
+            if t.text(0).startswith(start):
+                return [t.child(j).text(0) for j in range(t.childCount())]
+        return []
     w.settings["other_sort"] = "default"
     w.rebuild_tree()
-    usual = other_names()
-    assert usual[0].startswith("Unknown faces")
-    w.settings["other_sort"] = "az"
-    w.rebuild_tree()
-    names = [n.lstrip("~").split("   ")[0].casefold() for n in other_names()]
-    assert names == sorted(names)
-    w.settings["other_sort"] = "most"
-    w.rebuild_tree()
-    counts = [int(n.replace(",", "").split()[-1]) if n.split()[-1].replace(",", "").isdigit() else
-              int(n.replace(",", "").split()[-2]) for n in other_names()]
-    assert counts == sorted(counts, reverse=True)
+    tops = [w.tree2.topLevelItem(i).text(0) for i in range(w.tree2.topLevelItemCount())]
+    assert tops[0].startswith("Overview")
+    assert section("Faces")[0].startswith("Unknown faces")
+    assert section("Photos")
+    for order in ("az", "most"):
+        w.settings["other_sort"] = order
+        w.rebuild_tree()
+        for sec in ("Faces", "Photos", "Library health"):
+            got = section(sec)
+            if order == "az":
+                names = [n.lstrip("~").split("   ")[0].casefold() for n in got]
+                assert names == sorted(names), (sec, names)
+            else:
+                counts = [int(n.replace(",", "").split()[-1]) if n.split()[-1].replace(",", "").isdigit() else
+                          int(n.replace(",", "").split()[-2]) for n in got]
+                assert counts == sorted(counts, reverse=True), (sec, got)
     w.settings["other_sort"] = "default"
     w.rebuild_tree()
 

@@ -447,7 +447,7 @@ class PhotoViewer(ViewerEditMixin, QWidget):
         self.edit_b.setToolTip("Edit mode: light, color, crop, color pop… for photos; trim, cut, turn, low light "
                                "for videos; all the photo edits plus frames, speed and direction for animated GIFs. "
                                "Save copy keeps the original.")
-        self.edit_b.setStyleSheet("QPushButton { background: #4c8dff; color: #0b1220; font-weight: bold; "
+        self.edit_b.setStyleSheet("QPushButton { background: #6E9BFF; color: #0E1630; font-weight: 600; "
                                   "padding: 4px 14px; border-radius: 6px; }  QPushButton:disabled { background: #555; }")
         self.edit_b.clicked.connect(self.enter_edit)
         btns.addWidget(self.edit_b)
@@ -459,7 +459,7 @@ class PhotoViewer(ViewerEditMixin, QWidget):
         more.setMenu(self.more_menu)
         btns.addWidget(more)
         for text, fn in (("Open in default app", lambda: self.path and open_file(self.path)),
-                         ("Open window to this image", lambda: self.path and show_in_folder(self.path))):
+                         ("Show in folder", lambda: self.path and show_in_folder(self.path))):
             b = QPushButton(text)
             b.clicked.connect(fn)
             btns.addWidget(b)
@@ -580,7 +580,7 @@ class PhotoViewer(ViewerEditMixin, QWidget):
             m.addAction("Export…", lambda: self.win.export_files("ids", [pid]))
         m.addSeparator()
         m.addAction("Open in default app", lambda: self.path and open_file(self.path))
-        m.addAction("Open window to this image", lambda: self.path and show_in_folder(self.path))
+        m.addAction("Show in folder", lambda: self.path and show_in_folder(self.path))
 
     def close_viewer(self):
         if self.editing:

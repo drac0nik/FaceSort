@@ -1,4 +1,5 @@
 """MainWindow, part: library folders shown, and filling the gallery."""
+import html
 import os
 import re
 import shutil
@@ -11,7 +12,7 @@ from PySide6.QtCore import QItemSelectionModel, Qt, QTimer
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import QListWidgetItem, QMessageBox, QStyle, QTreeWidgetItem
 from icons import app_icon
-from ui_common import (
+from ui_common import (round_pixmap, 
     button_icon, HAS_PERSON, key_of, log, LEGEND_GRAY, legend_html, NOFACES_WHERE, PEOPLE_LABEL_ALL, std_icon, UNASSOC_WHERE,
     tool_button)
 
@@ -1156,6 +1157,12 @@ class GalleryMixin:
                                   "they then move to that person.")
             self.set_buttons([("Tag people…", self.act_tag, True),
                               ("Look again for faces", self.rescan_nofaces)])
+        elif kind == "smart_home":           # (1.63) every smart group at a glance
+            rows = []
+            self.title.setText("Smart groups")
+            self.subtitle.setText("FaceSort keeps these up to date in the background. Open one to work through it.")
+            self.set_buttons([])
+            self.smart_home.refresh()
         elif kind == "errors":
             rows = []
             errs = c.execute("SELECT path, error FROM photos WHERE error IS NOT NULL ORDER BY path").fetchall()
@@ -1173,12 +1180,15 @@ class GalleryMixin:
             self.set_buttons([("Try again", self.retry_unreadable)])
         else:
             rows = []
-        self.center.setCurrentWidget(self.err_list if kind == "errors" else self.grid)
+        self.center.setCurrentWidget({"errors": self.err_list, "smart_home": self.smart_home,
+                                      "same": self.pairs_page}.get(kind, self.grid))
+        if kind == "same":
+            self.pairs_page.refresh()
         if kind == "dropped":
             self.fill_extra_files(ident)
         else:
             self.extra_box.hide()
-        self.zoom_row.setVisible(kind != "errors")
+        self.zoom_row.setVisible(kind not in ("errors", "smart_home", "same"))
         self._search_shown = None
         typed = []
         gf = getattr(self, "gallery_filter", None)
@@ -1307,6 +1317,7 @@ class GalleryMixin:
         row = self.model.rows[sel[0].row()] if sel else None
         self.details_top.clear()
         self.details_meta.clear()
+        self.update_looks_card(row if len(sel) == 1 else None)
         if row is None:
             QTreeWidgetItem(self.details_top, ["", "Select a picture to see its details"])
             return
@@ -1346,6 +1357,28 @@ class GalleryMixin:
             it.setForeground(0, QBrush(QColor(LEGEND_GRAY)))
         if not self.details_meta.topLevelItemCount():
             QTreeWidgetItem(self.details_meta, ["", "No EXIF / metadata in this file"])
+
+    def update_looks_card(self, row):
+        """(1.63) Details: who the selected face looks like (a suggestion), with Yes / Someone else."""
+        card = getattr(self, "looks_card", None)
+        if card is None:
+            return
+        fid = row[0] if row and row[0] > 0 else None
+        hit = self.conn.execute("""SELECT f.person_id, p.name, f.sugg_conf FROM faces f JOIN persons p ON p.id=f.person_id
+                                   WHERE f.id=? AND f.confirmed=0 AND f.ignored=0""", (fid,)).fetchone() if fid else None
+        if not hit:
+            card.hide()
+            return
+        pid, name, conf = hit
+        rep = self.conn.execute("SELECT id FROM faces WHERE person_id=? AND confirmed=1 AND ignored=0 "
+                                "ORDER BY COALESCE(clarity, 0) DESC LIMIT 1", (pid,)).fetchone()
+        if rep:
+            self.looks_face.setPixmap(round_pixmap(self.face_pixmap(rep[0], want_px=80, face_only=True), 40))
+        word = "Strong match" if (conf or 50) >= 80 else "Likely" if (conf or 50) >= 65 else "Possible"
+        self.looks_text.setText(f"<span style='color:gray'>Looks like</span><br><b>{html.escape(name)}</b>"
+                                f"<br><span style='color:gray'>{word}" + (f" · {conf:.0f}%" if conf else "") + "</span>")
+        self.looks_yes.setText(f"It's {name.split()[0]}   C")
+        card.show()
 
     def update_hint(self, *_):
         if self.details.isVisible():
@@ -1403,3 +1436,9 @@ class GalleryMixin:
             items.append("[Double-click] Preview")
         h = legend_html(items)
         self.hint.setText((f"<b>{n} selected</b>&nbsp;&nbsp;&nbsp;" if n else "") + h)
+        # (1.63) with something selected, its actions float over the gallery instead (keys on them)
+        bar = getattr(self, "selbar", None)
+        if bar is not None:
+            ids = [self.model.rows[i.row()][0] for i in sel if 0 <= i.row() < len(self.model.rows)]
+            shown = bar.update_for(sum(1 for k in ids if k > 0), sum(1 for k in ids if k < 0), kind)
+            self.hint.setVisible(not shown)

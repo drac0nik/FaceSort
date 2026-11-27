@@ -153,6 +153,41 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.63.0
+A new look - every feature is still there, just easier to find.
+- Graphite: a dark theme with one blue accent, amber for "waiting for you" and green for "confirmed",
+  so the photos stand out. Settings > General > Appearance switches back to Classic (light).
+- The top bar is shorter: search box (Ctrl+K - type a name, or describe a photo), a status pill
+  while FaceSort is working, Next task (Quick review and the rest under its arrow), Library (export,
+  sort into folders, reconnect, tags, galleries, browser, safe mode, history), Import, Settings and
+  Help (with a list of the keyboard keys).
+- The side lists are picked from a slim rail on the left: People, Folders, Albums, Smart, and
+  History at the bottom.
+- People: anyone with suggestions waiting to confirm is listed first, then everyone else A-Z. Once
+  you've confirmed them they go back to their place in A-Z.
+- Smart groups are in sections: Overview, Needs you (same person?, same shoot, tattoos, maybe not
+  faces), Unnamed groups, Faces, Photos and Library health. The order box sorts each section.
+- Overview (top of Smart): cards for each smart group with a few sample faces, what it is and a
+  button to start, so you can see at a glance what needs doing.
+- Possibly the same person opens as a list of pairs - both people's faces side by side, how strong
+  the match is and why (faces, tattoo, jewelry, name) - with Merge… and Not the same on each.
+  Filter by All / Faces / Tattoos / Names.
+- A selection bar floats over the gallery when something is picked: Name… (Enter), Confirm (C),
+  Not this person (R), Not a face (N), Ignore (I), Later (L), Discard (D) and More… (the whole
+  right-click menu). It replaces the row of key hints. On a narrow window the least used buttons
+  move into More….
+- The right-click menu is in sections with headings: In this view, Name and tag, Faces, Organise,
+  Edit, Files, Open. Nothing was removed. The top line says how many faces / photos it's for.
+  "Open window to this image" is now "Show in folder" (Ctrl+Shift+E, also in the viewer).
+  Assign to has a find box at the top - type a few letters to narrow the names.
+- The details panel shows who a face looks like, with It's <name> (C) and Someone else (R).
+- Quick review: a progress bar at the top (answered / about how many left), bigger Yes / No /
+  Skip / Undo buttons.
+- Name faces window: a larger search box, the keys listed along the bottom, and Name them as the
+  main button.
+- Not in this build: the grouping review screen from the samples (it needs changes to how groups
+  are made - a separate piece of work).
+
 1.62.1
 - F in the gallery switches between Sort (faces) and Viewer (whole photos) - the same key as in Quick
   review.

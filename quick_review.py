@@ -4,7 +4,7 @@ import store
 from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QCompleter, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizePolicy, QToolButton, QVBoxLayout, QWidget)
+    QCompleter, QHBoxLayout, QLabel, QLineEdit, QProgressBar, QPushButton, QSizePolicy, QToolButton, QVBoxLayout, QWidget)
 from icons import app_icon
 from ui_common import round_pixmap, SUGGEST
 
@@ -146,6 +146,15 @@ class QuickReview(QWidget):
         tf.setBold(True)
         tl.setFont(tf)
         top.addWidget(tl)
+        top.addSpacing(16)
+        self.bar = QProgressBar()                 # (1.63) how far through this sitting
+        self.bar.setTextVisible(False)
+        self.bar.setFixedHeight(6)
+        self.bar.setMaximumWidth(360)
+        top.addWidget(self.bar, 1)
+        self.bar_text = QLabel()
+        self.bar_text.setStyleSheet("color: #A9ABB1;")
+        top.addWidget(self.bar_text)
         top.addStretch(1)
         self.full_b = QPushButton("Whole photo   (F)")
         self.full_b.setCheckable(True)
@@ -191,19 +200,22 @@ class QuickReview(QWidget):
         nrow.addWidget(self.name, 1)
         lay.addLayout(nrow)
         brow = QHBoxLayout()
-        self.yes_b = QPushButton("Yes, same person   (Y)")
-        self.no_b = QPushButton("No   (N)")
-        self.skip_b = QPushButton("Skip   (Space)")
-        self.undo_b = QPushButton("Undo   (Z)")
+        self.yes_b = QPushButton("✓  Yes, same person   Y")
+        self.no_b = QPushButton("✕  No   N")
+        self.skip_b = QPushButton("Skip   Space")
+        self.undo_b = QPushButton("↶  Undo   Z")
         done_b = QPushButton("Done")
         for b in (self.yes_b, self.no_b):
-            b.setMinimumHeight(44)
+            b.setMinimumHeight(52)
             bf = b.font()
             bf.setPointSize(bf.pointSize() + 2)
             bf.setBold(True)
             b.setFont(bf)
-        self.yes_b.setStyleSheet("QPushButton { color: #1f9d55; }")
-        self.no_b.setStyleSheet("QPushButton { color: #c0392b; }")
+        self.yes_b.setStyleSheet("QPushButton { background: #57C27A; color: #0B1F12; border: 0; border-radius: 10px; }"
+                                 "QPushButton:hover { background: #6BD08C; }")
+        self.no_b.setStyleSheet("QPushButton { color: #F07A6E; border-radius: 10px; }")
+        for b in (self.skip_b, self.undo_b, done_b):
+            b.setMinimumHeight(52)
         self.yes_b.clicked.connect(lambda: self.answer(True))
         self.no_b.clicked.connect(lambda: self.answer(False))
         self.skip_b.clicked.connect(self.skip)
@@ -387,12 +399,12 @@ class QuickReview(QWidget):
         q = self.q
         if q.b.kind == "person":
             self.question.setText(f"Is this {q.b.name}?" if q.a.kind == "single" else f"Is this group {q.b.name}?")
-            self.yes_b.setText(f"Yes, it's {q.b.name}   (Y)")
+            self.yes_b.setText(f"✓  Yes, it's {q.b.name}   Y")
             self.name.setVisible(False)
             self.name_label.setVisible(False)
         else:
             self.question.setText("Same person?")
-            self.yes_b.setText("Yes, same person   (Y)")
+            self.yes_b.setText("✓  Yes, same person   Y")
         bits = [f"{max(0, min(99, round((q.sim + 0.15) * 100 / 0.85)))}% alike"]
         if q.event_gap is not None and q.event_gap <= review.EVENT_WINDOW:
             mins = int(q.event_gap // 60)
@@ -409,6 +421,10 @@ class QuickReview(QWidget):
 
     def update_progress(self, total):
         s = self.sess
+        done_n = s.answered
+        self.bar.setRange(0, max(1, done_n + (total or 0)))
+        self.bar.setValue(done_n)
+        self.bar_text.setText(f"{done_n} answered" + (f" · about {total:,} left" if total else ""))
         self.progress.setText(f"Answered {s.answered}  ·  {s.sorted_faces:,} faces sorted"
                               + (f"  ·  about {total:,} question{'s' if total != 1 else ''} left" if total else "")
                               + "      Y yes · N no · Space skip · Z undo · F whole photo · click a small face to see it big"

@@ -1166,7 +1166,9 @@ class PersonPicker(QDialog):
         ef = self.edit.font()
         ef.setPointSizeF(ef.pointSizeF() * 1.2)
         self.edit.setFont(ef)
-        self.edit.setMinimumHeight(34)
+        self.edit.setMinimumHeight(42)
+        self.edit.setObjectName("omni")            # (1.63) the command-palette look
+        self.edit.setStyleSheet("QLineEdit { border-radius: 10px; padding: 8px 12px; }")
         lay.addWidget(self.edit)
         body = QHBoxLayout()
         self.list = QListWidget()
@@ -1185,10 +1187,18 @@ class PersonPicker(QDialog):
         self.person = PicPanel(win, "Highlighted person")
         body.addWidget(self.person)
         lay.addLayout(body, 1)
+        foot = QHBoxLayout()                       # (1.63) the keys, then the buttons
+        keys = QLabel("↑ ↓  move    ·    Enter  take the highlighted one (or make a new person)    ·    "
+                      "double-click  take    ·    Esc  cancel")
+        keys.setStyleSheet("color: #8D8F96;")
+        foot.addWidget(keys, 1)
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.button(QDialogButtonBox.Ok).setText("Name them")
+        bb.button(QDialogButtonBox.Ok).setProperty("primary", True)
         bb.accepted.connect(self.take)
         bb.rejected.connect(self.reject)
-        lay.addWidget(bb)
+        foot.addWidget(bb)
+        lay.addLayout(foot)
         self.result_name = None
         # everyone: library people (with their best face, photo count and folder) + remembered names
         c = win.conn

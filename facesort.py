@@ -166,84 +166,171 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
 
     # ------------------------------------------------------------------ layout
     def _build_toolbar(self):
+        """(1.63) The header: the app's name, one search box, what's running, Next task, Import, and the
+        Library / Help menus - everything the old row of buttons had, nothing removed."""
         tb = QToolBar("Main")
+        tb.setObjectName("header")
         tb.setMovable(False)
+        tb.setFloatable(False)
         tb.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        tb.setIconSize(QSize(20, 20))
+        tb.setIconSize(QSize(18, 18))
+        tb.setContextMenuPolicy(Qt.PreventContextMenu)
         self.addToolBar(tb)
-        st = self.style()
+        self.header = tb
 
-        def act(text, icon, fn, tip=""):
-            a = QAction(std_icon(icon), text, self)
+        def action(text, icon, fn, tip="", std=True):
+            a = QAction(std_icon(icon) if std else app_icon(icon), text, self)
             a.triggered.connect(fn)
             a.setToolTip(tip or text)
-            tb.addAction(a)
             return a
 
-        self.a_add = act("Add folder…", QStyle.SP_DirOpenIcon, self.add_folder, "Add a folder of photos")
-        self.a_scan = act("Scan", QStyle.SP_BrowserReload, self.toggle_scan, "Look for new or changed photos")
-        self.a_scan_videos = act("Scan videos", QStyle.SP_DriveDVDIcon, lambda: self.start_scan(videos_only=True),
-                                 "Look for faces in new videos (Settings › Videos: only when I click Scan videos)")
-        self.a_scan_videos.setVisible(self.settings.get("video_mode", "after") == "separate")
-        lim = QWidget()
-        ll = QHBoxLayout(lim)
-        ll.setContentsMargins(6, 0, 6, 0)
-        ll.setSpacing(4)
-        lim.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Preferred)
-        lt = QLabel("Import limit:")
-        self.limit_edit = QLineEdit(str(int(self.settings.get("import_limit", 0) or 0)))
-        self.limit_edit.setValidator(QIntValidator(0, 10_000_000, self))
-        self.limit_edit.setFixedWidth(64)
-        self.limit_edit.setAlignment(Qt.AlignRight)
-        tip = ("How many new files each Scan imports. 0 = no limit.\n"
-               "With a limit, FaceSort stops at that many, groups and suggests, and waits - click Scan when "
-               "you're ready for the next batch. (It also won't import anything by itself at start-up.)")
-        for wdg in (lt, self.limit_edit):
-            wdg.setToolTip(tip)
-        self.limit_edit.editingFinished.connect(self.save_import_limit)
-        ll.addWidget(lt)
-        ll.addWidget(self.limit_edit)
-        tb.addWidget(lim)
-        tb.addSeparator()
-        self.a_tags = act("Write tags", QStyle.SP_DialogSaveButton, self.write_tags,
-                          "Save people's names into the photo files")
-        self.a_export = act("Sort into folders…", QStyle.SP_DirLinkIcon, self.export_folders,
-                            "Copy or move photos into one folder per person")
-        m = QMenu(self)                          # (1.57.5) the arrow beside it
-        m.addAction("Sort into folders…", self.export_folders)
-        m.addAction("Bring everything into the library…", lambda: self.bring_into_library())
-        m.addAction("Reconnect files to their galleries…", lambda: self.reconnect_galleries())
-        self.a_export.setMenu(m)
-        b = tb.widgetForAction(self.a_export)
-        if isinstance(b, QToolButton):
-            b.setPopupMode(QToolButton.MenuButtonPopup)
-        tb.addSeparator()
-        self.a_review = act("Quick review", QStyle.SP_MediaPlay, self.quick_review,
-                            "Answer yes/no questions that sort the most faces per keypress")
-        # (1.59) biggest jobs first
-        self.a_next = act("Next", QStyle.SP_MediaSkipForward, lambda: self.next_task(),
-                          "Go to the job that sorts the most photos: the person whose suggestions, or the unnamed "
-                          "group, covering the most photos not sorted yet")
-        mn = QMenu(self)
-        mn.addAction("Next job (sorts the most photos)", lambda: self.next_task())
-        mn.addAction("Set aside one-off faces as strangers…", lambda: self.set_aside_one_offs())
-        self.a_next.setMenu(mn)
-        bn = tb.widgetForAction(self.a_next)
-        if isinstance(bn, QToolButton):
-            bn.setPopupMode(QToolButton.MenuButtonPopup)
-        self.a_galleries = act("Check galleries", QStyle.SP_ArrowDown, self.check_galleries,
-                               "Gallery watcher: download what's new in the galleries you watch (and set them up)")
-        self.a_browser = act("Gallery Watcher", QStyle.SP_ComputerIcon, lambda: self.open_gallery_watcher(),
-                             "The browser (stays signed in, Max Image Saver built in) and the galleries you watch")
+        # the app's name
+        brand = QLabel()
+        brand.setTextFormat(Qt.RichText)
+        brand.setText("<span style='font-size: 11.5pt; font-weight: 600'>FaceSort</span>")
+        brand.setContentsMargins(4, 0, 18, 0)
+        logo = QLabel()
+        icon_path = engine.resource_path("icon.png")
+        if os.path.exists(icon_path):
+            logo.setPixmap(QIcon(icon_path).pixmap(24, 24))
+        tb.addWidget(logo)
+        tb.addWidget(brand)
+        # one search box: typing narrows the lists on the left; Enter searches photos by description
+        self.omni = QLineEdit()
+        self.omni.setObjectName("omni")
+        self.omni.setPlaceholderText("Search people, folders, photos - or describe one: “beach at sunset”   (Ctrl K)")
+        self.omni.addAction(app_icon("search"), QLineEdit.LeadingPosition)
+        self.omni.setClearButtonEnabled(True)
+        self.omni.setMinimumWidth(320)
+        self.omni.setMaximumWidth(620)
+        self.omni.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.omni.setToolTip("Type to find a person or folder in the lists (Smart Groups: file names too).\n"
+                             "Press Enter to search your photos by what's in them - a small AI model on this PC.")
+        self.omni.textChanged.connect(self.omni_changed)
+        self.omni.returnPressed.connect(self.omni_enter)
+        tb.addWidget(self.omni)
+        sc = QShortcut(QKeySequence("Ctrl+K"), self)
+        sc.setContext(Qt.WindowShortcut)
+        sc.activated.connect(lambda: (self.omni.setFocus(), self.omni.selectAll()))
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         tb.addWidget(spacer)
+        # what's running (the progress strip below has Stop and the details)
+        self.status_pill = QLabel()
+        self.status_pill.setObjectName("statuspill")
+        self.status_pill.hide()
+        self.a_pill = tb.addWidget(self.status_pill)
+        self.a_pill.setVisible(False)
+        pill_timer = QTimer(self, interval=500)
+        pill_timer.timeout.connect(self.update_status_pill)
+        pill_timer.start()
+        # the actions (all kept - the menus below hold them)
+        self.a_add = action("Add folder…", QStyle.SP_DirOpenIcon, self.add_folder, "Add a folder of photos")
+        self.a_scan = action("Scan", QStyle.SP_BrowserReload, self.toggle_scan, "Look for new or changed photos")
+        self.a_scan_videos = action("Scan videos", QStyle.SP_DriveDVDIcon, lambda: self.start_scan(videos_only=True),
+                                    "Look for faces in new videos (Settings › Videos: only when I click Scan videos)")
+        self.a_scan_videos.setVisible(self.settings.get("video_mode", "after") == "separate")
+        self.limit_edit = QLineEdit(str(int(self.settings.get("import_limit", 0) or 0)))
+        self.limit_edit.setValidator(QIntValidator(0, 10_000_000, self))
+        self.limit_edit.setFixedWidth(80)
+        self.limit_edit.setAlignment(Qt.AlignRight)
+        self.limit_edit.setToolTip("How many new files each Scan imports. 0 = no limit.\n"
+                                   "With a limit, FaceSort stops at that many, groups and suggests, and waits - click "
+                                   "Scan when you're ready for the next batch. (It also won't import anything by "
+                                   "itself at start-up.)")
+        self.limit_edit.editingFinished.connect(self.save_import_limit)
+        self.a_tags = action("Write tags", QStyle.SP_DialogSaveButton, self.write_tags,
+                             "Save people's names into the photo files")
+        self.a_export = action("Sort into folders…", QStyle.SP_DirLinkIcon, self.export_folders,
+                               "Copy or move photos into one folder per person")
+        self.a_bring = action("Bring everything into the library…", QStyle.SP_DirIcon, lambda: self.bring_into_library())
+        self.a_reconnect = action("Reconnect files to their galleries…", QStyle.SP_DirLinkIcon,
+                                  lambda: self.reconnect_galleries())
+        self.a_review = action("Quick review", QStyle.SP_MediaPlay, self.quick_review,
+                               "Answer yes/no questions that sort the most faces per keypress   (Ctrl R)")
+        self.a_review.setShortcut(QKeySequence("Ctrl+R"))
+        self.a_next = action("Next task", QStyle.SP_MediaSkipForward, lambda: self.next_task(),
+                             "Go to the job that sorts the most photos: the person whose suggestions, or the unnamed "
+                             "group, covering the most photos not sorted yet")
+        self.a_galleries = action("Check galleries", QStyle.SP_ArrowDown, self.check_galleries,
+                                  "Gallery watcher: download what's new in the galleries you watch (and set them up)")
+        self.a_browser = action("Gallery Watcher", QStyle.SP_ComputerIcon, lambda: self.open_gallery_watcher(),
+                                "The browser (stays signed in, Max Image Saver built in) and the galleries you watch")
         self.a_safe = QAction(app_icon("safe"), "Safe view", self)    # blur explicit photos everywhere
         self.a_safe.setCheckable(True)
         self.a_safe.setChecked(bool(self.settings.get("safe_view")))
         self.a_safe.setToolTip("Safe view: blur explicit photos everywhere (and suggestive ones, if chosen in Settings)")
+        self.a_safe.setShortcut(QKeySequence("Ctrl+Shift+S"))
         self.a_safe.toggled.connect(self.toggle_safe_view)
-        tb.addAction(self.a_safe)
+        self.addAction(self.a_safe)
+        self.addAction(self.a_review)
+        self.a_history = action("History", QStyle.SP_BrowserReload, self.show_history,
+                                "Everything you've done in the last 30 days - undo any of it (Ctrl+Z undoes the last change)")
+        self.a_settings = action("Settings", QStyle.SP_FileDialogDetailedView, self.open_settings)
+        self.a_help = action("Help", QStyle.SP_DialogHelpButton, self.show_help)
+        self.a_details = QAction(app_icon("info"), "Details", self)      # its button sits by the thumbnail slider
+        self.a_details.triggered.connect(lambda on: self.show_details(on))
+        self.a_details.setToolTip("Show / hide the details panel on the right (size, dimensions, EXIF…)")
+        self.a_details.setCheckable(True)
+        self.a_details.setChecked(bool(self.settings.get("details_panel", False)))
+
+        def menu_button(text, icon, menu, tip, primary=False, default=None):
+            b = QToolButton()
+            b.setText(text)
+            if icon is not None:
+                b.setIcon(icon)
+            b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+            b.setToolTip(tip)
+            b.setMenu(menu)
+            if default is not None:
+                b.setDefaultAction(default)
+                b.setPopupMode(QToolButton.MenuButtonPopup)
+                b.setText(text)
+            else:
+                b.setPopupMode(QToolButton.InstantPopup)
+            b.setProperty("primary" if primary else "pill", "true")
+            tb.addWidget(b)
+            return b
+        # Next task (Quick review and the one-offs in its menu)
+        mn = QMenu(self)
+        mn.addAction(self.a_next)
+        mn.addAction(self.a_review)
+        mn.addSeparator()
+        mn.addAction("Set aside one-off faces as strangers…", lambda: self.set_aside_one_offs())
+        self.next_btn = menu_button("Next task", std_icon(QStyle.SP_MediaSkipForward), mn,
+                                    self.a_next.toolTip(), default=self.a_next)
+        # Library: tags, sorting into folders, galleries, Safe view, History
+        ml = QMenu(self)
+        ml.addAction(self.a_export)
+        ml.addAction(self.a_bring)
+        ml.addAction(self.a_reconnect)
+        ml.addAction(self.a_tags)
+        ml.addSeparator()
+        ml.addAction(self.a_galleries)
+        ml.addAction(self.a_browser)
+        ml.addSeparator()
+        ml.addAction(self.a_safe)
+        ml.addAction(self.a_history)
+        self.library_btn = menu_button("Library", app_icon("folder"), ml,
+                                       "Sort into folders, write tags, galleries, Safe view and History")
+        self.a_export.changed.connect(self._library_badge)
+        # Import: add a folder, scan, the import limit
+        mi = QMenu(self)
+        mi.addAction(self.a_add)
+        mi.addAction(self.a_scan)
+        mi.addAction(self.a_scan_videos)
+        lim = QWidget()
+        ll = QHBoxLayout(lim)
+        ll.setContentsMargins(12, 4, 12, 4)
+        lt = QLabel("Import limit (0 = none)")
+        lt.setToolTip(self.limit_edit.toolTip())
+        ll.addWidget(lt, 1)
+        ll.addWidget(self.limit_edit)
+        wa = QWidgetAction(mi)
+        wa.setDefaultWidget(lim)
+        mi.addAction(wa)
+        self.import_btn = menu_button("+  Import", None, mi,
+                                      "Add a folder of photos, scan for new ones, and the import limit", primary=True)
         # "Check for updates", which becomes a green "Update to x.y.z" when a newer version is out
         self.update_btn = QToolButton()
         self.update_btn.setIcon(app_icon("export"))
@@ -251,15 +338,70 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         self.update_btn.clicked.connect(self.update_clicked)
         self.a_update = tb.addWidget(self.update_btn)
         self.show_update_state(None)
-        self.a_details = QAction(app_icon("info"), "Details", self)      # its button sits by the thumbnail slider
-        self.a_details.triggered.connect(lambda on: self.show_details(on))
-        self.a_details.setToolTip("Show / hide the details panel on the right (size, dimensions, EXIF…)")
-        self.a_details.setCheckable(True)
-        self.a_details.setChecked(bool(self.settings.get("details_panel", False)))
-        act("History", QStyle.SP_BrowserReload, self.show_history,
-            "Everything you've done in the last 30 days - undo any of it (Ctrl+Z undoes the last change)")
-        act("Settings", QStyle.SP_FileDialogDetailedView, self.open_settings)
-        act("Help", QStyle.SP_DialogHelpButton, self.show_help)
+        # Settings, and Help
+        bs = QToolButton()
+        bs.setDefaultAction(self.a_settings)
+        bs.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        tb.addWidget(bs)
+        mh = QMenu(self)
+        mh.addAction(self.a_help)
+        mh.addAction("Keyboard keys…", self.show_keys)
+        mh.addSeparator()
+        mh.addAction("Check for updates", self.update_clicked)
+        bh = QToolButton()
+        bh.setIcon(std_icon(QStyle.SP_DialogHelpButton))
+        bh.setToolTip("Help, the keyboard keys, updates")
+        bh.setMenu(mh)
+        bh.setPopupMode(QToolButton.InstantPopup)
+        bh.setStyleSheet("QToolButton::menu-indicator { image: none; width: 0; }")
+        tb.addWidget(bh)
+
+    def _library_badge(self):
+        """The Library button shows how many photos are waiting to be sorted into folders."""
+        import re
+        m = re.search(r"\(([\d,]+)\)", self.a_export.text())
+        b = getattr(self, "library_btn", None)
+        if b is not None:
+            b.setText(f"Library  ({m.group(1)})" if m else "Library")
+
+    def omni_changed(self, text):
+        """The header's search box narrows the side lists as you type."""
+        if self.search.text() != text:
+            self.search.setText(text)
+
+    def omni_enter(self):
+        """Enter: search the photos by description."""
+        text = self.omni.text().strip()
+        if not text:
+            return
+        self.search_box.setText(text)
+        self.describe_search()
+
+    def update_status_pill(self):
+        """What's running, in the header (the strip at the bottom keeps Stop and the details)."""
+        on = self.prog_strip.isVisible() if hasattr(self, "prog_strip") else False
+        txt = self.prog_label.text() if on else ""
+        if on and not txt:
+            txt = "Working…"
+        if on:
+            short = txt if len(txt) <= 48 else txt[:46] + "…"
+            self.status_pill.setText("●  " + short)
+            self.status_pill.setToolTip(txt)
+        if self.a_pill.isVisible() != bool(on):
+            self.a_pill.setVisible(bool(on))
+            self.status_pill.setVisible(bool(on))
+
+    def show_keys(self):
+        """Every keyboard key, in one place."""
+        keys = [("Enter", "Name the selected faces"), ("C", "Confirm a suggestion"), ("R", "Not this person / not in this group"),
+                ("N", "Not a face"), ("I", "Ignore (a stranger)"), ("L", "Sort later"), ("D", "Discard"),
+                ("T", "Draw a missed face"), ("A", "Set folder"), ("[  ]", "Turn left / right"),
+                ("F", "Faces / whole photos (gallery and Quick review)"), ("Double-click", "Open the photo"),
+                ("Ctrl K", "Search"), ("Ctrl R", "Quick review"), ("Ctrl Z", "Undo the last change"),
+                ("Ctrl Shift S", "Safe view"), ("Ctrl Shift N", "New folder"), ("Ctrl Shift L", "Lock now"),
+                ("F11", "Full screen"), ("Quick review", "Y yes · N no · Space skip · Z undo · F whole photo")]
+        rows = "".join(f"<tr><td style='padding: 3px 18px 3px 0'><b>{k}</b></td><td>{v}</td></tr>" for k, v in keys)
+        QMessageBox.information(self, "Keyboard keys", f"<table>{rows}</table>")
 
     def _build_body(self):
         self.stack = QStackedWidget()
@@ -270,6 +412,7 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         cl.addWidget(self.stack, 1)
         # progress gets its own full-width strip, so the file name never sits under the bar
         self.prog_strip = QFrame()
+        self.prog_strip.setObjectName("prog_strip")
         self.prog_strip.setFrameShape(QFrame.StyledPanel)
         # bar centred in the row (Stop beside it), the file being worked on centred underneath
         pv = QVBoxLayout(self.prog_strip)
@@ -330,11 +473,17 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         split = QSplitter()
         split.setChildrenCollapsible(False)
         side = QWidget()
+        side.setObjectName("sidepanel")
         self.side_panel = side
         side.setMinimumWidth(240)
         sl = QVBoxLayout(side)
         sl.setContentsMargins(8, 8, 0, 8)
-        self.search = QLineEdit()
+        self.panel_title = QLabel()              # (1.63) the list shown (the rail on the left picks it)
+        self.panel_title.setObjectName("paneltitle")
+        self.panel_title.setContentsMargins(6, 2, 0, 4)
+        sl.addWidget(self.panel_title)
+        self.search = QLineEdit()                # (the header's search box types into this one)
+        self.search.hide()
         self.search.setPlaceholderText("Find a person or folder (Smart Groups: also file names)…")
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self.search_changed)
@@ -403,9 +552,19 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
             v.setSpacing(2)
             row = QHBoxLayout()
             row.setSpacing(2)
+            combos = [c for c in (controls or []) if isinstance(c, QComboBox)]
+            if combos:                     # (1.63) the order boxes get a row of their own - legible
+                crow = QHBoxLayout()
+                crow.setContentsMargins(6, 0, 6, 0)
+                crow.setSpacing(4)
+                for c in combos:
+                    crow.addWidget(c, 1)
+                v.addLayout(crow)
             for c in (controls or []):
+                if isinstance(c, QComboBox):
+                    continue
                 if isinstance(c, QWidget):
-                    row.addWidget(c, 1 if isinstance(c, QComboBox) else 0)
+                    row.addWidget(c)
                 else:
                     row.addSpacing(c)
             row.addStretch(1)
@@ -418,21 +577,21 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         self.pending_only_cb.setChecked(bool(self.settings.get("people_pending_only")))
         self.pending_only_cb.toggled.connect(self.set_pending_only)
         self.sort_box = QComboBox()
-        self.sort_modes = [("face", "Face"), ("taken", "Date taken"), ("created", "Date created"),
-                           ("location", "Original location")]
+        self.sort_modes = [("face", "By face"), ("taken", "By date taken"), ("created", "By date created"),
+                           ("location", "By original location")]
         for _, label in self.sort_modes:
             self.sort_box.addItem(label)
         self.sort_box.setCurrentIndex(next((i for i, (k, _) in enumerate(self.sort_modes)
                                             if k == self.settings.get("bottom_sort", "face")), 0))
-        self.sort_box.setToolTip("How the photos still to sort are grouped in this list")
+        self.sort_box.setToolTip("Unnamed groups: by face, or the photos still to sort by date or place")
         self.sort_box.currentIndexChanged.connect(self.set_bottom_sort)
         self.other_box = QComboBox()
-        self.other_modes = [("default", "Usual"), ("most", "Most"), ("fewest", "Fewest"), ("az", "A–Z")]
+        self.other_modes = [("default", "Usual order"), ("most", "Most first"), ("fewest", "Fewest first"), ("az", "A–Z")]
         for _, label in self.other_modes:
             self.other_box.addItem(label)
         self.other_box.setCurrentIndex(next((i for i, (k, _) in enumerate(self.other_modes)
                                              if k == self.settings.get("other_sort", "default")), 0))
-        self.other_box.setToolTip("The order of the Smart Groups under “Other” (Unknown faces, Sort Later, Duplicates…)")
+        self.other_box.setToolTip("The order of the smart groups in each section (Needs you, Faces, Photos, Library health)")
         self.other_box.currentIndexChanged.connect(self.set_other_sort)
         self.side_tabs = QTabBar()
         self.side_tabs.setExpanding(True)
@@ -457,15 +616,70 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         self.side_stack.addWidget(page(self.tree, [self.pending_only_cb]))
         self.side_stack.addWidget(page(self.treeF))
         self.side_stack.addWidget(page(self.treeA))
-        self.side_stack.addWidget(page(self.tree2, [QLabel("Groups:"), self.sort_box, QLabel("Other:"), self.other_box]))
+        self.sort_box.setMinimumWidth(96)
+        self.other_box.setMinimumWidth(80)
+        self.side_stack.addWidget(page(self.tree2, [self.sort_box, self.other_box]))
         self.side_tabs.currentChanged.connect(self.side_tab_changed)
         start_tab = int(self.settings.get("side_tab", 0))
         self.side_tabs.setCurrentIndex(max(0, min(3, start_tab)))
         self.side_stack.setCurrentIndex(self.side_tabs.currentIndex())
         sl.addWidget(self.side_tabs)
         sl.addWidget(self.side_stack, 1)
-        side.setMinimumWidth(max(240, self.side_tabs.sizeHint().width() + 10))   # all four tabs always fit
-        split.addWidget(side)
+        self.side_tabs.hide()                   # (1.63) the rail picks the list; the tabs stay as its model
+        side.setMinimumWidth(240)
+        # the rail: People, Folders, Albums, Smart groups - and History
+        self.rail = QWidget()
+        self.rail.setObjectName("rail")
+        self.rail.setFixedWidth(64)
+        rl = QVBoxLayout(self.rail)
+        rl.setContentsMargins(6, 10, 6, 10)
+        rl.setSpacing(6)
+        self.rail_group = QButtonGroup(self)
+        self.rail_group.setExclusive(True)
+        for i, (text, icon, tip) in enumerate((("People", "person", "People, in the folders they're saved in"),
+                                               ("Folders", "folder", "Just the folders (easier to arrange them)"),
+                                               ("Albums", "album", "Albums - photos in any number of them"),
+                                               ("Smart", "sparkle", "Smart groups: everything still to sort, "
+                                                                     "duplicates, matches to check…"))):
+            b = QToolButton()
+            b.setText(text)
+            b.setIcon(app_icon(icon))
+            b.setIconSize(QSize(22, 22))
+            b.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+            b.setCheckable(True)
+            b.setToolTip(tip)
+            b.setProperty("rail", "true")
+            b.setFixedSize(52, 54)
+            self.rail_group.addButton(b, i)
+            rl.addWidget(b)
+        self.rail_group.idClicked.connect(self.side_tabs.setCurrentIndex)
+        rl.addStretch(1)
+        hb = QToolButton()
+        hb.setText("History")
+        hb.setIcon(std_icon(QStyle.SP_BrowserReload))
+        hb.setIconSize(QSize(20, 20))
+        hb.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+        hb.setProperty("rail", "true")
+        hb.setFixedSize(52, 54)
+        hb.setToolTip("Everything you've done in the last 30 days - undo any of it")
+        hb.clicked.connect(self.show_history)
+        rl.addWidget(hb)
+
+        def rail_sync(i):
+            b = self.rail_group.button(i)
+            if b is not None and not b.isChecked():
+                b.setChecked(True)
+            self.panel_title.setText(("People", "Folders", "Albums", "Smart groups")[max(0, min(3, i))])
+        self.side_stack.currentChanged.connect(rail_sync)      # (also when a view switches the list itself)
+        rail_sync(self.side_tabs.currentIndex())
+        sidewrap = QWidget()
+        sw = QHBoxLayout(sidewrap)
+        sw.setContentsMargins(0, 0, 0, 0)
+        sw.setSpacing(0)
+        sw.addWidget(self.rail)
+        sw.addWidget(side, 1)
+        sidewrap.setMinimumWidth(64 + 240)
+        split.addWidget(sidewrap)
 
         main = QWidget()
         main.setMinimumWidth(460)
@@ -483,7 +697,8 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         tcol.addWidget(self.title)
         tcol.addWidget(self.subtitle)
         hdr.addLayout(tcol, 1)
-        # search by description (a small AI model on this PC - no tags needed)
+        # search by description (a small AI model on this PC - no tags needed); (1.63) the header's search
+        # box fills it in when you press Enter
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("Search by description - “beach at sunset”, “red dress”, “dog”…")
         self.search_box.addAction(app_icon("search"), QLineEdit.LeadingPosition)
@@ -521,6 +736,7 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         self.sync_match_slider()
         hdr.addWidget(mw, 0, Qt.AlignVCenter)
         hdr.addWidget(self.search_box, 0, Qt.AlignVCenter)
+        self.search_box.hide()
         ml.addLayout(hdr)
         self.zoom_row = ToolRow(self.fit_tool_row)
         zoom = QHBoxLayout(self.zoom_row)
@@ -623,6 +839,7 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         self.model = FaceModel(self)
         self.hires.ready.connect(self.hires_ready)
         self.grid = GalleryView()
+        self.grid.setObjectName("gallery")
         self.grid.viewport().installEventFilter(self)          # (Ctrl + wheel: thumbnail size)
         self.grid.setModel(self.model)
         self.grid.setItemDelegate(FaceDelegate(self, self.grid))
@@ -658,6 +875,15 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         self.center = QStackedWidget()
         self.center.addWidget(self.grid)
         self.center.addWidget(self.err_list)
+        import smart_pages                       # (1.63) Smart groups overview, and pairs as cards
+        self.smart_home = smart_pages.SmartHome(self)
+        self.pairs_page = smart_pages.PairsPage(self)
+        self.center.addWidget(self.smart_home)
+        self.center.addWidget(self.pairs_page)
+        import selbar
+        self.selbar = selbar.SelectionBar(self, self.center)
+        self.center.currentChanged.connect(lambda _i: self.selbar.hide() if self.center.currentWidget()
+                                           is not self.grid else None)
         # folder bar (stacked, left of the gallery): one button per section of the gallery - click
         # to jump there, drop photos on a person's folder to put them in it
         self.folder_bar_area = QScrollArea()
@@ -740,11 +966,36 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         split.addWidget(self.main_stack)
         # details panel on the right (Details button in the toolbar shows / hides it)
         self.details = QWidget()
+        self.details.setObjectName("details")
         self.details.setMinimumWidth(240)
         dl = QVBoxLayout(self.details)
         dl.setContentsMargins(6, 10, 8, 6)
         dt = QLabel("<b>Details</b>")
         dl.addWidget(dt)
+        # (1.63) "Looks like": the suggestion for the selected face, to confirm or not right here
+        self.looks_card = QFrame()
+        self.looks_card.setObjectName("card")
+        lc = QVBoxLayout(self.looks_card)
+        lc.setContentsMargins(12, 10, 12, 10)
+        lc.setSpacing(8)
+        self.looks_face = QLabel()
+        self.looks_text = QLabel()
+        self.looks_text.setWordWrap(True)
+        top = QHBoxLayout()
+        top.addWidget(self.looks_face)
+        top.addWidget(self.looks_text, 1)
+        lc.addLayout(top)
+        lb = QHBoxLayout()
+        self.looks_yes = QPushButton("Yes   C")
+        self.looks_yes.setProperty("primary", "true")
+        self.looks_yes.clicked.connect(lambda: self.act_confirm())
+        self.looks_no = QPushButton("Someone else   R")
+        self.looks_no.clicked.connect(lambda: self.act_remove())
+        lb.addWidget(self.looks_yes)
+        lb.addWidget(self.looks_no)
+        lc.addLayout(lb)
+        self.looks_card.hide()
+        dl.addWidget(self.looks_card)
         self.details_top = QTreeWidget()
         self.details_meta = QTreeWidget()
         for t in (self.details_top, self.details_meta):
@@ -805,6 +1056,9 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         sc = QShortcut(QKeySequence("Ctrl+Shift+N"), self)       # new folder, as in Windows Explorer
         sc.setContext(Qt.WindowShortcut)
         sc.activated.connect(self.new_folder_here)
+        sc = QShortcut(QKeySequence("Ctrl+Shift+E"), self)       # (1.63) show the selection in its folder
+        sc.setContext(Qt.WindowShortcut)
+        sc.activated.connect(self.reveal_selection)
         import privacy_ui
         self.locker = privacy_ui.LockController(self)           # (1.55) idle / minimized locking
         self.gallery_timer = QTimer(self, interval=5 * 60 * 1000)   # (1.56) gallery checks that are due
@@ -1057,6 +1311,11 @@ def main():
     app.setApplicationName("FaceSort")
     app.setStyle("Fusion")
     apply_look(app)
+    try:
+        import theme                          # (1.63) Graphite, unless Settings says Classic
+        theme.apply(app, store.load_settings())
+    except Exception as e:
+        log(f"theme: {e}")
     icon_path = engine.resource_path("icon.png")
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))
