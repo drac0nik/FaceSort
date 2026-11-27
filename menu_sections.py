@@ -13,12 +13,12 @@ SECTIONS = [
     ("tag", "Name and tag", [r"^Name ", r"^Assign to", r"^Tag ", r"^Yes, it's them", r"^Not this person",
                              r"^Doesn't belong", r"^Unassign", r"^Remove tag", r"generic name"]),
     ("faces", "Faces", [r"^Ignore", r"^Not a face", r"^Never track", r"^Looks"]),
-    ("organise", "Organise", [r"^Set folder", r"^Move to folder", r"^Create Folder", r"^Sort later",
+    ("organise", "Organise", [r"^Put in folder “", r"^Set folder", r"^Move to folder", r"^Create Folder", r"^Sort later",
                               r"^Take out of Sort Later", r"^Discard"]),
     ("edit", "Edit", [r"^Turn", r"^Make a JPEG", r"^Make a low light", r"^Content", r"^Safe", r"^Not AI - take off"]),
-    ("files", "Files", [r"^Rename", r"^Export", r"^Contact sheet", r"^Rescan", r"^Make a 12-shot", r"^Save the best",
+    ("files", "Files", [r"^Copy address", r"^Copy path", r"^Rename", r"^Export", r"^Contact sheet", r"^Rescan", r"^Make a 12-shot", r"^Save the best",
                         r"^Leave out of duplicate", r"^Check for duplicates"]),
-    ("open", "Open", [r"^Play video", r"^Open photo", r"^Open window to this image", r"^Show in folder"]),
+    ("open", "Open", [r"^Open in browser", r"^Play video", r"^Open photo", r"^Open window to this image", r"^Show in folder"]),
 ]
 
 

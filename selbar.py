@@ -53,7 +53,8 @@ class SelectionBar(QFrame):
 
     def update_for(self, n_faces, n_photos, kind):
         n = n_faces + n_photos
-        if not n or kind in NO_BAR or self.win.center.currentWidget() is not self.win.grid:
+        if not n or kind in NO_BAR or self.win.center.currentWidget() not in (self.win.grid,
+                                                                                   getattr(self.win, "unassoc_view", None)):
             self._sig = None
             self.hide()
             return False

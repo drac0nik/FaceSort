@@ -1138,7 +1138,7 @@ class GalleryMixin:
             self.subtitle.setText(f"{len(rows):,} other file{'s' if len(rows) != 1 else ''} (documents, music, "
                                   "archives…) not tagged with anyone and not in a folder. Select files and press Enter "
                                   "to tag people, A to set a folder (or drag them onto one) - Sort into folders then "
-                                  "moves them with the photos. Double-click opens one.")
+                                  "moves them with the photos. Double-click opens one (links: in your web browser).")
             self.set_buttons([("Tag people…", self.act_tag, True), ("Set folder…", self.act_category, True)])
         elif kind == "nopeople":
             import content
@@ -1181,14 +1181,14 @@ class GalleryMixin:
         else:
             rows = []
         self.center.setCurrentWidget({"errors": self.err_list, "smart_home": self.smart_home,
-                                      "same": self.pairs_page}.get(kind, self.grid))
+                                      "same": self.pairs_page, "unassoc": self.unassoc_view}.get(kind, self.grid))
         if kind == "same":
             self.pairs_page.refresh()
         if kind == "dropped":
             self.fill_extra_files(ident)
         else:
             self.extra_box.hide()
-        self.zoom_row.setVisible(kind not in ("errors", "smart_home", "same"))
+        self.zoom_row.setVisible(kind not in ("errors", "smart_home", "same", "unassoc"))
         self._search_shown = None
         typed = []
         gf = getattr(self, "gallery_filter", None)
@@ -1244,6 +1244,8 @@ class GalleryMixin:
                 nxt = self.model.index(at)
                 sm.setCurrentIndex(nxt, QItemSelectionModel.SelectionFlag.ClearAndSelect)
                 self.grid.verticalScrollBar().setValue(scroll)  # don't let the new selection jump the view
+        if kind == "unassoc":
+            self.unassoc_view.refresh()                 # (1.64) the same files, as a list
         self.update_hint()
 
     def set_buttons(self, specs):

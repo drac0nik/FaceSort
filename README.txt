@@ -153,6 +153,36 @@ Import limit (toolbar)
   ready for the next batch. With a limit set, FaceSort doesn't import anything by
   itself when it starts.
 
+1.64.0
+Unassociated files is now a list, like Windows Explorer's Details view.
+- Columns: File name, Type, Location, Description, Size, Date modified. Drag the edges between
+  headings to make a column wider or narrower; drag a heading to move the column; click a heading to
+  sort (again to reverse). Right-click a heading to choose which columns show, or to size them to fit.
+  FaceSort remembers your columns, sort, filter and grouping.
+- Location is shortened from the left when the column is narrow ("…\Jane\set 3"), since the end of
+  a path says the most. Hover over a cut-off cell to see all of it.
+- Description:
+  - Web shortcuts (.url, .webloc, .desktop) and saved web pages (.html, .htm, .mht): the address they
+    point to. For a saved page that's the address it was saved from (or redirects to); a page with
+    neither shows its title.
+  - Windows shortcuts (.lnk): the file or folder they open.
+  - PDF, Word, Excel, PowerPoint and OpenDocument files: their title. MP3s: artist - title. Text
+    files: the first line. Archives and other files: what kind of file it is (FaceSort still never
+    looks inside zip or 7z files).
+  - Read in the background the first time and remembered, so the list opens straight away.
+- Files that point to the same address are shown in amber; "Same address as another file" in the
+  type box lists them together, so you can discard the extras.
+- Filter box (name, folder, address or description) and a type box: All, Links and web pages,
+  Documents, Music, Archives, Other. "Group by type" puts the files under a heading per type.
+- Double-click a web shortcut or saved page to open its address in your default web browser. Other
+  files open as before; programs, scripts and similar are still only shown in their folder.
+- Everything else works as before: Shift/Ctrl to pick several, Enter to tag people, A to set a folder,
+  D to discard, L for Sort later, drag rows onto a folder or album, the selection bar, and the
+  right-click menu.
+- The right-click menu adds, for links: Open in browser, Copy address, Watch this gallery… (adds it
+  to Gallery Watcher), and "Put in folder “<name>”" when a word in the address matches one of your
+  folders (e.g. …/photos/beach-day/ → Beach Day). Copy path is there for every file.
+
 1.63.3
 - Gallery Watcher's browser has the latest Max Image Saver (2.15.1) built in:
   - ViewBug: ALL reads a member's whole gallery (every page the site loads as you scroll), saved as

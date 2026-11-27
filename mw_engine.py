@@ -752,7 +752,8 @@ class EngineMixin:
         if paths:
             show_in_folder(paths[0], paths[1:])
 
-    def grid_menu(self, pos):
+    def grid_menu(self, pos, global_pos=None, extra=None):
+        """extra(menu): more actions from another view of the gallery (the Unassociated files list)."""
         idx = self.grid.indexAt(pos)
         if idx.isValid() and self.model.rows[idx.row()][0] and not self.grid.selectionModel().isSelected(idx):
             self.grid.setCurrentIndex(idx)
@@ -941,8 +942,10 @@ class EngineMixin:
         nf, np_ = len(faces), len(photos)
         what = (f"{nf:,} face{'s' if nf != 1 else ''}" if nf else "") + \
             (" and " if nf and np_ else "") + (f"{np_:,} photo{'s' if np_ != 1 else ''}" if np_ else "")
+        if extra is not None:
+            extra(m)
         menu_sections.organize(m, what)
-        m.exec(self.grid.viewport().mapToGlobal(pos))
+        m.exec(global_pos or self.grid.viewport().mapToGlobal(pos))
 
     def rotate_selected(self, clockwise):
         """[ / ] or the buttons above the gallery: turn the selected photos a quarter turn."""

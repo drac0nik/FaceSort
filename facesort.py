@@ -911,10 +911,13 @@ class MainWindow(DataMixin, ListsMixin, GalleryMixin, ActionsMixin, FoldersMixin
         self.pairs_page = smart_pages.PairsPage(self)
         self.center.addWidget(self.smart_home)
         self.center.addWidget(self.pairs_page)
+        import unassoc_view                      # (1.64) Unassociated files as a Details-style list
+        self.unassoc_view = unassoc_view.UnassocView(self)
+        self.center.addWidget(self.unassoc_view)
         import selbar
         self.selbar = selbar.SelectionBar(self, self.center)
         self.center.currentChanged.connect(lambda _i: self.selbar.hide() if self.center.currentWidget()
-                                           is not self.grid else None)
+                                           not in (self.grid, self.unassoc_view) else None)
         # folder bar (stacked, left of the gallery): one button per section of the gallery - click
         # to jump there, drop photos on a person's folder to put them in it
         self.folder_bar_area = QScrollArea()
